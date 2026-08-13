@@ -30,12 +30,14 @@ printf '%s\n' "$fixture" > "$XDG_RUNTIME_DIR/omarchy-radio-atlas-$UID/world.json
 "$project_dir/radio-state" favorite 12345678-1234-1234-1234-123456789abc \
   | jq -e '.favorites | length == 0' >/dev/null
 
-"$project_dir/radio-player" volume 35 \
-  | jq -e '.running == false and .volume == 35' >/dev/null
+for volume in 23 47 81; do
+  "$project_dir/radio-player" volume "$volume" \
+    | jq -e --argjson volume "$volume" '.running == false and .volume == $volume' >/dev/null
+done
 "$project_dir/radio-player" volume-up \
-  | jq -e '.running == false and .volume == 40' >/dev/null
+  | jq -e '.running == false and .volume == 86' >/dev/null
 "$project_dir/radio-player" volume-down \
-  | jq -e '.running == false and .volume == 35' >/dev/null
-jq -e '.volume == 35' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
+  | jq -e '.running == false and .volume == 81' >/dev/null
+jq -e '.volume == 81' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 
 echo "All tests passed"

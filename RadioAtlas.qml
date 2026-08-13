@@ -979,41 +979,23 @@ Item {
                 onClicked: root.playerAction("mute")
               }
 
-              QQC.Slider {
+              PanelSlider {
                 id: volumeSlider
                 anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(92)
-                from: 0
-                to: 100
-                stepSize: 1
+                width: Style.space(116)
+                height: implicitHeight
+                minimum: 0
+                maximum: 100
+                step: 1
+                integer: true
                 value: root.playerVolume
+                trackColor: root.faint
+                fillColor: root.accent
+                knobColor: root.foreground
+                tickColor: root.background
                 Accessible.name: "Radio volume"
-                onMoved: root.setPlayerVolume(value)
-
-                background: Rectangle {
-                  x: volumeSlider.leftPadding
-                  y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
-                  width: volumeSlider.availableWidth
-                  height: 2
-                  color: root.faint
-
-                  Rectangle {
-                    width: volumeSlider.visualPosition * parent.width
-                    height: parent.height
-                    color: root.accent
-                  }
-                }
-
-                handle: Rectangle {
-                  x: volumeSlider.leftPadding + volumeSlider.visualPosition * (volumeSlider.availableWidth - width)
-                  y: volumeSlider.topPadding + volumeSlider.availableHeight / 2 - height / 2
-                  width: Style.space(10)
-                  height: width
-                  radius: width / 2
-                  color: root.foreground
-                  border.color: root.background
-                  border.width: 1
-                }
+                onMoved: function(nextVolume) { root.setPlayerVolume(nextVolume) }
+                onRightClicked: root.playerAction("mute")
               }
 
               Text {
