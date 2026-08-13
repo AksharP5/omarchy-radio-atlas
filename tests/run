@@ -19,6 +19,9 @@ export XDG_RUNTIME_DIR="$test_root/runtime"
 export XDG_DATA_HOME="$test_root/data"
 mkdir -p "$XDG_RUNTIME_DIR/omarchy-radio-atlas-$UID"
 
+"$project_dir/radio-player" status \
+  | jq -e '.running == false and .station == {}' >/dev/null
+
 fixture='[{"uuid":"12345678-1234-1234-1234-123456789abc","name":"Test Radio","url":"https://example.com/radio.mp3","countryCode":"US","latitude":40,"longitude":-74}]'
 printf '%s\n' "$fixture" > "$XDG_RUNTIME_DIR/omarchy-radio-atlas-$UID/results.json"
 printf '%s\n' "$fixture" > "$XDG_RUNTIME_DIR/omarchy-radio-atlas-$UID/world.json"

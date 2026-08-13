@@ -40,6 +40,8 @@ Item {
   property int playerVolume: 70
   property int pendingVolume: 70
   property string playerTitle: ""
+  property var playingStation: null
+  property string playingStationUuid: ""
   property int playlistPosition: -1
   property int playlistCount: 0
 
@@ -60,7 +62,6 @@ Item {
   property color background: Color.menu.background
   property color foreground: Color.menu.text
   property color border: Color.menu.border
-  property color scrim: Color.menu.scrim
   property color accent: Color.accent
   property color urgent: Color.urgent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.56)
@@ -96,6 +97,17 @@ Item {
     opened = false
     if (shell && typeof shell.hide === "function")
       shell.hide((manifest && manifest.id) || "akshar.radio-atlas")
+  }
+
+  function highlightStationCountry(station, focusGlobe) {
+    if (!station) {
+      activeCountryCode = ""
+      activeCountryName = ""
+      return
+    }
+    activeCountryCode = String(station.countryCode || "").toUpperCase()
+    activeCountryName = String(station.country || activeCountryCode)
+    if (focusGlobe === true && activeCountryCode) globe.focusCountry(activeCountryCode)
   }
 
   function setSelection(index) {
@@ -150,6 +162,7 @@ Item {
     activeCountryCode = ""
     activeCountryName = ""
     setSelection(favorites.length > 0 ? 0 : -1)
+    if (playerRunning && playingStation) highlightStationCountry(playingStation, true)
   }
 
   function showRecent() {
@@ -157,6 +170,7 @@ Item {
     activeCountryCode = ""
     activeCountryName = ""
     setSelection(recent.length > 0 ? 0 : -1)
+    if (playerRunning && playingStation) highlightStationCountry(playingStation, true)
   }
 
   function search(text) {
@@ -200,6 +214,7 @@ Item {
 
   function playSelected() {
     if (!selectedStation || playerActionProcess.running) return
+    highlightStationCountry(selectedStation, true)
     playerActionProcess.action = "play"
     playerActionProcess.output = ""
     playerActionProcess.command = [playerPath, "play", selectedStation.uuid, playlistScope()]
@@ -218,6 +233,7 @@ Item {
   function applyPlayerState(raw) {
     try {
       var state = JSON.parse(raw || "{}")
+      var previousTitle = playerTitle
       playerRunning = state.running === true
       playerPaused = state.paused === true
       playerMuted = state.muted === true
@@ -226,20 +242,37 @@ Item {
       playlistPosition = Number(state.playlistPosition === undefined ? -1 : state.playlistPosition)
       playlistCount = Number(state.playlistCount || 0)
 
-      if (playerTitle) {
+      var nextPlayingStation = state.station && typeof state.station === "object"
+        && String(state.station.uuid || "") ? state.station : null
+      var nextPlayingUuid = nextPlayingStation ? String(nextPlayingStation.uuid) : ""
+      var playingChanged = nextPlayingUuid
+        ? nextPlayingUuid !== playingStationUuid
+        : playerTitle !== previousTitle
+      playingStation = nextPlayingStation
+      playingStationUuid = playerRunning ? nextPlayingUuid : ""
+
+      var matchingIndex = nextPlayingUuid
+        ? RadioModel.indexByUuid(displayStations, nextPlayingUuid) : -1
+      if (matchingIndex < 0 && playerTitle) {
         for (var i = 0; i < displayStations.length; i++) {
-          if (displayStations[i].name === playerTitle) {
-            selectedIndex = i
-            selectedStation = displayStations[i]
-            break
-          }
+          if (displayStations[i].name === playerTitle) { matchingIndex = i; break }
         }
       }
+      if (matchingIndex >= 0) {
+        selectedIndex = matchingIndex
+        selectedStation = displayStations[matchingIndex]
+      }
+
+      var countryStation = nextPlayingStation || (matchingIndex >= 0 ? selectedStation : null)
+      if (playerRunning && playingChanged && countryStation)
+        highlightStationCountry(countryStation, true)
     } catch (error) {
       playerRunning = false
       playerPaused = false
       playerMuted = false
       playerTitle = ""
+      playingStation = null
+      playingStationUuid = ""
     }
   }
 
@@ -452,21 +485,12 @@ Item {
     id: panel
     visible: root.opened
     anchors { top: true; bottom: true; left: true; right: true }
+    mask: Region { item: card }
     color: "transparent"
     WlrLayershell.namespace: "omarchy-radio-atlas"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
-
-    Rectangle {
-      anchors.fill: parent
-      color: root.scrim
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      onClicked: root.dismiss()
-    }
 
     BorderSurface {
       id: card

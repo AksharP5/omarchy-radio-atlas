@@ -8,6 +8,7 @@ state_dir="$data_root/radio-atlas"
 state_file="$data_root/radio-atlas/state.json"
 socket="$runtime_dir/mpv.sock"
 playlist="$runtime_dir/playlist.m3u"
+queue_file="$runtime_dir/playlist.json"
 log_file="$runtime_dir/mpv.log"
 mkdir -p "$runtime_dir" "$state_dir"
 
@@ -39,7 +40,7 @@ send_command() {
 
 status() {
   if [[ ! -S $socket ]]; then
-    jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume}'
+    jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,station:{}}'
     return
   fi
 
@@ -57,18 +58,26 @@ status() {
 
   if ! jq -e 'select(.request_id == 1)' <<< "$response" >/dev/null 2>&1; then
     rm -f "$socket"
-    jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume}'
+    jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,station:{}}'
     return
   fi
 
-  jq -sc '{
+  local position station
+  position=$(jq -r 'select(.request_id == 3) | .data' <<< "$response" | head -n 1)
+  station='{}'
+  if [[ $position =~ ^[0-9]+$ ]] && [[ -s $queue_file ]]; then
+    station=$(jq -c --argjson position "$position" '.[$position] // {}' "$queue_file" 2>/dev/null || printf '{}')
+  fi
+
+  jq -sc --argjson station "$station" '{
     running: true,
     paused: ([.[] | select(.request_id == 1) | .data][0] // false),
     muted: ([.[] | select(.request_id == 6) | .data][0] // false),
     title: ([.[] | select(.request_id == 2) | .data][0] // ""),
     playlistPosition: ([.[] | select(.request_id == 3) | .data][0] // -1),
     playlistCount: ([.[] | select(.request_id == 4) | .data][0] // 0),
-    volume: ([.[] | select(.request_id == 5) | .data][0] // 70)
+    volume: ([.[] | select(.request_id == 5) | .data][0] // 70),
+    station: $station
   }' <<< "$response"
 }
 
@@ -121,14 +130,19 @@ play_station() {
     exit 3
   fi
 
-  local temporary_playlist
+  local temporary_playlist temporary_queue
   temporary_playlist=$(mktemp "$runtime_dir/playlist.XXXXXX")
+  temporary_queue=$(mktemp "$runtime_dir/queue.XXXXXX")
+  jq -c --arg uuid "$uuid" \
+    '([.[] | select(.uuid == $uuid)] + [.[] | select(.uuid != $uuid)])' \
+    "$source_file" > "$temporary_queue"
+  mv "$temporary_queue" "$queue_file"
   {
     printf '#EXTM3U\n'
-    jq -r --arg uuid "$uuid" '
-      ([.[] | select(.uuid == $uuid)] + [.[] | select(.uuid != $uuid)])[]
+    jq -r '
+      .[]
       | "#EXTINF:-1," + (.name | gsub("[\\r\\n]"; " ")), .url
-    ' "$source_file"
+    ' "$queue_file"
   } > "$temporary_playlist"
   mv "$temporary_playlist" "$playlist"
   rm -f "$source_file"

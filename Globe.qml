@@ -14,6 +14,8 @@ Item {
   property real globeScale: 1
   property real minimumScale: 0.72
   property real maximumScale: 1.28
+  property real longitudeSensitivity: 0.22
+  property real latitudeSensitivity: 0.18
 
   property color backgroundColor: "#090a0c"
   property color sphereColor: "#11151a"
@@ -46,6 +48,21 @@ Item {
 
   function withAlpha(color, alpha) {
     return Qt.rgba(color.r, color.g, color.b, alpha)
+  }
+
+  function focusCoordinate(latitude, longitude) {
+    var nextLatitude = Number(latitude)
+    var nextLongitude = Number(longitude)
+    if (!isFinite(nextLatitude) || !isFinite(nextLongitude)) return
+
+    inertiaActive = false
+    centreLatitude = RadioModel.clamp(nextLatitude, -78, 78)
+    centreLongitude = RadioModel.wrapLongitude(nextLongitude)
+  }
+
+  function focusCountry(code) {
+    var coordinate = RadioModel.countryCentre(countries, code)
+    if (coordinate) focusCoordinate(coordinate.latitude, coordinate.longitude)
   }
 
   function projectedSegments(ring) {
@@ -239,7 +256,10 @@ Item {
     countryActivated(String(country.code).toUpperCase(), String(country.name || country.code))
   }
 
-  onCountriesChanged: globeCanvas.requestPaint()
+  onCountriesChanged: {
+    globeCanvas.requestPaint()
+    if (activeCountryCode) focusCountry(activeCountryCode)
+  }
   onStationsChanged: globeCanvas.requestPaint()
   onSelectedStationChanged: globeCanvas.requestPaint()
   onActiveCountryCodeChanged: globeCanvas.requestPaint()
@@ -295,8 +315,8 @@ Item {
       var elapsed = Math.max(1, now - lastTime)
       var deltaX = mouse.x - lastX
       var deltaY = mouse.y - lastY
-      var longitudeDelta = -deltaX * 0.3 / root.globeScale
-      var latitudeDelta = deltaY * 0.24 / root.globeScale
+      var longitudeDelta = -deltaX * root.longitudeSensitivity / root.globeScale
+      var latitudeDelta = deltaY * root.latitudeSensitivity / root.globeScale
 
       root.centreLongitude = RadioModel.wrapLongitude(root.centreLongitude + longitudeDelta)
       root.centreLatitude = RadioModel.clamp(root.centreLatitude + latitudeDelta, -78, 78)

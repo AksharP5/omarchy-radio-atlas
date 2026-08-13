@@ -87,6 +87,47 @@ function countryAt(features, latitude, longitude) {
   return null
 }
 
+function countryCentre(features, code) {
+  var rows = Array.isArray(features) ? features : []
+  var wanted = String(code || "").toUpperCase()
+  var x = 0
+  var y = 0
+  var z = 0
+  var count = 0
+
+  for (var i = 0; i < rows.length; i++) {
+    var feature = rows[i]
+    if (!feature || !feature.geometry || !feature.properties) continue
+    if (String(feature.properties.code || "").toUpperCase() !== wanted) continue
+
+    var geometry = feature.geometry
+    var polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
+    if (!Array.isArray(polygons)) return null
+
+    for (var p = 0; p < polygons.length; p++) {
+      var ring = polygons[p] && polygons[p][0]
+      if (!Array.isArray(ring)) continue
+      for (var n = 0; n < ring.length; n++) {
+        var longitude = Number(ring[n][0]) * radians
+        var latitude = Number(ring[n][1]) * radians
+        if (!isFinite(longitude) || !isFinite(latitude)) continue
+        var cosLatitude = Math.cos(latitude)
+        x += cosLatitude * Math.cos(longitude)
+        y += cosLatitude * Math.sin(longitude)
+        z += Math.sin(latitude)
+        count++
+      }
+    }
+    break
+  }
+
+  if (count === 0) return null
+  return {
+    latitude: Math.atan2(z, Math.sqrt(x * x + y * y)) * degrees,
+    longitude: wrapLongitude(Math.atan2(y, x) * degrees)
+  }
+}
+
 function stationPosition(station, width, height, scale, centreLatitude, centreLongitude) {
   if (!station || station.latitude === null || station.longitude === null) return null
   var point = project(station.latitude, station.longitude, centreLatitude, centreLongitude)

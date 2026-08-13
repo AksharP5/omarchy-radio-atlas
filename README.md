@@ -9,9 +9,11 @@ usual play, pause, previous, and next controls.
 
 - Drag, momentum, and wheel zoom on a theme-aware globe
 - Station and country selection directly on the map
+- Automatic country focus for the station that is actually playing
 - Search by station, country, or genre
 - Random tuning, favorites, and recent stations
 - Independent volume slider, mute, and bar-wheel volume control
+- Click-through desktop focus outside the atlas panel
 - Keyboard navigation
 - Radio Browser mirror fallback and a 30-minute world cache
 - Automatic skip to the next playlist entry when a stream fails
