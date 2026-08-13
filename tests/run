@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+jq -e '
+  .schemaVersion == 1
+  and .id == "akshar.radio-atlas"
+  and (.kinds | index("overlay"))
+  and (.kinds | index("bar-widget"))
+' "$project_dir/manifest.json" >/dev/null
+
+bash -n "$project_dir/radio-fetch" "$project_dir/radio-player" "$project_dir/radio-state"
+node "$project_dir/tests/model.test.mjs"
+
+test_root=$(mktemp -d)
+trap 'rm -rf "$test_root"' EXIT
+export XDG_RUNTIME_DIR="$test_root/runtime"
+export XDG_DATA_HOME="$test_root/data"
+mkdir -p "$XDG_RUNTIME_DIR/omarchy-radio-atlas-$UID"
+
+fixture='[{"uuid":"12345678-1234-1234-1234-123456789abc","name":"Test Radio","url":"https://example.com/radio.mp3","countryCode":"US","latitude":40,"longitude":-74}]'
+printf '%s\n' "$fixture" > "$XDG_RUNTIME_DIR/omarchy-radio-atlas-$UID/results.json"
+printf '%s\n' "$fixture" > "$XDG_RUNTIME_DIR/omarchy-radio-atlas-$UID/world.json"
+
+"$project_dir/radio-state" played 12345678-1234-1234-1234-123456789abc \
+  | jq -e '.recent | length == 1' >/dev/null
+"$project_dir/radio-state" favorite 12345678-1234-1234-1234-123456789abc \
+  | jq -e '.favorites | length == 1' >/dev/null
+"$project_dir/radio-state" favorite 12345678-1234-1234-1234-123456789abc \
+  | jq -e '.favorites | length == 0' >/dev/null
+
+"$project_dir/radio-player" volume 35 \
+  | jq -e '.running == false and .volume == 35' >/dev/null
+"$project_dir/radio-player" volume-up \
+  | jq -e '.running == false and .volume == 40' >/dev/null
+"$project_dir/radio-player" volume-down \
+  | jq -e '.running == false and .volume == 35' >/dev/null
+jq -e '.volume == 35' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
+
+echo "All tests passed"

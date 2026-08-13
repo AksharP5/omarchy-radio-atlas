@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+runtime_root=${XDG_RUNTIME_DIR:-/tmp}
+runtime_dir="$runtime_root/omarchy-radio-atlas-$UID"
+data_root=${XDG_DATA_HOME:-$HOME/.local/share}
+state_dir="$data_root/radio-atlas"
+state_file="$data_root/radio-atlas/state.json"
+socket="$runtime_dir/mpv.sock"
+playlist="$runtime_dir/playlist.m3u"
+log_file="$runtime_dir/mpv.log"
+mkdir -p "$runtime_dir" "$state_dir"
+
+configured_volume() {
+  if [[ -s $state_file ]]; then
+    jq -r '(.volume // 70) | tonumber | round | if . < 0 then 0 elif . > 100 then 100 else . end' "$state_file" 2>/dev/null || printf '70\n'
+  else
+    printf '70\n'
+  fi
+}
+
+persist_volume() {
+  local volume=$1
+  local temporary
+  temporary=$(mktemp "$state_dir/state.XXXXXX")
+  if [[ -s $state_file ]] && jq -e 'type == "object"' "$state_file" >/dev/null 2>&1; then
+    jq -c --argjson volume "$volume" '.volume = $volume' "$state_file" > "$temporary"
+  else
+    jq -cn --argjson volume "$volume" '{favorites:[],recent:[],volume:$volume}' > "$temporary"
+  fi
+  mv "$temporary" "$state_file"
+}
+
+send_command() {
+  local payload=$1
+  [[ -S $socket ]] || return 1
+  printf '%s\n' "$payload" | socat -T 1 - "UNIX-CONNECT:$socket" >/dev/null 2>&1
+}
+
+status() {
+  if [[ ! -S $socket ]]; then
+    jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume}'
+    return
+  fi
+
+  local response
+  response=$(
+    printf '%s\n' \
+      '{"command":["get_property","pause"],"request_id":1}' \
+      '{"command":["get_property","media-title"],"request_id":2}' \
+      '{"command":["get_property","playlist-pos"],"request_id":3}' \
+      '{"command":["get_property","playlist-count"],"request_id":4}' \
+      '{"command":["get_property","volume"],"request_id":5}' \
+      '{"command":["get_property","mute"],"request_id":6}' \
+      | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null || true
+  )
+
+  if ! jq -e 'select(.request_id == 1)' <<< "$response" >/dev/null 2>&1; then
+    rm -f "$socket"
+    jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume}'
+    return
+  fi
+
+  jq -sc '{
+    running: true,
+    paused: ([.[] | select(.request_id == 1) | .data][0] // false),
+    muted: ([.[] | select(.request_id == 6) | .data][0] // false),
+    title: ([.[] | select(.request_id == 2) | .data][0] // ""),
+    playlistPosition: ([.[] | select(.request_id == 3) | .data][0] // -1),
+    playlistCount: ([.[] | select(.request_id == 4) | .data][0] // 0),
+    volume: ([.[] | select(.request_id == 5) | .data][0] // 70)
+  }' <<< "$response"
+}
+
+set_volume() {
+  local volume=${1:-}
+  [[ $volume =~ ^[0-9]+$ ]] || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
+  (( volume >= 0 && volume <= 100 )) || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
+  persist_volume "$volume"
+  local command
+  command=$(jq -cn --argjson volume "$volume" '{command:["set_property","volume",$volume]}')
+  send_command "$command" || true
+  status
+}
+
+adjust_volume() {
+  local delta=$1
+  local current
+  current=$(status | jq -r '.volume | round')
+  local next=$((current + delta))
+  (( next < 0 )) && next=0
+  (( next > 100 )) && next=100
+  set_volume "$next"
+}
+
+source_stations() {
+  local scope=$1
+  case "$scope" in
+    favorites)
+      jq -c '.favorites // []' "$state_file"
+      ;;
+    recent)
+      jq -c '.recent // []' "$state_file"
+      ;;
+    *)
+      cat "$runtime_dir/results.json"
+      ;;
+  esac
+}
+
+play_station() {
+  local uuid=$1
+  local scope=${2:-results}
+  local source_file
+  source_file=$(mktemp "$runtime_dir/source.XXXXXX")
+  source_stations "$scope" > "$source_file"
+
+  if ! jq -e --arg uuid "$uuid" 'any(.[]; .uuid == $uuid)' "$source_file" >/dev/null; then
+    rm -f "$source_file"
+    echo 'Station is not in the selected list' >&2
+    exit 3
+  fi
+
+  local temporary_playlist
+  temporary_playlist=$(mktemp "$runtime_dir/playlist.XXXXXX")
+  {
+    printf '#EXTM3U\n'
+    jq -r --arg uuid "$uuid" '
+      ([.[] | select(.uuid == $uuid)] + [.[] | select(.uuid != $uuid)])[]
+      | "#EXTINF:-1," + (.name | gsub("[\\r\\n]"; " ")), .url
+    ' "$source_file"
+  } > "$temporary_playlist"
+  mv "$temporary_playlist" "$playlist"
+  rm -f "$source_file"
+
+  local load_command
+  load_command=$(jq -cn --arg path "$playlist" '{command:["loadlist",$path,"replace"]}')
+  if ! send_command "$load_command"; then
+    rm -f "$socket"
+    setsid -f mpv \
+      --no-video \
+      --force-window=no \
+      --audio-display=no \
+      --idle=yes \
+      --loop-playlist=inf \
+      --volume="$(configured_volume)" \
+      --volume-max=100 \
+      --input-ipc-server="$socket" \
+      --playlist="$playlist" \
+      --no-terminal \
+      --really-quiet \
+      > "$log_file" 2>&1
+
+    for _ in $(seq 1 50); do
+      [[ -S $socket ]] && break
+      sleep 0.02
+    done
+  fi
+
+  if [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]]; then
+    curl --fail --silent --max-time 4 \
+      --user-agent 'Radio Atlas/0.1 (https://github.com/AksharP5/omarchy-radio-atlas)' \
+      "https://all.api.radio-browser.info/json/url/$uuid" >/dev/null 2>&1 &
+  fi
+
+  status
+}
+
+action=${1:-status}
+case "$action" in
+  play)
+    play_station "${2:-}" "${3:-results}"
+    ;;
+  toggle)
+    send_command '{"command":["cycle","pause"]}' || true
+    status
+    ;;
+  next)
+    send_command '{"command":["playlist-next","force"]}' || true
+    status
+    ;;
+  previous)
+    send_command '{"command":["playlist-prev","force"]}' || true
+    status
+    ;;
+  mute)
+    send_command '{"command":["cycle","mute"]}' || true
+    status
+    ;;
+  volume)
+    set_volume "${2:-}"
+    ;;
+  volume-up)
+    adjust_volume 5
+    ;;
+  volume-down)
+    adjust_volume -5
+    ;;
+  stop)
+    send_command '{"command":["quit"]}' || true
+    for _ in $(seq 1 20); do
+      [[ ! -S $socket ]] && break
+      sleep 0.02
+    done
+    rm -f "$socket"
+    status
+    ;;
+  status)
+    status
+    ;;
+  *)
+    echo "Unknown action: $action" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+runtime_root=${XDG_RUNTIME_DIR:-/tmp}
+runtime_dir="$runtime_root/omarchy-radio-atlas-$UID"
+data_root=${XDG_DATA_HOME:-$HOME/.local/share}
+state_dir="$data_root/radio-atlas"
+state_file="$state_dir/state.json"
+mkdir -p "$runtime_dir" "$state_dir"
+
+ensure_state() {
+  if [[ -s $state_file ]] && jq -e '.favorites and .recent' "$state_file" >/dev/null 2>&1; then
+    return
+  fi
+  printf '{"favorites":[],"recent":[],"volume":70}\n' > "$state_file"
+}
+
+ensure_runtime_data() {
+  [[ -f $runtime_dir/results.json ]] || printf '[]\n' > "$runtime_dir/results.json"
+  [[ -f $runtime_dir/world.json ]] || printf '[]\n' > "$runtime_dir/world.json"
+}
+
+find_station() {
+  local uuid=$1
+  jq -cs --arg uuid "$uuid" '
+    (.[0] // []) + (.[1] // []) + ((.[2] // {}).favorites // []) + ((.[2] // {}).recent // [])
+    | map(select(.uuid == $uuid))
+    | first // empty
+  ' "$runtime_dir/results.json" "$runtime_dir/world.json" "$state_file" 2>/dev/null
+}
+
+write_state() {
+  local filter=$1
+  local station=$2
+  local temporary
+  temporary=$(mktemp "$state_dir/state.XXXXXX")
+  jq -c --argjson station "$station" "$filter" "$state_file" > "$temporary"
+  mv "$temporary" "$state_file"
+}
+
+ensure_state
+ensure_runtime_data
+action=${1:-get}
+case "$action" in
+  get)
+    ;;
+  favorite)
+    uuid=${2:-}
+    [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
+    station=$(find_station "$uuid")
+    [[ -n $station ]] || { echo 'Station is not in the current data set' >&2; exit 3; }
+    write_state '
+      if any(.favorites[]?; .uuid == $station.uuid)
+      then .favorites = [.favorites[] | select(.uuid != $station.uuid)]
+      else .favorites = [$station] + [.favorites[] | select(.uuid != $station.uuid)]
+      end
+    ' "$station"
+    ;;
+  played)
+    uuid=${2:-}
+    [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
+    station=$(find_station "$uuid")
+    [[ -n $station ]] || { echo 'Station is not in the current data set' >&2; exit 3; }
+    write_state '.recent = ([$station] + [.recent[] | select(.uuid != $station.uuid)])[:30]' "$station"
+    ;;
+  *)
+    echo "Unknown action: $action" >&2
+    exit 2
+    ;;
+esac
+
+jq -c . "$state_file"
