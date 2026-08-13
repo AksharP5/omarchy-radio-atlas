@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ ${RADIO_ATLAS_TEST_CURL_FAIL:-0} != 1 ]] || exit 7
+
+printf '%s\n' '[
+  {"stationuuid":"bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb","name":"First","url_resolved":"https://example.com/first\n","countrycode":"US","geo_lat":40,"geo_long":-74},
+  {"stationuuid":"aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa","name":"Second","url_resolved":"http://example.com/second","countrycode":"CA","geo_lat":43,"geo_long":-79},
+  {"stationuuid":"bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb","name":"Duplicate","url_resolved":"https://example.com/duplicate","countrycode":"US","geo_lat":40,"geo_long":-74},
+  {"stationuuid":"cccccccc-1111-1111-1111-cccccccccccc","name":"Unsafe","url_resolved":"file:///etc/passwd","countrycode":"US","geo_lat":40,"geo_long":-74},
+  {"stationuuid":"dddddddd-1111-1111-1111-dddddddddddd","name":"Invalid coordinates","url_resolved":"https://example.com/invalid","countrycode":"US","geo_lat":140,"geo_long":-74}
+]'

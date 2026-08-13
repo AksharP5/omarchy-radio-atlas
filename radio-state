@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-runtime_root=${XDG_RUNTIME_DIR:-/tmp}
-runtime_dir="$runtime_root/omarchy-radio-atlas-$UID"
+if [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+  runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
+else
+  runtime_dir="/tmp/omarchy-radio-atlas-$UID"
+fi
 data_root=${XDG_DATA_HOME:-$HOME/.local/share}
 state_dir="$data_root/radio-atlas"
 state_file="$state_dir/state.json"
+state_lock="$state_dir/state.lock"
 mkdir -p "$runtime_dir" "$state_dir"
 
+exec 9>"$state_lock"
+flock -x 9
+
 ensure_state() {
-  if [[ -s $state_file ]] && jq -e '.favorites and .recent' "$state_file" >/dev/null 2>&1; then
+  if [[ -s $state_file ]] && jq -e '
+    type == "object"
+    and (.favorites | type == "array")
+    and (.recent | type == "array")
+    and ((.volume // 70) | type == "number")
+  ' "$state_file" >/dev/null 2>&1; then
     return
   fi
   printf '{"favorites":[],"recent":[],"volume":70}\n' > "$state_file"

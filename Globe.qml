@@ -13,7 +13,7 @@ Item {
   property real centreLongitude: -20
   property real globeScale: 1
   property real minimumScale: 0.72
-  property real maximumScale: 1.28
+  property real maximumScale: 24
   property real longitudeSensitivity: 0.22
   property real latitudeSensitivity: 0.18
 
@@ -30,9 +30,9 @@ Item {
   property var hoveredStation: null
   property real hoverX: 0
   property real hoverY: 0
-  property real inertiaLongitude: 0
-  property real inertiaLatitude: 0
-  property bool inertiaActive: false
+  property var preparedCountries: []
+  property var preparedGrid: []
+  property var preparedStations: []
 
   signal stationActivated(var station)
   signal countryActivated(string code, string name)
@@ -55,7 +55,6 @@ Item {
     var nextLongitude = Number(longitude)
     if (!isFinite(nextLatitude) || !isFinite(nextLongitude)) return
 
-    inertiaActive = false
     centreLatitude = RadioModel.clamp(nextLatitude, -78, 78)
     centreLongitude = RadioModel.wrapLongitude(nextLongitude)
   }
@@ -65,47 +64,101 @@ Item {
     if (coordinate) focusCoordinate(coordinate.latitude, coordinate.longitude)
   }
 
-  function projectedSegments(ring) {
-    var segments = []
-    var segment = []
-    if (!Array.isArray(ring)) return segments
-
-    for (var i = 0; i < ring.length; i++) {
-      var coordinate = ring[i]
-      var point = RadioModel.project(coordinate[1], coordinate[0], centreLatitude, centreLongitude)
-      if (point.z >= 0) {
-        segment.push(point)
-      } else if (segment.length > 0) {
-        segments.push(segment)
-        segment = []
-      }
+  function prepareCoordinates(coordinates, latitudeFirst) {
+    var output = []
+    if (!Array.isArray(coordinates)) return output
+    for (var i = 0; i < coordinates.length; i++) {
+      var latitude = Number(coordinates[i][latitudeFirst ? 0 : 1]) * Math.PI / 180
+      var longitude = Number(coordinates[i][latitudeFirst ? 1 : 0]) * Math.PI / 180
+      if (!isFinite(latitude) || !isFinite(longitude)) continue
+      var cosLatitude = Math.cos(latitude)
+      output.push(
+        cosLatitude * Math.cos(longitude),
+        cosLatitude * Math.sin(longitude),
+        Math.sin(latitude))
     }
-    if (segment.length > 0) segments.push(segment)
-
-    if (segments.length > 1 && ring.length > 1) {
-      var first = RadioModel.project(ring[0][1], ring[0][0], centreLatitude, centreLongitude)
-      var lastCoordinate = ring[ring.length - 1]
-      var last = RadioModel.project(lastCoordinate[1], lastCoordinate[0], centreLatitude, centreLongitude)
-      if (first.z >= 0 && last.z >= 0) {
-        segments[0] = segments[segments.length - 1].concat(segments[0])
-        segments.pop()
-      }
-    }
-    return segments
+    return output
   }
 
-  function paintCurve(ctx, coordinates, centreX, centreY, globeRadius) {
+  function prepareCountryGeometry() {
+    var output = []
+    var rows = Array.isArray(countries) ? countries : []
+    for (var i = 0; i < rows.length; i++) {
+      var feature = rows[i]
+      if (!feature || !feature.geometry) continue
+      var geometry = feature.geometry
+      var polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
+      if (!Array.isArray(polygons)) continue
+      var rings = []
+      for (var p = 0; p < polygons.length; p++) {
+        var ring = polygons[p] && polygons[p][0]
+        var prepared = prepareCoordinates(ring, false)
+        if (prepared.length >= 9) rings.push({ world: prepared, projected: new Array(prepared.length) })
+      }
+      if (rings.length === 0) continue
+      output.push({
+        code: String(feature.properties && feature.properties.code || "").toUpperCase(),
+        rings: rings
+      })
+    }
+    return output
+  }
+
+  function prepareGridGeometry() {
+    var output = []
+    for (var latitude = -60; latitude <= 60; latitude += 30) {
+      var parallel = []
+      for (var longitude = -180; longitude <= 180; longitude += 3)
+        parallel.push([latitude, longitude])
+      output.push(prepareCoordinates(parallel, true))
+    }
+    for (var meridian = -150; meridian <= 180; meridian += 30) {
+      var line = []
+      for (var lat = -90; lat <= 90; lat += 3) line.push([lat, meridian])
+      output.push(prepareCoordinates(line, true))
+    }
+    return output
+  }
+
+  function prepareStationGeometry() {
+    var output = []
+    var rows = Array.isArray(stations) ? stations : []
+    for (var i = 0; i < rows.length; i++) {
+      var station = rows[i]
+      if (!station || station.latitude === null || station.longitude === null) continue
+      var latitude = Number(station.latitude) * Math.PI / 180
+      var longitude = Number(station.longitude) * Math.PI / 180
+      if (!isFinite(latitude) || !isFinite(longitude)) continue
+      var cosLatitude = Math.cos(latitude)
+      output.push({
+        station: station,
+        worldX: cosLatitude * Math.cos(longitude),
+        worldY: cosLatitude * Math.sin(longitude),
+        worldZ: Math.sin(latitude),
+        visible: false,
+        screenX: 0,
+        screenY: 0,
+        depth: -1
+      })
+    }
+    return output
+  }
+
+  function paintCurve(ctx, coordinates, centreX, centreY, globeRadius,
+                      sinLatitude, cosLatitude, sinLongitude, cosLongitude) {
     var drawing = false
     ctx.beginPath()
-    for (var i = 0; i < coordinates.length; i++) {
-      var coordinate = coordinates[i]
-      var point = RadioModel.project(coordinate[0], coordinate[1], centreLatitude, centreLongitude)
-      if (point.z < 0) {
+    for (var i = 0; i < coordinates.length; i += 3) {
+      var horizontal = coordinates[i] * cosLongitude + coordinates[i + 1] * sinLongitude
+      var xProjection = coordinates[i + 1] * cosLongitude - coordinates[i] * sinLongitude
+      var yProjection = cosLatitude * coordinates[i + 2] - sinLatitude * horizontal
+      var depth = sinLatitude * coordinates[i + 2] + cosLatitude * horizontal
+      if (depth < 0) {
         drawing = false
         continue
       }
-      var x = centreX + point.x * globeRadius
-      var y = centreY - point.y * globeRadius
+      var x = centreX + xProjection * globeRadius
+      var y = centreY - yProjection * globeRadius
       if (!drawing) ctx.moveTo(x, y)
       else ctx.lineTo(x, y)
       drawing = true
@@ -116,78 +169,157 @@ Item {
   function paintGrid(ctx, centreX, centreY, globeRadius) {
     ctx.strokeStyle = withAlpha(gridColor, 0.18)
     ctx.lineWidth = Math.max(0.7, globeRadius / 500)
-
-    for (var latitude = -60; latitude <= 60; latitude += 30) {
-      var parallel = []
-      for (var longitude = -180; longitude <= 180; longitude += 3)
-        parallel.push([latitude, longitude])
-      paintCurve(ctx, parallel, centreX, centreY, globeRadius)
-    }
-
-    for (var meridian = -150; meridian <= 180; meridian += 30) {
-      var line = []
-      for (var lat = -90; lat <= 90; lat += 3) line.push([lat, meridian])
-      paintCurve(ctx, line, centreX, centreY, globeRadius)
-    }
+    var latitude = centreLatitude * Math.PI / 180
+    var longitude = centreLongitude * Math.PI / 180
+    var sinLatitude = Math.sin(latitude)
+    var cosLatitude = Math.cos(latitude)
+    var sinLongitude = Math.sin(longitude)
+    var cosLongitude = Math.cos(longitude)
+    for (var i = 0; i < preparedGrid.length; i++)
+      paintCurve(ctx, preparedGrid[i], centreX, centreY, globeRadius,
+        sinLatitude, cosLatitude, sinLongitude, cosLongitude)
   }
 
   function paintCountries(ctx, centreX, centreY, globeRadius) {
-    var rows = Array.isArray(countries) ? countries : []
+    var rows = preparedCountries
+    var latitude = centreLatitude * Math.PI / 180
+    var longitude = centreLongitude * Math.PI / 180
+    var sinLatitude = Math.sin(latitude)
+    var cosLatitude = Math.cos(latitude)
+    var sinLongitude = Math.sin(longitude)
+    var cosLongitude = Math.cos(longitude)
+    var activeCode = activeCountryCode.toUpperCase()
     for (var i = 0; i < rows.length; i++) {
-      var feature = rows[i]
-      if (!feature || !feature.geometry) continue
-      var geometry = feature.geometry
-      var polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
-      if (!Array.isArray(polygons)) continue
-      var active = feature.properties
-        && String(feature.properties.code || "").toUpperCase() === activeCountryCode.toUpperCase()
+      var country = rows[i]
+      var active = country.code === activeCode
+      ctx.fillStyle = active ? withAlpha(accentColor, 0.38) : withAlpha(landColor, 0.9)
+      ctx.strokeStyle = active ? withAlpha(accentColor, 0.95) : withAlpha(outlineColor, 0.34)
+      ctx.lineWidth = active ? 1.5 : 0.7
 
-      for (var p = 0; p < polygons.length; p++) {
-        var polygon = polygons[p]
-        if (!Array.isArray(polygon) || polygon.length === 0) continue
-        var segments = projectedSegments(polygon[0])
+      for (var ringIndex = 0; ringIndex < country.rings.length; ringIndex++) {
+        var geometry = country.rings[ringIndex]
+        var ring = geometry.world
+        var projected = geometry.projected
+        var points = Math.floor(ring.length / 3)
+        var hiddenIndex = -1
+        for (var pointIndex = 0; pointIndex < points; pointIndex++) {
+          var hiddenOffset = pointIndex * 3
+          var hiddenHorizontal = ring[hiddenOffset] * cosLongitude
+            + ring[hiddenOffset + 1] * sinLongitude
+          projected[hiddenOffset] = ring[hiddenOffset + 1] * cosLongitude
+            - ring[hiddenOffset] * sinLongitude
+          projected[hiddenOffset + 1] = cosLatitude * ring[hiddenOffset + 2]
+            - sinLatitude * hiddenHorizontal
+          projected[hiddenOffset + 2] = sinLatitude * ring[hiddenOffset + 2]
+            + cosLatitude * hiddenHorizontal
+          if (projected[hiddenOffset + 2] < 0 && hiddenIndex < 0) {
+            hiddenIndex = pointIndex
+          }
+        }
 
-        for (var s = 0; s < segments.length; s++) {
-          var segment = segments[s]
-          if (segment.length < 3) continue
+        if (hiddenIndex < 0) {
           ctx.beginPath()
-          for (var n = 0; n < segment.length; n++) {
-            var point = segment[n]
-            var x = centreX + point.x * globeRadius
-            var y = centreY - point.y * globeRadius
-            if (n === 0) ctx.moveTo(x, y)
-            else ctx.lineTo(x, y)
+          for (var visibleIndex = 0; visibleIndex < points; visibleIndex++) {
+            var visibleOffset = visibleIndex * 3
+            var visibleX = projected[visibleOffset]
+            var visibleY = projected[visibleOffset + 1]
+            var screenX = centreX + visibleX * globeRadius
+            var screenY = centreY - visibleY * globeRadius
+            if (visibleIndex === 0) ctx.moveTo(screenX, screenY)
+            else ctx.lineTo(screenX, screenY)
           }
           ctx.closePath()
-          ctx.fillStyle = active ? withAlpha(accentColor, 0.38) : withAlpha(landColor, 0.9)
           ctx.fill()
-          ctx.strokeStyle = active ? withAlpha(accentColor, 0.95) : withAlpha(outlineColor, 0.34)
-          ctx.lineWidth = active ? 1.5 : 0.7
           ctx.stroke()
+          continue
+        }
+
+        var previousOffset = hiddenIndex * 3
+        var previousX = projected[previousOffset]
+        var previousY = projected[previousOffset + 1]
+        var previousDepth = projected[previousOffset + 2]
+        var drawing = false
+        var startAngle = 0
+
+        for (var step = 1; step <= points; step++) {
+          var currentIndex = (hiddenIndex + step) % points
+          var currentOffset = currentIndex * 3
+          var currentX = projected[currentOffset]
+          var currentY = projected[currentOffset + 1]
+          var currentDepth = projected[currentOffset + 2]
+          var previousVisible = previousDepth >= 0
+          var currentVisible = currentDepth >= 0
+
+          if (!previousVisible && currentVisible) {
+            var enteringRatio = previousDepth / (previousDepth - currentDepth)
+            var enteringX = previousX + (currentX - previousX) * enteringRatio
+            var enteringY = previousY + (currentY - previousY) * enteringRatio
+            var enteringLength = Math.sqrt(enteringX * enteringX + enteringY * enteringY) || 1
+            enteringX /= enteringLength
+            enteringY /= enteringLength
+            startAngle = Math.atan2(-enteringY, enteringX)
+            ctx.beginPath()
+            ctx.moveTo(centreX + enteringX * globeRadius, centreY - enteringY * globeRadius)
+            ctx.lineTo(centreX + currentX * globeRadius, centreY - currentY * globeRadius)
+            drawing = true
+          } else if (previousVisible && currentVisible && drawing) {
+            ctx.lineTo(centreX + currentX * globeRadius, centreY - currentY * globeRadius)
+          } else if (previousVisible && !currentVisible && drawing) {
+            var leavingRatio = previousDepth / (previousDepth - currentDepth)
+            var leavingX = previousX + (currentX - previousX) * leavingRatio
+            var leavingY = previousY + (currentY - previousY) * leavingRatio
+            var leavingLength = Math.sqrt(leavingX * leavingX + leavingY * leavingY) || 1
+            leavingX /= leavingLength
+            leavingY /= leavingLength
+            var endAngle = Math.atan2(-leavingY, leavingX)
+            var clockwiseArc = (startAngle - endAngle + Math.PI * 2) % (Math.PI * 2)
+            ctx.lineTo(centreX + leavingX * globeRadius, centreY - leavingY * globeRadius)
+            ctx.stroke()
+            ctx.arc(centreX, centreY, globeRadius, endAngle, startAngle, clockwiseArc > Math.PI)
+            ctx.closePath()
+            ctx.fill()
+            drawing = false
+          }
+
+          previousX = currentX
+          previousY = currentY
+          previousDepth = currentDepth
         }
       }
     }
   }
 
   function paintSignals(ctx) {
-    var rows = Array.isArray(stations) ? stations : []
+    var rows = preparedStations
+    var latitude = centreLatitude * Math.PI / 180
+    var longitude = centreLongitude * Math.PI / 180
+    var sinLatitude = Math.sin(latitude)
+    var cosLatitude = Math.cos(latitude)
+    var sinLongitude = Math.sin(longitude)
+    var cosLongitude = Math.cos(longitude)
+    var globeRadius = radius()
     for (var i = 0; i < rows.length; i++) {
-      var station = rows[i]
-      var position = RadioModel.stationPosition(
-        station, globeCanvas.width, globeCanvas.height, globeScale,
-        centreLatitude, centreLongitude)
-      if (!position) continue
+      var row = rows[i]
+      var horizontal = row.worldX * cosLongitude + row.worldY * sinLongitude
+      var xProjection = row.worldY * cosLongitude - row.worldX * sinLongitude
+      var yProjection = cosLatitude * row.worldZ - sinLatitude * horizontal
+      var depth = sinLatitude * row.worldZ + cosLatitude * horizontal
+      row.visible = depth >= 0
+      if (!row.visible) continue
+      row.screenX = globeCanvas.width / 2 + xProjection * globeRadius
+      row.screenY = globeCanvas.height / 2 - yProjection * globeRadius
+      row.depth = depth
 
-      var selected = selectedStation && station.uuid === selectedStation.uuid
-      var markerRadius = selected ? 4.2 : 1.7 + position.z * 1.25
+      var selected = selectedStation && row.station.uuid === selectedStation.uuid
+      var markerRadius = selected ? 4.2 : 1.7 + depth * 1.25
       ctx.beginPath()
-      ctx.arc(position.x, position.y, markerRadius, 0, Math.PI * 2)
-      ctx.fillStyle = selected ? accentColor : withAlpha(signalColor, 0.42 + position.z * 0.48)
+      ctx.arc(row.screenX, row.screenY, markerRadius, 0, Math.PI * 2)
+      ctx.fillStyle = selected ? accentColor : withAlpha(signalColor, 0.42 + depth * 0.48)
       ctx.fill()
 
       if (selected) {
         ctx.beginPath()
-        ctx.arc(position.x, position.y, 8.5, 0, Math.PI * 2)
+        ctx.arc(row.screenX, row.screenY, 8.5, 0, Math.PI * 2)
         ctx.strokeStyle = withAlpha(accentColor, 0.72)
         ctx.lineWidth = 1.2
         ctx.stroke()
@@ -232,9 +364,19 @@ Item {
   }
 
   function stationUnderPointer(x, y) {
-    return RadioModel.stationAt(
-      stations, x, y, globeCanvas.width, globeCanvas.height, globeScale,
-      centreLatitude, centreLongitude, 12)
+    var nearest = null
+    var nearestDistance = 144
+    for (var i = 0; i < preparedStations.length; i++) {
+      var row = preparedStations[i]
+      if (!row.visible) continue
+      var deltaX = row.screenX - x
+      var deltaY = row.screenY - y
+      var distance = deltaX * deltaX + deltaY * deltaY
+      if (distance > nearestDistance) continue
+      nearest = row.station
+      nearestDistance = distance
+    }
+    return nearest
   }
 
   function activateAt(x, y) {
@@ -257,10 +399,14 @@ Item {
   }
 
   onCountriesChanged: {
+    preparedCountries = prepareCountryGeometry()
     globeCanvas.requestPaint()
     if (activeCountryCode) focusCountry(activeCountryCode)
   }
-  onStationsChanged: globeCanvas.requestPaint()
+  onStationsChanged: {
+    preparedStations = prepareStationGeometry()
+    globeCanvas.requestPaint()
+  }
   onSelectedStationChanged: globeCanvas.requestPaint()
   onActiveCountryCodeChanged: globeCanvas.requestPaint()
   onCentreLatitudeChanged: globeCanvas.requestPaint()
@@ -279,6 +425,13 @@ Item {
     }
   }
 
+  Component.onCompleted: {
+    preparedGrid = prepareGridGeometry()
+    preparedCountries = prepareCountryGeometry()
+    preparedStations = prepareStationGeometry()
+    globeCanvas.requestPaint()
+  }
+
   MouseArea {
     id: pointer
     anchors.fill: parent
@@ -290,15 +443,12 @@ Item {
 
     property real lastX: 0
     property real lastY: 0
-    property real lastTime: 0
     property real totalMovement: 0
 
     onPressed: function(mouse) {
       root.interactionStarted()
-      root.inertiaActive = false
       lastX = mouse.x
       lastY = mouse.y
-      lastTime = Date.now()
       totalMovement = 0
       root.hoveredStation = null
     }
@@ -311,8 +461,6 @@ Item {
         return
       }
 
-      var now = Date.now()
-      var elapsed = Math.max(1, now - lastTime)
       var deltaX = mouse.x - lastX
       var deltaY = mouse.y - lastY
       var longitudeDelta = -deltaX * root.longitudeSensitivity / root.globeScale
@@ -320,48 +468,26 @@ Item {
 
       root.centreLongitude = RadioModel.wrapLongitude(root.centreLongitude + longitudeDelta)
       root.centreLatitude = RadioModel.clamp(root.centreLatitude + latitudeDelta, -78, 78)
-      root.inertiaLongitude = longitudeDelta / elapsed
-      root.inertiaLatitude = latitudeDelta / elapsed
       totalMovement += Math.abs(deltaX) + Math.abs(deltaY)
       lastX = mouse.x
       lastY = mouse.y
-      lastTime = now
     }
 
     onReleased: function(mouse) {
       if (totalMovement < 7) {
         root.activateAt(mouse.x, mouse.y)
         root.hoveredStation = root.stationUnderPointer(mouse.x, mouse.y)
-        return
       }
-      root.inertiaActive = Math.abs(root.inertiaLongitude) + Math.abs(root.inertiaLatitude) > 0.015
     }
 
     onExited: if (!(pressedButtons & Qt.LeftButton)) root.hoveredStation = null
 
     onWheel: function(wheel) {
       root.interactionStarted()
-      root.inertiaActive = false
-      var factor = Math.exp(wheel.angleDelta.y / 1200)
+      var factor = Math.exp(wheel.angleDelta.y / 720)
       root.globeScale = RadioModel.clamp(
         root.globeScale * factor, root.minimumScale, root.maximumScale)
       wheel.accepted = true
-    }
-  }
-
-  Timer {
-    interval: 16
-    repeat: true
-    running: root.inertiaActive
-    onTriggered: {
-      root.centreLongitude = RadioModel.wrapLongitude(
-        root.centreLongitude + root.inertiaLongitude * interval)
-      root.centreLatitude = RadioModel.clamp(
-        root.centreLatitude + root.inertiaLatitude * interval, -78, 78)
-      root.inertiaLongitude *= 0.93
-      root.inertiaLatitude *= 0.91
-      if (Math.abs(root.inertiaLongitude) + Math.abs(root.inertiaLatitude) < 0.0015)
-        root.inertiaActive = false
     }
   }
 

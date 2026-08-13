@@ -32,6 +32,12 @@ const countries = JSON.parse(fs.readFileSync(path.join(testDir, "..", "assets", 
 const india = model.countryCentre(countries, "IN")
 assert.ok(india.latitude > 5 && india.latitude < 35)
 assert.ok(india.longitude > 65 && india.longitude < 100)
+const unitedStates = model.countryCentre(countries, "US")
+assert.ok(unitedStates.latitude > 25 && unitedStates.latitude < 55)
+assert.ok(unitedStates.longitude > -125 && unitedStates.longitude < -65)
+const canada = model.countryCentre(countries, "CA")
+assert.ok(canada.latitude > 40 && canada.latitude < 65)
+assert.ok(canada.longitude > -140 && canada.longitude < -50)
 assert.equal(model.countryCentre(countries, "XX"), null)
 
 const stations = [

@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
@@ -12,11 +13,24 @@ BarWidget {
   property bool playerPaused: false
   property bool playerMuted: false
   property int playerVolume: 70
+  property int reportedVolume: 70
+  property int pendingVolume: -1
   property string playerTitle: ""
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
+  readonly property string statusPath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas/status.json"
 
-  function refreshStatus() {
-    if (!statusProcess.running) statusProcess.running = true
+  function applyPlayerState(raw) {
+    try {
+      var state = JSON.parse(raw || "{}")
+      root.playerRunning = state.running === true
+      root.playerPaused = state.paused === true
+      root.playerMuted = state.muted === true
+      root.reportedVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
+      if (root.pendingVolume < 0) root.playerVolume = root.reportedVolume
+      root.playerTitle = String(state.title || (state.station && state.station.name) || "")
+    } catch (error) {
+      return
+    }
   }
 
   function runPlayerAction(action) {
@@ -25,46 +39,56 @@ BarWidget {
     actionProcess.running = true
   }
 
+  function changeVolume(delta) {
+    var current = pendingVolume >= 0 ? pendingVolume : playerVolume
+    pendingVolume = Math.max(0, Math.min(100, current + (delta > 0 ? 5 : -5)))
+    playerVolume = pendingVolume
+    flushVolume()
+  }
+
+  function flushVolume() {
+    if (volumeProcess.running || pendingVolume < 0) return
+    volumeProcess.submittedVolume = pendingVolume
+    volumeProcess.command = [playerPath, "volume", String(pendingVolume)]
+    volumeProcess.running = true
+  }
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  Process {
-    id: statusProcess
-    command: [root.playerPath, "status"]
-    property string output: ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: statusProcess.output = text
-    }
-    onExited: {
-      try {
-        var state = JSON.parse(output || "{}")
-        root.playerRunning = state.running === true
-        root.playerPaused = state.paused === true
-        root.playerMuted = state.muted === true
-        root.playerVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
-        root.playerTitle = String(state.title || "")
-      } catch (error) {
-        root.playerRunning = false
-        root.playerPaused = false
-        root.playerMuted = false
-        root.playerTitle = ""
-      }
-    }
+  FileView {
+    path: root.statusPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.applyPlayerState(text())
+    onFileChanged: reload()
   }
 
   Process {
     id: actionProcess
     command: []
-    onExited: root.refreshStatus()
   }
 
-  Timer {
-    interval: root.playerRunning ? 3000 : 8000
-    repeat: true
-    running: true
-    triggeredOnStart: true
-    onTriggered: root.refreshStatus()
+  Process {
+    id: volumeProcess
+    property int submittedVolume: -1
+    command: []
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.pendingVolume = -1
+        root.playerVolume = root.reportedVolume
+        return
+      }
+
+      root.reportedVolume = submittedVolume
+      if (root.pendingVolume === submittedVolume) {
+        root.pendingVolume = -1
+        root.playerVolume = submittedVolume
+        return
+      }
+      Qt.callLater(root.flushVolume)
+    }
   }
 
   WidgetButton {
@@ -92,7 +116,7 @@ BarWidget {
     }
 
     onWheelMoved: function(delta) {
-      root.runPlayerAction(delta > 0 ? "volume-up" : "volume-down")
+      root.changeVolume(delta)
     }
   }
 }

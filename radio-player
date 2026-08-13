@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-runtime_root=${XDG_RUNTIME_DIR:-/tmp}
-runtime_dir="$runtime_root/omarchy-radio-atlas-$UID"
+if [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+  runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
+else
+  runtime_dir="/tmp/omarchy-radio-atlas-$UID"
+fi
 data_root=${XDG_DATA_HOME:-$HOME/.local/share}
 state_dir="$data_root/radio-atlas"
 state_file="$data_root/radio-atlas/state.json"
+state_lock="$state_dir/state.lock"
 socket="$runtime_dir/mpv.sock"
 playlist="$runtime_dir/playlist.m3u"
 queue_file="$runtime_dir/playlist.json"
+status_file="$runtime_dir/status.json"
 log_file="$runtime_dir/mpv.log"
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+fetch_path=${RADIO_ATLAS_FETCH_PATH:-$script_dir/radio-fetch}
+status_script="$script_dir/radio-status.lua"
 mkdir -p "$runtime_dir" "$state_dir"
 
 configured_volume() {
@@ -23,24 +31,42 @@ configured_volume() {
 persist_volume() {
   local volume=$1
   local temporary
-  temporary=$(mktemp "$state_dir/state.XXXXXX")
-  if [[ -s $state_file ]] && jq -e 'type == "object"' "$state_file" >/dev/null 2>&1; then
-    jq -c --argjson volume "$volume" '.volume = $volume' "$state_file" > "$temporary"
-  else
-    jq -cn --argjson volume "$volume" '{favorites:[],recent:[],volume:$volume}' > "$temporary"
-  fi
-  mv "$temporary" "$state_file"
+  (
+    flock -x 9
+    temporary=$(mktemp "$state_dir/state.XXXXXX")
+    if [[ -s $state_file ]] && jq -e 'type == "object"' "$state_file" >/dev/null 2>&1; then
+      jq -c --argjson volume "$volume" '.volume = $volume' "$state_file" > "$temporary"
+    else
+      jq -cn --argjson volume "$volume" '{favorites:[],recent:[],volume:$volume}' > "$temporary"
+    fi
+    mv "$temporary" "$state_file"
+  ) 9>"$state_lock"
+}
+
+write_status() {
+  local state=$1
+  local temporary
+  temporary=$(mktemp "$runtime_dir/status.XXXXXX")
+  printf '%s\n' "$state" > "$temporary"
+  mv "$temporary" "$status_file"
+  printf '%s\n' "$state"
 }
 
 send_command() {
   local payload=$1
+  local request_id=9001
+  local response
   [[ -S $socket ]] || return 1
-  printf '%s\n' "$payload" | socat -T 1 - "UNIX-CONNECT:$socket" >/dev/null 2>&1
+  payload=$(jq -c --argjson requestId "$request_id" '. + {request_id: $requestId}' <<< "$payload") || return 1
+  response=$(printf '%s\n' "$payload" | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null) || return 1
+  jq -e --argjson requestId "$request_id" \
+    'select(.request_id == $requestId and .error == "success")' \
+    <<< "$response" >/dev/null 2>&1
 }
 
 status() {
   if [[ ! -S $socket ]]; then
-    jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,station:{}}'
+    write_status "$(jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,loaded:false,station:{}}')"
     return
   fi
 
@@ -58,18 +84,24 @@ status() {
 
   if ! jq -e 'select(.request_id == 1)' <<< "$response" >/dev/null 2>&1; then
     rm -f "$socket"
-    jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,station:{}}'
+    write_status "$(jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,loaded:false,station:{}}')"
     return
   fi
 
-  local position station
+  local position station loaded station_uuid loaded_uuid
   position=$(jq -r 'select(.request_id == 3) | .data' <<< "$response" | head -n 1)
   station='{}'
   if [[ $position =~ ^[0-9]+$ ]] && [[ -s $queue_file ]]; then
     station=$(jq -c --argjson position "$position" '.[$position] // {}' "$queue_file" 2>/dev/null || printf '{}')
   fi
+  loaded=false
+  station_uuid=$(jq -r '.uuid // ""' <<< "$station")
+  if [[ -n $station_uuid && -s $status_file ]]; then
+    loaded_uuid=$(jq -r 'select(.loaded == true) | .station.uuid // ""' "$status_file" 2>/dev/null || true)
+    [[ $loaded_uuid == "$station_uuid" ]] && loaded=true
+  fi
 
-  jq -sc --argjson station "$station" '{
+  write_status "$(jq -sc --argjson station "$station" --argjson loaded "$loaded" '{
     running: true,
     paused: ([.[] | select(.request_id == 1) | .data][0] // false),
     muted: ([.[] | select(.request_id == 6) | .data][0] // false),
@@ -77,18 +109,60 @@ status() {
     playlistPosition: ([.[] | select(.request_id == 3) | .data][0] // -1),
     playlistCount: ([.[] | select(.request_id == 4) | .data][0] // 0),
     volume: ([.[] | select(.request_id == 5) | .data][0] // 70),
+    loaded: $loaded,
     station: $station
-  }' <<< "$response"
+  }' <<< "$response")"
 }
 
 set_volume() {
   local volume=${1:-}
   [[ $volume =~ ^[0-9]+$ ]] || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
   (( volume >= 0 && volume <= 100 )) || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
-  persist_volume "$volume"
   local command
   command=$(jq -cn --argjson volume "$volume" '{command:["set_property","volume",$volume]}')
-  send_command "$command" || true
+  if [[ -S $socket ]] && ! send_command "$command"; then
+    status >/dev/null
+    if [[ -S $socket ]]; then
+      echo 'Radio volume could not be changed' >&2
+      exit 4
+    fi
+  fi
+  persist_volume "$volume"
+  status
+}
+
+player_command() {
+  local payload=$1
+  if ! send_command "$payload"; then
+    status >/dev/null
+    echo 'Radio player is unavailable' >&2
+    exit 4
+  fi
+  status
+}
+
+stop_player() {
+  if [[ ! -S $socket ]]; then
+    status
+    return
+  fi
+
+  if ! send_command '{"command":["quit"]}'; then
+    status >/dev/null
+    if [[ ! -S $socket ]]; then
+      status
+      return
+    fi
+    echo 'Radio player could not be stopped' >&2
+    exit 4
+  fi
+
+  for _ in $(seq 1 100); do
+    [[ ! -S $socket ]] && break
+    sleep 0.02
+  done
+  status >/dev/null
+  [[ ! -S $socket ]] || { echo 'Radio player could not be stopped' >&2; exit 4; }
   status
 }
 
@@ -117,6 +191,23 @@ source_stations() {
   esac
 }
 
+refresh_saved_stations() {
+  local source_file=$1
+  local uuids refreshed
+  uuids=$(jq -r 'map(.uuid) | join(",")' "$source_file")
+  [[ -n $uuids ]] || return
+
+  refreshed=$(mktemp "$runtime_dir/refreshed.XXXXXX")
+  if "$fetch_path" resolve "$uuids" > "$refreshed"; then
+    jq -c --slurpfile refreshed "$refreshed" '
+      ($refreshed[0] | INDEX(.uuid)) as $byUuid
+      | map($byUuid[.uuid] // .)
+    ' "$source_file" > "$source_file.next"
+    mv "$source_file.next" "$source_file"
+  fi
+  rm -f "$refreshed"
+}
+
 play_station() {
   local uuid=$1
   local scope=${2:-results}
@@ -124,9 +215,19 @@ play_station() {
   source_file=$(mktemp "$runtime_dir/source.XXXXXX")
   source_stations "$scope" > "$source_file"
 
-  if ! jq -e --arg uuid "$uuid" 'any(.[]; .uuid == $uuid)' "$source_file" >/dev/null; then
+  if [[ $scope == favorites || $scope == recent ]]; then
+    refresh_saved_stations "$source_file"
+  fi
+
+  if ! jq -e --arg uuid "$uuid" '
+    any(.[];
+      .uuid == $uuid
+      and (.url | type == "string")
+      and (.url | test("^https?://"; "i"))
+      and (.url | test("[\\r\\n]")) == false)
+  ' "$source_file" >/dev/null; then
     rm -f "$source_file"
-    echo 'Station is not in the selected list' >&2
+    echo 'Station is unavailable or has an unsafe stream URL' >&2
     exit 3
   fi
 
@@ -134,23 +235,35 @@ play_station() {
   temporary_playlist=$(mktemp "$runtime_dir/playlist.XXXXXX")
   temporary_queue=$(mktemp "$runtime_dir/queue.XXXXXX")
   jq -c --arg uuid "$uuid" \
-    '([.[] | select(.uuid == $uuid)] + [.[] | select(.uuid != $uuid)])' \
+    'def playable:
+      (.url | type == "string")
+      and (.url | test("^https?://"; "i"))
+      and (.url | test("[\\r\\n]")) == false;
+    ([.[] | select(.uuid == $uuid and playable)]
+      + [.[] | select(.uuid != $uuid and playable)])' \
     "$source_file" > "$temporary_queue"
-  mv "$temporary_queue" "$queue_file"
   {
     printf '#EXTM3U\n'
     jq -r '
       .[]
       | "#EXTINF:-1," + (.name | gsub("[\\r\\n]"; " ")), .url
-    ' "$queue_file"
+    ' "$temporary_queue"
   } > "$temporary_playlist"
-  mv "$temporary_playlist" "$playlist"
   rm -f "$source_file"
 
   local load_command
-  load_command=$(jq -cn --arg path "$playlist" '{command:["loadlist",$path,"replace"]}')
+  load_command=$(jq -cn --arg path "$temporary_playlist" '{command:["loadlist",$path,"replace"]}')
   if ! send_command "$load_command"; then
-    rm -f "$socket"
+    status >/dev/null
+    if [[ -S $socket ]]; then
+      rm -f "$temporary_playlist" "$temporary_queue"
+      echo 'Radio player could not load this station' >&2
+      exit 4
+    fi
+    mv "$temporary_queue" "$queue_file"
+    mv "$temporary_playlist" "$playlist"
+    RADIO_ATLAS_STATUS_FILE="$status_file" \
+    RADIO_ATLAS_QUEUE_FILE="$queue_file" \
     setsid -f mpv \
       --no-video \
       --force-window=no \
@@ -160,6 +273,7 @@ play_station() {
       --volume="$(configured_volume)" \
       --volume-max=100 \
       --input-ipc-server="$socket" \
+      --script="$status_script" \
       --playlist="$playlist" \
       --no-terminal \
       --really-quiet \
@@ -169,6 +283,12 @@ play_station() {
       [[ -S $socket ]] && break
       sleep 0.02
     done
+    [[ -S $socket ]] || { echo 'Radio player could not start' >&2; exit 4; }
+  else
+    mv "$temporary_queue" "$queue_file"
+    mv "$temporary_playlist" "$playlist"
+    send_command '{"command":["script-message","radio-atlas-reload"]}' \
+      || { echo 'Radio player could not refresh its station queue' >&2; exit 4; }
   fi
 
   if [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]]; then
@@ -186,20 +306,16 @@ case "$action" in
     play_station "${2:-}" "${3:-results}"
     ;;
   toggle)
-    send_command '{"command":["cycle","pause"]}' || true
-    status
+    player_command '{"command":["cycle","pause"]}'
     ;;
   next)
-    send_command '{"command":["playlist-next","force"]}' || true
-    status
+    player_command '{"command":["playlist-next","force"]}'
     ;;
   previous)
-    send_command '{"command":["playlist-prev","force"]}' || true
-    status
+    player_command '{"command":["playlist-prev","force"]}'
     ;;
   mute)
-    send_command '{"command":["cycle","mute"]}' || true
-    status
+    player_command '{"command":["cycle","mute"]}'
     ;;
   volume)
     set_volume "${2:-}"
@@ -211,13 +327,7 @@ case "$action" in
     adjust_volume -5
     ;;
   stop)
-    send_command '{"command":["quit"]}' || true
-    for _ in $(seq 1 20); do
-      [[ ! -S $socket ]] && break
-      sleep 0.02
-    done
-    rm -f "$socket"
-    status
+    stop_player
     ;;
   status)
     status

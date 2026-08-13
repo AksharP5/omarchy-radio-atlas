@@ -5,12 +5,14 @@ signal to play it, or click a country to browse its stations. Playback runs in
 Omarchy's existing `mpv` and `mpv-mpris` setup, so `omarchy.media` provides the
 usual play, pause, previous, and next controls.
 
+![Radio Atlas showing live stations across the globe](preview.png)
+
 ## Features
 
-- Drag, momentum, and wheel zoom on a theme-aware globe
+- Precise drag rotation and deep wheel zoom on a theme-aware globe
 - Station and country selection directly on the map
 - Automatic country focus for the station that is actually playing
-- Search by station, country, or genre
+- Live search by station, country, or genre
 - Random tuning, favorites, and recent stations
 - Independent volume slider, mute, and bar-wheel volume control
 - Click-through desktop focus outside the atlas panel
@@ -24,9 +26,22 @@ usual play, pause, previous, and next controls.
 omarchy plugin add https://github.com/AksharP5/omarchy-radio-atlas.git --enable
 ```
 
-The repository is private during local development. Clone it through an
-authenticated GitHub session or link the checkout into
-`~/.config/omarchy/plugins/akshar.radio-atlas`.
+Radio Atlas uses `curl`, `jq`, `mpv`, `socat`, `coreutils`, and `util-linux`.
+These packages ship with Omarchy. `mpv-mpris` connects playback to
+`omarchy.media` and is also part of the standard Omarchy installation.
+
+## Remove
+
+Stop the independent radio player before removing the plugin:
+
+```bash
+~/.config/omarchy/plugins/akshar.radio-atlas/radio-player stop
+omarchy plugin remove akshar.radio-atlas
+```
+
+Favorites, listening history, and the saved volume remain in
+`~/.local/share/radio-atlas/state.json` so reinstalling restores them. Remove
+`~/.local/share/radio-atlas/` manually if you also want to delete that data.
 
 ## Controls
 

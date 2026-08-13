@@ -1,24 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-runtime_root=${XDG_RUNTIME_DIR:-/tmp}
-runtime_dir="$runtime_root/omarchy-radio-atlas-$UID"
+if [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
+  runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
+else
+  runtime_dir="/tmp/omarchy-radio-atlas-$UID"
+fi
 mkdir -p "$runtime_dir"
 
 world_file="$runtime_dir/world.json"
 results_file="$runtime_dir/results.json"
 user_agent='Radio Atlas/0.1 (https://github.com/AksharP5/omarchy-radio-atlas)'
-bases=(
-  'https://all.api.radio-browser.info'
-  'https://de1.api.radio-browser.info'
-  'https://nl1.api.radio-browser.info'
-)
+
+discover_bases() {
+  local ip hostname
+  while read -r ip; do
+    hostname=$(getent hosts "$ip" 2>/dev/null | awk 'NR == 1 { print $2 }')
+    if [[ $hostname =~ ^[A-Za-z0-9.-]+\.api\.radio-browser\.info$ ]]; then
+      printf 'https://%s\n' "$hostname"
+    fi
+  done < <(getent ahostsv4 all.api.radio-browser.info 2>/dev/null \
+    | awk '!seen[$1]++ { print $1 }')
+
+  printf '%s\n' \
+    'https://all.api.radio-browser.info' \
+    'https://de1.api.radio-browser.info'
+}
+
+mapfile -t bases < <(discover_bases | awk '!seen[$0]++' | shuf)
 
 normalize='def number_or_null: try tonumber catch null;
   map({
     uuid: (.stationuuid // ""),
     name: ((.name // "Unknown station") | gsub("[\\r\\n\\t]"; " ") | gsub("  +"; " ")),
-    url: (.url_resolved // .url // ""),
+    url: ((.url_resolved // .url // "") | gsub("[\\r\\n\\t]"; "")),
     homepage: (.homepage // ""),
     favicon: (.favicon // ""),
     country: (.country // ""),
@@ -33,20 +48,33 @@ normalize='def number_or_null: try tonumber catch null;
     latitude: ((.geo_lat // null) | number_or_null),
     longitude: ((.geo_long // null) | number_or_null)
   })
-  | map(select(.uuid != "" and .url != ""))
-  | unique_by(.uuid)'
+  | map(select(
+      .uuid != ""
+      and (.url | test("^https?://"; "i"))
+      and (.latitude == null or (.latitude >= -90 and .latitude <= 90))
+      and (.longitude == null or (.longitude >= -180 and .longitude <= 180))
+    ))
+  | reduce .[] as $station ({seen: {}, rows: []};
+      if .seen[$station.uuid] then .
+      else .seen[$station.uuid] = true | .rows += [$station]
+      end)
+  | .rows'
 
 request() {
   local path=$1
   shift
-  local base
+  local base error_file
+  error_file=$(mktemp "$runtime_dir/request.XXXXXX")
   for base in "${bases[@]}"; do
     if curl --fail --silent --show-error --location \
       --connect-timeout 4 --max-time 12 --retry 1 \
-      --user-agent "$user_agent" --get "$base$path" "$@"; then
+      --user-agent "$user_agent" --get "$base$path" "$@" 2>"$error_file"; then
+      rm -f "$error_file"
       return 0
     fi
   done
+  cat "$error_file" >&2
+  rm -f "$error_file"
   return 1
 }
 
@@ -59,6 +87,16 @@ store_results() {
   if [[ $target != "$results_file" ]]; then
     cp "$target" "$results_file"
   fi
+  cat "$target"
+}
+
+store_random_results() {
+  local target=$1
+  local temporary
+  store_results "$target" >/dev/null
+  temporary=$(mktemp "$runtime_dir/random.XXXXXX")
+  jq -c '.[]' "$target" | shuf | jq -sc . > "$temporary"
+  mv "$temporary" "$target"
   cat "$target"
 }
 
@@ -109,13 +147,42 @@ fetch_search() {
     --data-urlencode 'limit=80' > "$search_dir/tag.json" &
   local tag_pid=$!
 
-  wait "$name_pid" || printf '[]' > "$search_dir/name.json"
-  wait "$country_pid" || printf '[]' > "$search_dir/country.json"
-  wait "$tag_pid" || printf '[]' > "$search_dir/tag.json"
+  local successful=0
+  if wait "$name_pid"; then
+    successful=$((successful + 1))
+  else
+    printf '[]' > "$search_dir/name.json"
+  fi
+  if wait "$country_pid"; then
+    successful=$((successful + 1))
+  else
+    printf '[]' > "$search_dir/country.json"
+  fi
+  if wait "$tag_pid"; then
+    successful=$((successful + 1))
+  else
+    printf '[]' > "$search_dir/tag.json"
+  fi
+
+  if (( successful == 0 )); then
+    rm -rf "$search_dir"
+    echo 'Station service is unavailable' >&2
+    return 1
+  fi
 
   jq -s 'add' "$search_dir/name.json" "$search_dir/country.json" "$search_dir/tag.json" \
     | store_results "$results_file"
   rm -rf "$search_dir"
+}
+
+resolve_stations() {
+  local uuids=$1
+  [[ $uuids =~ ^[0-9A-Fa-f-]{20,}(,[0-9A-Fa-f-]{20,})*$ ]] \
+    || { echo 'Invalid station ids' >&2; exit 2; }
+
+  request '/json/stations/byuuid' \
+    --data-urlencode "uuids=$uuids" \
+    | jq -c "$normalize"
 }
 
 action=${1:-world}
@@ -145,7 +212,10 @@ case "$action" in
       --data-urlencode 'hidebroken=true' \
       --data-urlencode 'order=random' \
       --data-urlencode 'limit=60' \
-      | store_results "$results_file"
+      | store_random_results "$results_file"
+    ;;
+  resolve)
+    resolve_stations "${2:-}"
     ;;
   *)
     echo "Unknown action: $action" >&2

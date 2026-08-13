@@ -90,10 +90,6 @@ function countryAt(features, latitude, longitude) {
 function countryCentre(features, code) {
   var rows = Array.isArray(features) ? features : []
   var wanted = String(code || "").toUpperCase()
-  var x = 0
-  var y = 0
-  var z = 0
-  var count = 0
 
   for (var i = 0; i < rows.length; i++) {
     var feature = rows[i]
@@ -104,28 +100,52 @@ function countryCentre(features, code) {
     var polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
     if (!Array.isArray(polygons)) return null
 
+    var best = null
     for (var p = 0; p < polygons.length; p++) {
       var ring = polygons[p] && polygons[p][0]
-      if (!Array.isArray(ring)) continue
+      if (!Array.isArray(ring) || ring.length < 3) continue
+
+      var points = []
+      var previousLongitude = Number(ring[0][0])
       for (var n = 0; n < ring.length; n++) {
-        var longitude = Number(ring[n][0]) * radians
-        var latitude = Number(ring[n][1]) * radians
+        var longitude = Number(ring[n][0])
+        var latitude = Number(ring[n][1])
         if (!isFinite(longitude) || !isFinite(latitude)) continue
-        var cosLatitude = Math.cos(latitude)
-        x += cosLatitude * Math.cos(longitude)
-        y += cosLatitude * Math.sin(longitude)
-        z += Math.sin(latitude)
-        count++
+        if (points.length > 0) {
+          while (longitude - previousLongitude > 180) longitude -= 360
+          while (longitude - previousLongitude < -180) longitude += 360
+        }
+        points.push([longitude, latitude])
+        previousLongitude = longitude
+      }
+      if (points.length < 3) continue
+
+      var crossSum = 0
+      var longitudeSum = 0
+      var latitudeSum = 0
+      for (var pointIndex = 0, previous = points.length - 1;
+           pointIndex < points.length; previous = pointIndex++) {
+        var first = points[previous]
+        var second = points[pointIndex]
+        var cross = first[0] * second[1] - second[0] * first[1]
+        crossSum += cross
+        longitudeSum += (first[0] + second[0]) * cross
+        latitudeSum += (first[1] + second[1]) * cross
+      }
+
+      var area = Math.abs(crossSum)
+      if (area < 1e-9 || (best && area <= best.area)) continue
+      best = {
+        area: area,
+        latitude: latitudeSum / (3 * crossSum),
+        longitude: wrapLongitude(longitudeSum / (3 * crossSum))
       }
     }
-    break
+
+    return best ? { latitude: best.latitude, longitude: best.longitude } : null
   }
 
-  if (count === 0) return null
-  return {
-    latitude: Math.atan2(z, Math.sqrt(x * x + y * y)) * degrees,
-    longitude: wrapLongitude(Math.atan2(y, x) * degrees)
-  }
+  return null
 }
 
 function stationPosition(station, width, height, scale, centreLatitude, centreLongitude) {

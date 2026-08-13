@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode=${RADIO_ATLAS_TEST_SOCAT_MODE:-}
+[[ -n $mode ]] || exec /usr/bin/socat "$@"
+
+input=$(cat)
+if [[ $input == *'"request_id":1'* ]]; then
+  printf '%s\n' \
+    '{"data":false,"request_id":1,"error":"success"}' \
+    '{"data":"Test Radio","request_id":2,"error":"success"}' \
+    '{"data":0,"request_id":3,"error":"success"}' \
+    '{"data":1,"request_id":4,"error":"success"}' \
+    '{"data":70,"request_id":5,"error":"success"}' \
+    '{"data":false,"request_id":6,"error":"success"}'
+  exit 0
+fi
+
+if [[ $mode == error ]]; then
+  printf '%s\n' '{"request_id":9001,"error":"invalid parameter"}'
+  exit 0
+fi
+
+printf '%s\n' '{"request_id":9001,"error":"success"}'

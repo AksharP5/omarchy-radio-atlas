@@ -28,6 +28,7 @@ Item {
 
   property bool fetching: false
   property string fetchAction: ""
+  property string fetchValue: ""
   property string pendingFetchAction: ""
   property string pendingFetchValue: ""
   property string fetchError: ""
@@ -42,20 +43,25 @@ Item {
   property string playerTitle: ""
   property var playingStation: null
   property string playingStationUuid: ""
+  property string recordedStationUuid: ""
   property int playlistPosition: -1
   property int playlistCount: 0
+  property string playerError: ""
+  property string localError: ""
+  property bool localReloadPending: false
+  property var pendingFavoriteUuids: []
+  property string pendingRecentUuid: ""
 
   readonly property string fetchPath: Qt.resolvedUrl("radio-fetch").toString().replace(/^file:\/\//, "")
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
   readonly property string statePath: Qt.resolvedUrl("radio-state").toString().replace(/^file:\/\//, "")
+  readonly property string statusPath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas/status.json"
 
   readonly property var displayStations: mode === "favorites"
     ? favorites
     : (mode === "recent" ? recent : results)
-  readonly property var currentGeoStations: {
-    var current = RadioModel.mergeGeoStations([], displayStations)
-    return current.length > 0 ? current : worldStations
-  }
+  readonly property var currentGeoStations: RadioModel.mergeGeoStations([], displayStations)
+  readonly property bool remoteMode: mode !== "favorites" && mode !== "recent"
   readonly property bool lightTheme:
     0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b > 0.5
 
@@ -83,7 +89,6 @@ Item {
     opened = true
     fetchError = ""
     loadState()
-    refreshPlayerStatus()
     if (payload.action === "random") tuneRandom()
     else if (worldStations.length === 0) showWorld()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -107,7 +112,24 @@ Item {
     }
     activeCountryCode = String(station.countryCode || "").toUpperCase()
     activeCountryName = String(station.country || activeCountryCode)
-    if (focusGlobe === true && activeCountryCode) globe.focusCountry(activeCountryCode)
+    if (focusGlobe !== true) return
+    var latitude = Number(station.latitude)
+    var longitude = Number(station.longitude)
+    if (station.latitude !== null && station.longitude !== null
+        && isFinite(latitude) && isFinite(longitude)) {
+      globe.focusCoordinate(latitude, longitude)
+    } else if (activeCountryCode) {
+      globe.focusCountry(activeCountryCode)
+    }
+  }
+
+  function restorePlayingCountry(focusGlobe) {
+    if (playerRunning && playingStation) {
+      highlightStationCountry(playingStation, focusGlobe === true)
+      return
+    }
+    activeCountryCode = ""
+    activeCountryName = ""
   }
 
   function setSelection(index) {
@@ -135,42 +157,65 @@ Item {
     setSelection(stations.length > 0 ? 0 : -1)
   }
 
+  function cancelPendingFetch() {
+    pendingFetchAction = ""
+    pendingFetchValue = ""
+  }
+
   function startFetch(action, value) {
+    var nextValue = value || ""
     if (fetchProcess.running) {
+      if (fetchAction === action && fetchValue === nextValue) {
+        cancelPendingFetch()
+        return
+      }
+      if (pendingFetchAction === action && pendingFetchValue === nextValue) return
       pendingFetchAction = action
-      pendingFetchValue = value || ""
+      pendingFetchValue = nextValue
       fetching = true
       return
     }
     fetching = true
     fetchAction = action
+    fetchValue = nextValue
     fetchError = ""
     fetchOutput = ""
     fetchStderr = ""
-    fetchProcess.command = value ? [fetchPath, action, value] : [fetchPath, action]
+    fetchProcess.command = nextValue ? [fetchPath, action, nextValue] : [fetchPath, action]
     fetchProcess.running = true
   }
 
   function showWorld() {
-    activeCountryCode = ""
-    activeCountryName = ""
+    searchDebounce.stop()
+    cancelPendingFetch()
+    searchField.text = ""
+    restorePlayingCountry(false)
+    fetchError = ""
+    localError = ""
+    setStationList("world", worldStations)
     startFetch("world", "")
   }
 
   function showFavorites() {
+    searchDebounce.stop()
+    cancelPendingFetch()
+    searchField.text = ""
     mode = "favorites"
-    activeCountryCode = ""
-    activeCountryName = ""
+    restorePlayingCountry(true)
+    fetchError = ""
+    localError = ""
     setSelection(favorites.length > 0 ? 0 : -1)
-    if (playerRunning && playingStation) highlightStationCountry(playingStation, true)
   }
 
   function showRecent() {
+    searchDebounce.stop()
+    cancelPendingFetch()
+    searchField.text = ""
     mode = "recent"
-    activeCountryCode = ""
-    activeCountryName = ""
+    restorePlayingCountry(true)
+    fetchError = ""
+    localError = ""
     setSelection(recent.length > 0 ? 0 : -1)
-    if (playerRunning && playingStation) highlightStationCountry(playingStation, true)
   }
 
   function search(text) {
@@ -179,23 +224,31 @@ Item {
       showWorld()
       return
     }
-    activeCountryCode = ""
-    activeCountryName = ""
+    restorePlayingCountry(false)
+    mode = "search"
+    fetchError = ""
     startFetch("search", query)
-    keyCatcher.forceActiveFocus()
   }
 
   function browseCountry(code, name) {
+    searchDebounce.stop()
+    cancelPendingFetch()
+    mode = "country"
     activeCountryCode = code
     activeCountryName = name
+    fetchError = ""
     searchField.text = name
     startFetch("country", code)
     keyCatcher.forceActiveFocus()
   }
 
   function tuneRandom() {
-    activeCountryCode = ""
-    activeCountryName = ""
+    searchDebounce.stop()
+    cancelPendingFetch()
+    searchField.text = ""
+    mode = "random"
+    restorePlayingCountry(false)
+    fetchError = ""
     startFetch("random", "")
   }
 
@@ -215,17 +268,20 @@ Item {
   function playSelected() {
     if (!selectedStation || playerActionProcess.running) return
     highlightStationCountry(selectedStation, true)
+    playerError = ""
     playerActionProcess.action = "play"
     playerActionProcess.output = ""
+    playerActionProcess.errorOutput = ""
     playerActionProcess.command = [playerPath, "play", selectedStation.uuid, playlistScope()]
     playerActionProcess.running = true
-    recordPlayed(selectedStation.uuid)
   }
 
   function playerAction(action) {
     if (playerActionProcess.running) return
+    playerError = ""
     playerActionProcess.action = action
     playerActionProcess.output = ""
+    playerActionProcess.errorOutput = ""
     playerActionProcess.command = [playerPath, action]
     playerActionProcess.running = true
   }
@@ -233,23 +289,23 @@ Item {
   function applyPlayerState(raw) {
     try {
       var state = JSON.parse(raw || "{}")
-      var previousTitle = playerTitle
+      var previousUuid = playingStationUuid
+      var nextPlayingStation = state.station && typeof state.station === "object"
+        && String(state.station.uuid || "") ? state.station : null
+      var nextPlayingUuid = nextPlayingStation ? String(nextPlayingStation.uuid) : ""
       playerRunning = state.running === true
       playerPaused = state.paused === true
       playerMuted = state.muted === true
       playerVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
-      playerTitle = String(state.title || "")
+      playerTitle = String(state.title || (nextPlayingStation && nextPlayingStation.name) || "")
       playlistPosition = Number(state.playlistPosition === undefined ? -1 : state.playlistPosition)
       playlistCount = Number(state.playlistCount || 0)
 
-      var nextPlayingStation = state.station && typeof state.station === "object"
-        && String(state.station.uuid || "") ? state.station : null
-      var nextPlayingUuid = nextPlayingStation ? String(nextPlayingStation.uuid) : ""
-      var playingChanged = nextPlayingUuid
-        ? nextPlayingUuid !== playingStationUuid
-        : playerTitle !== previousTitle
+      var playingChanged = playerRunning && nextPlayingUuid && nextPlayingUuid !== previousUuid
       playingStation = nextPlayingStation
       playingStationUuid = playerRunning ? nextPlayingUuid : ""
+      playerError = ""
+      if (!playerRunning) recordedStationUuid = ""
 
       var matchingIndex = nextPlayingUuid
         ? RadioModel.indexByUuid(displayStations, nextPlayingUuid) : -1
@@ -266,19 +322,13 @@ Item {
       var countryStation = nextPlayingStation || (matchingIndex >= 0 ? selectedStation : null)
       if (playerRunning && playingChanged && countryStation)
         highlightStationCountry(countryStation, true)
+      if (state.loaded === true && nextPlayingUuid && nextPlayingUuid !== recordedStationUuid) {
+        recordedStationUuid = nextPlayingUuid
+        recordPlayed(nextPlayingUuid)
+      }
     } catch (error) {
-      playerRunning = false
-      playerPaused = false
-      playerMuted = false
-      playerTitle = ""
-      playingStation = null
-      playingStationUuid = ""
+      playerError = "Player status is unavailable"
     }
-  }
-
-  function refreshPlayerStatus() {
-    if (!playerStatusProcess.running && !playerActionProcess.running)
-      playerStatusProcess.running = true
   }
 
   function setPlayerVolume(value) {
@@ -292,11 +342,27 @@ Item {
   }
 
   function loadState() {
-    if (stateProcess.running) return
+    if (stateProcess.running) {
+      localReloadPending = true
+      return
+    }
+    localReloadPending = false
     stateProcess.action = "get"
     stateProcess.output = ""
+    stateProcess.errorOutput = ""
     stateProcess.command = [statePath, "get"]
     stateProcess.running = true
+  }
+
+  function requestLocalStateReload() {
+    localReloadPending = true
+    Qt.callLater(reloadLocalStateWhenIdle)
+  }
+
+  function reloadLocalStateWhenIdle() {
+    if (!localReloadPending || stateProcess.running || historyProcess.running
+        || pendingFavoriteUuids.length > 0 || pendingRecentUuid) return
+    loadState()
   }
 
   function applyLocalState(raw) {
@@ -304,9 +370,9 @@ Item {
       var state = JSON.parse(raw || "{}")
       favorites = Array.isArray(state.favorites) ? state.favorites : []
       recent = Array.isArray(state.recent) ? state.recent : []
+      localError = ""
     } catch (error) {
-      favorites = []
-      recent = []
+      localError = "Saved stations could not be loaded"
     }
   }
 
@@ -315,18 +381,56 @@ Item {
   }
 
   function toggleFavorite(uuid) {
-    if (!uuid || stateProcess.running) return
+    if (!uuid) return
+    localError = ""
+    if (stateProcess.running) {
+      pendingFavoriteUuids = pendingFavoriteUuids.concat([uuid])
+      return
+    }
+    startFavorite(uuid)
+  }
+
+  function startFavorite(uuid) {
     stateProcess.action = "favorite"
     stateProcess.output = ""
+    stateProcess.errorOutput = ""
     stateProcess.command = [statePath, "favorite", uuid]
     stateProcess.running = true
   }
 
   function recordPlayed(uuid) {
-    if (!uuid || historyProcess.running) return
+    if (!uuid) return
+    if (historyProcess.running) {
+      pendingRecentUuid = uuid
+      return
+    }
+    startRecordPlayed(uuid)
+  }
+
+  function startRecordPlayed(uuid) {
     historyProcess.output = ""
+    historyProcess.errorOutput = ""
     historyProcess.command = [statePath, "played", uuid]
     historyProcess.running = true
+  }
+
+  function refreshLocalSelection() {
+    if (mode !== "favorites" && mode !== "recent") return
+    var stations = displayStations
+    var preferredUuid = selectedStation ? selectedStation.uuid : playingStationUuid
+    var index = preferredUuid ? RadioModel.indexByUuid(stations, preferredUuid) : -1
+    if (index < 0 && stations.length > 0) index = Math.min(Math.max(selectedIndex, 0), stations.length - 1)
+    setSelection(index)
+  }
+
+  function emptyStateText() {
+    if (fetchError) return fetchError
+    if (localError) return localError
+    if (mode === "favorites") return "No favorites yet. Select a station and press F."
+    if (mode === "recent") return "No listening history yet."
+    if (mode === "search") return "No stations match “" + String(searchField.text || "").trim() + "”."
+    if (mode === "country") return "No working stations found in " + (activeCountryName || "this country") + "."
+    return "No working stations found."
   }
 
   FileView {
@@ -342,6 +446,15 @@ Item {
         root.fetchError = "Map data could not be loaded"
       }
     }
+  }
+
+  FileView {
+    path: root.statusPath
+    watchChanges: true
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root.applyPlayerState(text())
+    onFileChanged: reload()
   }
 
   Process {
@@ -362,13 +475,18 @@ Item {
         root.pendingFetchAction = ""
         root.pendingFetchValue = ""
         root.fetching = false
-        Qt.callLater(function() { root.startFetch(nextAction, nextValue) })
+        Qt.callLater(function() {
+          if (root.mode === nextAction) root.startFetch(nextAction, nextValue)
+        })
         return
       }
 
       root.fetching = false
+      if (root.mode !== root.fetchAction) return
+      if (root.fetchAction === "search"
+          && String(searchField.text || "").trim() !== root.fetchValue) return
       if (exitCode !== 0) {
-        root.fetchError = String(root.fetchStderr || "Station service is unavailable").trim()
+        root.fetchError = "Could not load stations"
         return
       }
 
@@ -378,6 +496,7 @@ Item {
         return
       }
       if (!Array.isArray(stations)) stations = []
+      root.fetchError = ""
 
       if (root.fetchAction === "world") {
         root.worldStations = stations
@@ -391,79 +510,123 @@ Item {
         if (stations.length > 0) root.playSelected()
       }
 
-      if (stations.length === 0) root.fetchError = "No working stations found"
     }
   }
 
   Process {
     id: volumeProcess
     property string output: ""
+    property string errorOutput: ""
     command: []
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: volumeProcess.output = text
     }
-    onExited: root.applyPlayerState(output)
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: volumeProcess.errorOutput = text
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) root.playerError = "Could not change volume"
+    }
   }
 
   Process {
     id: playerActionProcess
     property string action: ""
     property string output: ""
+    property string errorOutput: ""
     command: []
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: playerActionProcess.output = text
     }
-    onExited: {
-      root.applyPlayerState(output)
-      root.loadState()
-    }
-  }
-
-  Process {
-    id: playerStatusProcess
-    property string output: ""
-    command: [root.playerPath, "status"]
-    stdout: StdioCollector {
+    stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: playerStatusProcess.output = text
+      onStreamFinished: playerActionProcess.errorOutput = text
     }
-    onExited: root.applyPlayerState(output)
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.playerError = playerActionProcess.action === "play"
+          ? "Could not play this station" : "Player action failed"
+      }
+    }
   }
 
   Process {
     id: stateProcess
     property string action: ""
     property string output: ""
+    property string errorOutput: ""
     command: []
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: stateProcess.output = text
     }
-    onExited: {
-      root.applyLocalState(output)
-      if (root.mode === "favorites") root.setSelection(root.favorites.length > 0 ? Math.min(root.selectedIndex, root.favorites.length - 1) : -1)
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: stateProcess.errorOutput = text
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        if (stateProcess.action === "get") {
+          root.applyLocalState(output)
+          root.refreshLocalSelection()
+        } else {
+          root.localError = ""
+          root.localReloadPending = true
+        }
+      } else {
+        root.localError = stateProcess.action === "favorite"
+          ? "Favorite could not be updated" : "Saved stations could not be loaded"
+      }
+
+      if (root.pendingFavoriteUuids.length > 0) {
+        var nextUuid = root.pendingFavoriteUuids[0]
+        root.pendingFavoriteUuids = root.pendingFavoriteUuids.slice(1)
+        Qt.callLater(function() { root.startFavorite(nextUuid) })
+        return
+      }
+      if (root.localReloadPending) root.requestLocalStateReload()
     }
   }
 
   Process {
     id: historyProcess
     property string output: ""
+    property string errorOutput: ""
     command: []
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: historyProcess.output = text
     }
-    onExited: root.applyLocalState(output)
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: historyProcess.errorOutput = text
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.localError = ""
+        root.localReloadPending = true
+      } else {
+        root.localError = "Listening history could not be updated"
+      }
+
+      if (root.pendingRecentUuid) {
+        var nextUuid = root.pendingRecentUuid
+        root.pendingRecentUuid = ""
+        Qt.callLater(function() { root.startRecordPlayed(nextUuid) })
+        return
+      }
+      if (root.localReloadPending) root.requestLocalStateReload()
+    }
   }
 
   Timer {
-    interval: root.playerRunning ? 1800 : 5000
-    repeat: true
-    running: root.opened
-    triggeredOnStart: true
-    onTriggered: root.refreshPlayerStatus()
+    id: searchDebounce
+    interval: 300
+    repeat: false
+    onTriggered: root.search(searchField.text)
   }
 
   Timer {
@@ -476,6 +639,7 @@ Item {
         return
       }
       volumeProcess.output = ""
+      volumeProcess.errorOutput = ""
       volumeProcess.command = [root.playerPath, "volume", String(root.pendingVolume)]
       volumeProcess.running = true
     }
@@ -489,7 +653,8 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "omarchy-radio-atlas"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: root.opened && cardHover.hovered
+      ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
 
     BorderSurface {
@@ -501,7 +666,16 @@ Item {
       borderSpec: Border.surfaceSpec("menu", "border", root.border, Math.max(1, Style.normalBorderWidth))
       radius: Style.cornerRadius
 
-      MouseArea { anchors.fill: parent; onClicked: {} }
+      MouseArea {
+        id: cardMouse
+        anchors.fill: parent
+        onClicked: keyCatcher.forceActiveFocus()
+      }
+
+      HoverHandler {
+        id: cardHover
+        onHoveredChanged: if (hovered) keyCatcher.forceActiveFocus()
+      }
 
       Item {
         id: keyCatcher
@@ -513,7 +687,10 @@ Item {
         Keys.onPressed: function(event) {
           if (searchField.activeFocus) {
             if (event.key === Qt.Key_Escape) {
-              if (searchField.text) searchField.clear()
+              if (searchField.text) {
+                searchField.clear()
+                root.showWorld()
+              }
               else keyCatcher.forceActiveFocus()
               event.accepted = true
             }
@@ -598,8 +775,20 @@ Item {
           placeholderText: "Search station, country, or genre"
           foreground: root.foreground
           accent: root.accent
-          enabled: !root.fetching
-          onAccepted: root.search(text)
+          onTextEdited: {
+            if (!String(text || "").trim()) {
+              root.showWorld()
+              return
+            }
+            root.mode = "search"
+            root.restorePlayingCountry(false)
+            root.fetchError = ""
+            searchDebounce.restart()
+          }
+          onAccepted: {
+            searchDebounce.stop()
+            root.search(text)
+          }
         }
 
         Button {
@@ -658,7 +847,7 @@ Item {
             anchors.margins: Style.spacing.lg
             countries: root.countries
             stations: root.currentGeoStations
-            selectedStation: root.selectedStation
+            selectedStation: root.playingStation || root.selectedStation
             activeCountryCode: root.activeCountryCode
             backgroundColor: root.mapBackground
             sphereColor: root.mapSphere
@@ -679,10 +868,12 @@ Item {
             anchors.leftMargin: Style.spacing.panelPadding
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Style.spacing.md
-            text: root.activeCountryName
-              ? root.activeCountryName + "  ·  click another country to retune"
-              : "Drag to rotate  ·  wheel to zoom  ·  click a signal or country"
-            color: root.dim
+            text: root.fetchError || root.localError
+              ? root.fetchError || root.localError
+              : (root.activeCountryName
+                ? root.activeCountryName + "  ·  click another country to retune"
+                : "Drag to rotate  ·  wheel to zoom  ·  click a signal or country")
+            color: root.fetchError || root.localError ? root.urgent : root.dim
             font.family: Style.font.menuFamily
             font.pixelSize: Style.font.caption
           }
@@ -783,16 +974,22 @@ Item {
 
               width: stationList.width
               height: Style.space(64)
-              color: root.selectedIndex === index
+              color: root.playingStationUuid === stationRow.modelData.uuid
                 ? Style.selectedFillFor(root.foreground, root.accent)
-                : (rowMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accent) : "transparent")
+                : (rowMouse.containsMouse
+                  ? Style.hoverFillFor(root.foreground, root.accent)
+                  : "transparent")
 
               Accessible.name: modelData.name + ", " + RadioModel.stationMeta(modelData)
               Accessible.role: Accessible.ListItem
               Accessible.selected: root.selectedIndex === index
+              Accessible.onPressAction: {
+                root.setSelection(stationRow.index)
+                root.playSelected()
+              }
 
               Rectangle {
-                visible: root.playerTitle === stationRow.modelData.name
+                visible: root.playingStationUuid === stationRow.modelData.uuid
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
@@ -811,7 +1008,7 @@ Item {
                 color: root.foreground
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.body
-                font.bold: root.playerTitle === stationRow.modelData.name
+                font.bold: root.playingStationUuid === stationRow.modelData.uuid
                 elide: Text.ElideRight
               }
 
@@ -872,11 +1069,9 @@ Item {
             Text {
               anchors.centerIn: parent
               width: parent.width - Style.spacing.panelPadding * 2
-              visible: !root.fetching && root.displayStations.length === 0
-              text: root.mode === "favorites"
-                ? "No favorites yet. Select a station and press F."
-                : (root.mode === "recent" ? "No listening history yet." : root.fetchError)
-              color: root.dim
+              visible: (!root.fetching || !root.remoteMode) && root.displayStations.length === 0
+              text: root.emptyStateText()
+              color: root.fetchError || root.localError ? root.urgent : root.dim
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.body
               horizontalAlignment: Text.AlignHCenter
@@ -885,7 +1080,7 @@ Item {
 
             Text {
               anchors.centerIn: parent
-              visible: root.fetching
+              visible: root.fetching && root.remoteMode && root.displayStations.length === 0
               text: "LOADING STATIONS"
               color: root.dim
               font.family: Style.font.menuFamily
@@ -930,11 +1125,12 @@ Item {
               anchors.right: nowPlaying.right
               anchors.top: nowPlaying.bottom
               anchors.topMargin: Style.spacing.xs
-              text: !root.playerRunning
-                ? "Choose a signal to begin"
+              text: root.playerError
+                ? root.playerError
+                : (!root.playerRunning ? "Choose a signal to begin"
                 : (root.playerPaused ? "Paused" : "Live")
-                  + (root.playlistCount > 1 ? "  ·  " + root.playlistCount + " stations queued" : "")
-              color: root.dim
+                  + (root.playlistCount > 1 ? "  ·  " + root.playlistCount + " stations queued" : ""))
+              color: root.playerError ? root.urgent : root.dim
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideRight
