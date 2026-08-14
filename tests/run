@@ -60,6 +60,16 @@ locked_status_pid=""
 session_pid=""
 preparing_pid=""
 cleanup() {
+  local exit_code=$?
+  if (( exit_code != 0 )); then
+    for log in "$test_root/session.log" "$test_root/preparing-player.err" \
+      "$runtime_dir/mpv.log" "$runtime_dir/proxy.log"; do
+      if [[ -s $log ]]; then
+        printf '\n%s:\n' "$log" >&2
+        sed -n '1,160p' "$log" >&2
+      fi
+    done
+  fi
   if [[ -n $listener_pid ]]; then
     kill "$listener_pid" 2>/dev/null || true
     wait "$listener_pid" 2>/dev/null || true
@@ -81,6 +91,7 @@ cleanup() {
     wait "$preparing_pid" 2>/dev/null || true
   fi
   rm -rf "$test_root"
+  exit "$exit_code"
 }
 trap cleanup EXIT
 export XDG_RUNTIME_DIR="$test_root/runtime"
@@ -322,7 +333,10 @@ for _ in $(seq 1 100); do
   [[ -s $session_child_file && -S $runtime_dir/proxy.sock ]] && break
   sleep 0.02
 done
-[[ -s $session_child_file && -S $runtime_dir/proxy.sock ]]
+if [[ ! -s $session_child_file || ! -S $runtime_dir/proxy.sock ]]; then
+  echo "Sandbox session did not start" >&2
+  exit 1
+fi
 session_child_pid=$(<"$session_child_file")
 track_player_pid "$session_pid"
 "$project_dir/radio-player" stop | jq -e '.running == false' >/dev/null
@@ -367,7 +381,10 @@ if RADIO_ATLAS_TEST_MPV_MARKER="$mpv_marker" PATH="$project_dir/tests/fixtures:$
   echo "Player startup failure was reported as success" >&2
   exit 1
 fi
-[[ -e $mpv_marker ]]
+if [[ ! -e $mpv_marker ]]; then
+  echo "Player fixture did not start inside the sandbox" >&2
+  exit 1
+fi
 
 unsafe='[{"uuid":"abcdefab-1234-1234-1234-abcdefabcdef","name":"Unsafe","url":"file:///etc/passwd"}]'
 printf '%s\n' "$unsafe" > "$runtime_dir/results.json"
