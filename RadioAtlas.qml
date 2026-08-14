@@ -25,6 +25,7 @@ Item {
   property string activeCountryName: ""
   property int selectedIndex: -1
   property var selectedStation: null
+  property bool keyboardSelectionVisible: false
 
   property bool fetching: false
   property string fetchAction: ""
@@ -39,11 +40,16 @@ Item {
   property bool playerPaused: false
   property bool playerMuted: false
   property int playerVolume: 70
-  property int pendingVolume: 70
+  property int reportedVolume: 70
+  property int pendingVolume: -1
   property string playerTitle: ""
   property var playingStation: null
   property string playingStationUuid: ""
   property string recordedStationUuid: ""
+  property bool playCancellationRequested: false
+  readonly property bool playPreparing: playerActionProcess.running
+    && playerActionProcess.action === "play"
+  readonly property bool playerActionBusy: playerActionProcess.running || stopProcess.running
   property int playlistPosition: -1
   property int playlistCount: 0
   property string playerError: ""
@@ -132,7 +138,8 @@ Item {
     activeCountryName = ""
   }
 
-  function setSelection(index) {
+  function setSelection(index, fromKeyboard) {
+    keyboardSelectionVisible = fromKeyboard === true
     var stations = displayStations
     if (!Array.isArray(stations) || stations.length === 0) {
       selectedIndex = -1
@@ -147,8 +154,8 @@ Item {
 
   function moveSelection(delta) {
     if (displayStations.length === 0) return
-    if (selectedIndex < 0) setSelection(delta < 0 ? displayStations.length - 1 : 0)
-    else setSelection((selectedIndex + delta + displayStations.length) % displayStations.length)
+    if (selectedIndex < 0) setSelection(delta < 0 ? displayStations.length - 1 : 0, true)
+    else setSelection((selectedIndex + delta + displayStations.length) % displayStations.length, true)
   }
 
   function setStationList(nextMode, stations) {
@@ -266,7 +273,8 @@ Item {
   }
 
   function playSelected() {
-    if (!selectedStation || playerActionProcess.running) return
+    if (!selectedStation || playerActionBusy) return
+    playCancellationRequested = false
     highlightStationCountry(selectedStation, true)
     playerError = ""
     playerActionProcess.action = "play"
@@ -277,13 +285,22 @@ Item {
   }
 
   function playerAction(action) {
-    if (playerActionProcess.running) return
+    if (playerActionBusy) return
     playerError = ""
     playerActionProcess.action = action
     playerActionProcess.output = ""
     playerActionProcess.errorOutput = ""
     playerActionProcess.command = [playerPath, action]
     playerActionProcess.running = true
+  }
+
+  function stopPlayer() {
+    if (stopProcess.running || playCancellationRequested) return
+    if (playerActionProcess.running && !playPreparing) return
+    if (playPreparing) playCancellationRequested = true
+    playerError = ""
+    stopProcess.command = [playerPath, "stop"]
+    stopProcess.running = true
   }
 
   function applyPlayerState(raw) {
@@ -296,15 +313,18 @@ Item {
       playerRunning = state.running === true
       playerPaused = state.paused === true
       playerMuted = state.muted === true
-      playerVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
+      var nextVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
+      reportedVolume = isFinite(nextVolume) ? Math.max(0, Math.min(100, nextVolume)) : 70
+      if (pendingVolume < 0) playerVolume = reportedVolume
       playerTitle = String(state.title || (nextPlayingStation && nextPlayingStation.name) || "")
+        .replace(/[\r\n\t]+/g, " ").slice(0, 512)
       playlistPosition = Number(state.playlistPosition === undefined ? -1 : state.playlistPosition)
       playlistCount = Number(state.playlistCount || 0)
 
       var playingChanged = playerRunning && nextPlayingUuid && nextPlayingUuid !== previousUuid
       playingStation = nextPlayingStation
       playingStationUuid = playerRunning ? nextPlayingUuid : ""
-      playerError = ""
+      if (playerError === "Player status is unavailable") playerError = ""
       if (!playerRunning) recordedStationUuid = ""
 
       var matchingIndex = nextPlayingUuid
@@ -334,11 +354,26 @@ Item {
   function setPlayerVolume(value) {
     pendingVolume = Math.max(0, Math.min(100, Math.round(value)))
     playerVolume = pendingVolume
+    playerError = ""
     volumeTimer.restart()
   }
 
   function changePlayerVolume(delta) {
-    setPlayerVolume(playerVolume + delta)
+    var current = pendingVolume >= 0 ? pendingVolume : playerVolume
+    setPlayerVolume(current + delta)
+  }
+
+  function flushPlayerVolume() {
+    if (stopProcess.running) {
+      volumeTimer.restart()
+      return
+    }
+    if (volumeProcess.running || pendingVolume < 0) return
+    volumeProcess.submittedVolume = pendingVolume
+    volumeProcess.output = ""
+    volumeProcess.errorOutput = ""
+    volumeProcess.command = [root.playerPath, "volume", String(pendingVolume)]
+    volumeProcess.running = true
   }
 
   function loadState() {
@@ -469,6 +504,8 @@ Item {
       onStreamFinished: root.fetchStderr = text
     }
     onExited: function(exitCode) {
+      var completedOutput = root.fetchOutput
+      root.fetchOutput = ""
       if (root.pendingFetchAction) {
         var nextAction = root.pendingFetchAction
         var nextValue = root.pendingFetchValue
@@ -491,7 +528,7 @@ Item {
       }
 
       var stations = []
-      try { stations = JSON.parse(root.fetchOutput || "[]") } catch (error) {
+      try { stations = JSON.parse(completedOutput || "[]") } catch (error) {
         root.fetchError = "Station data was not valid"
         return
       }
@@ -515,6 +552,7 @@ Item {
 
   Process {
     id: volumeProcess
+    property int submittedVolume: -1
     property string output: ""
     property string errorOutput: ""
     command: []
@@ -527,7 +565,20 @@ Item {
       onStreamFinished: volumeProcess.errorOutput = text
     }
     onExited: function(exitCode) {
-      if (exitCode !== 0) root.playerError = "Could not change volume"
+      if (exitCode !== 0) {
+        root.pendingVolume = -1
+        root.playerVolume = root.reportedVolume
+        root.playerError = "Could not change volume"
+        return
+      }
+
+      root.reportedVolume = submittedVolume
+      if (root.pendingVolume === submittedVolume) {
+        root.pendingVolume = -1
+        root.playerVolume = submittedVolume
+        return
+      }
+      Qt.callLater(root.flushPlayerVolume)
     }
   }
 
@@ -546,10 +597,21 @@ Item {
       onStreamFinished: playerActionProcess.errorOutput = text
     }
     onExited: function(exitCode) {
-      if (exitCode !== 0) {
+      var canceled = playerActionProcess.action === "play"
+        && root.playCancellationRequested
+      root.playCancellationRequested = false
+      if (exitCode !== 0 && !canceled) {
         root.playerError = playerActionProcess.action === "play"
           ? "Could not play this station" : "Player action failed"
       }
+    }
+  }
+
+  Process {
+    id: stopProcess
+    command: []
+    onExited: function(exitCode) {
+      if (exitCode !== 0) root.playerError = "Could not stop the player"
     }
   }
 
@@ -633,16 +695,7 @@ Item {
     id: volumeTimer
     interval: 90
     repeat: false
-    onTriggered: {
-      if (volumeProcess.running) {
-        restart()
-        return
-      }
-      volumeProcess.output = ""
-      volumeProcess.errorOutput = ""
-      volumeProcess.command = [root.playerPath, "volume", String(root.pendingVolume)]
-      volumeProcess.running = true
-    }
+    onTriggered: root.flushPlayerVolume()
   }
 
   PanelWindow {
@@ -750,6 +803,7 @@ Item {
           anchors.leftMargin: Style.spacing.panelPadding
           anchors.verticalCenter: parent.verticalCenter
           text: "RADIO ATLAS"
+          textFormat: Text.PlainText
           color: root.foreground
           font.family: Style.font.menuFamily
           font.pixelSize: Style.font.heading
@@ -773,6 +827,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           width: Math.min(Style.space(330), card.width * 0.32)
           placeholderText: "Search station, country, or genre"
+          maximumLength: 128
           foreground: root.foreground
           accent: root.accent
           onTextEdited: {
@@ -858,7 +913,11 @@ Item {
             accentColor: root.accent
             textColor: root.foreground
             fontFamily: Style.font.menuFamily
-            onInteractionStarted: keyCatcher.forceActiveFocus()
+            onInteractionStarted: {
+              root.keyboardSelectionVisible = false
+              keyCatcher.forceActiveFocus()
+            }
+            onPointerMoved: root.keyboardSelectionVisible = false
             onStationActivated: function(station) { root.activateMapStation(station) }
             onCountryActivated: function(code, name) { root.browseCountry(code, name) }
           }
@@ -873,6 +932,7 @@ Item {
               : (root.activeCountryName
                 ? root.activeCountryName + "  ·  click another country to retune"
                 : "Drag to rotate  ·  wheel to zoom  ·  click a signal or country")
+            textFormat: Text.PlainText
             color: root.fetchError || root.localError ? root.urgent : root.dim
             font.family: Style.font.menuFamily
             font.pixelSize: Style.font.caption
@@ -884,6 +944,7 @@ Item {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Style.spacing.md
             text: root.currentGeoStations.length + " signals"
+            textFormat: Text.PlainText
             color: root.dim
             font.family: Style.font.menuFamily
             font.pixelSize: Style.font.caption
@@ -997,6 +1058,17 @@ Item {
                 color: root.accent
               }
 
+              Rectangle {
+                anchors.fill: parent
+                visible: root.keyboardSelectionVisible
+                  && root.selectedIndex === stationRow.index
+                  && root.playingStationUuid !== stationRow.modelData.uuid
+                  && !rowMouse.containsMouse
+                color: "transparent"
+                border.color: root.accent
+                border.width: 1
+              }
+
               Text {
                 anchors.left: parent.left
                 anchors.leftMargin: Style.spacing.md
@@ -1005,6 +1077,7 @@ Item {
                 anchors.top: parent.top
                 anchors.topMargin: Style.space(10)
                 text: stationRow.modelData.name
+                textFormat: Text.PlainText
                 color: root.foreground
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.body
@@ -1022,6 +1095,7 @@ Item {
                 text: RadioModel.stationMeta(stationRow.modelData)
                   + (RadioModel.compactTags(stationRow.modelData.tags, 2)
                     ? "  ·  " + RadioModel.compactTags(stationRow.modelData.tags, 2) : "")
+                textFormat: Text.PlainText
                 color: root.dim
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.caption
@@ -1071,6 +1145,7 @@ Item {
               width: parent.width - Style.spacing.panelPadding * 2
               visible: (!root.fetching || !root.remoteMode) && root.displayStations.length === 0
               text: root.emptyStateText()
+              textFormat: Text.PlainText
               color: root.fetchError || root.localError ? root.urgent : root.dim
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.body
@@ -1082,6 +1157,7 @@ Item {
               anchors.centerIn: parent
               visible: root.fetching && root.remoteMode && root.displayStations.length === 0
               text: "LOADING STATIONS"
+              textFormat: Text.PlainText
               color: root.dim
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.caption
@@ -1113,6 +1189,7 @@ Item {
               anchors.top: parent.top
               anchors.topMargin: Style.spacing.md
               text: root.playerRunning ? root.playerTitle : "Nothing playing"
+              textFormat: Text.PlainText
               color: root.foreground
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.body
@@ -1130,6 +1207,7 @@ Item {
                 : (!root.playerRunning ? "Choose a signal to begin"
                 : (root.playerPaused ? "Paused" : "Live")
                   + (root.playlistCount > 1 ? "  ·  " + root.playlistCount + " stations queued" : ""))
+              textFormat: Text.PlainText
               color: root.playerError ? root.urgent : root.dim
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.caption
@@ -1146,7 +1224,7 @@ Item {
               Button {
                 iconText: "\uf048"
                 tooltipText: "Previous station"
-                enabled: root.playerRunning
+                enabled: root.playerRunning && !root.playerActionBusy
                 focusable: true
                 foreground: root.foreground
                 accent: root.accent
@@ -1155,6 +1233,7 @@ Item {
               Button {
                 iconText: root.playerRunning && !root.playerPaused ? "\uf04c" : "\uf04b"
                 tooltipText: root.playerRunning && !root.playerPaused ? "Pause" : "Play"
+                enabled: !root.playerActionBusy
                 focusable: true
                 foreground: root.foreground
                 accent: root.accent
@@ -1163,7 +1242,7 @@ Item {
               Button {
                 iconText: "\uf051"
                 tooltipText: "Next station"
-                enabled: root.playerRunning
+                enabled: root.playerRunning && !root.playerActionBusy
                 focusable: true
                 foreground: root.foreground
                 accent: root.accent
@@ -1172,11 +1251,14 @@ Item {
               Button {
                 iconText: "\uf04d"
                 tooltipText: "Stop"
-                enabled: root.playerRunning
+                enabled: (root.playerRunning || root.playPreparing)
+                  && !stopProcess.running
+                  && !root.playCancellationRequested
+                  && (!playerActionProcess.running || root.playPreparing)
                 focusable: true
                 foreground: root.foreground
                 accent: root.accent
-                onClicked: root.playerAction("stop")
+                onClicked: root.stopPlayer()
               }
             }
 
@@ -1193,6 +1275,7 @@ Item {
                 iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
                 tooltipText: root.playerMuted ? "Unmute" : "Mute (M)"
                 active: root.playerMuted
+                enabled: root.playerRunning && !root.playerActionBusy
                 focusable: true
                 foreground: root.foreground
                 accent: root.accent
@@ -1213,6 +1296,7 @@ Item {
                 fillColor: root.accent
                 knobColor: root.foreground
                 tickColor: root.background
+                enabled: !stopProcess.running
                 Accessible.name: "Radio volume"
                 onMoved: function(nextVolume) { root.setPlayerVolume(nextVolume) }
                 onRightClicked: root.playerAction("mute")
@@ -1222,6 +1306,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: Style.space(30)
                 text: root.playerVolume + "%"
+                textFormat: Text.PlainText
                 color: root.dim
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.caption

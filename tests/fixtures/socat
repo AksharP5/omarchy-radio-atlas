@@ -5,6 +5,9 @@ mode=${RADIO_ATLAS_TEST_SOCAT_MODE:-}
 [[ -n $mode ]] || exec /usr/bin/socat "$@"
 
 input=$(cat)
+if [[ $mode == success-unlink ]]; then
+  rm -f "${RADIO_ATLAS_TEST_SOCKET:?}"
+fi
 if [[ $input == *'"request_id":1'* ]]; then
   printf '%s\n' \
     '{"data":false,"request_id":1,"error":"success"}' \

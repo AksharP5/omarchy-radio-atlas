@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+: "${XDG_RUNTIME_DIR:?Radio Atlas requires XDG_RUNTIME_DIR}"
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
+proxy_socket="$runtime_dir/proxy.sock"
+proxy_pid=""
+sandbox_pid=""
+
+cleanup() {
+  local exit_code=$?
+  trap - EXIT INT TERM
+  [[ -z $sandbox_pid ]] || kill "$sandbox_pid" 2>/dev/null || true
+  [[ -z $sandbox_pid ]] || wait "$sandbox_pid" 2>/dev/null || true
+  [[ -z $proxy_pid ]] || kill "$proxy_pid" 2>/dev/null || true
+  [[ -z $proxy_pid ]] || wait "$proxy_pid" 2>/dev/null || true
+  rm -f "$proxy_socket"
+  exit "$exit_code"
+}
+trap cleanup EXIT INT TERM
+
+rm -f "$proxy_socket"
+python3 "$script_dir/radio-proxy" "$proxy_socket" > "$runtime_dir/proxy.log" 2>&1 &
+proxy_pid=$!
+for _ in $(seq 1 100); do
+  [[ -S $proxy_socket ]] && break
+  kill -0 "$proxy_pid" 2>/dev/null || break
+  sleep 0.02
+done
+[[ -S $proxy_socket ]] || exit 4
+
+bwrap --unshare-net --die-with-parent --cap-add CAP_NET_ADMIN \
+  --bind / / --dev-bind /dev /dev -- \
+  /usr/bin/bash --noprofile --norc -c '
+    set -e
+    ip link set lo up
+    exec setpriv --inh-caps=-net_admin --ambient-caps=-net_admin "$@"
+  ' radio-atlas-network "$script_dir/radio-sandbox" "$proxy_socket" "$@" &
+sandbox_pid=$!
+wait "$sandbox_pid"

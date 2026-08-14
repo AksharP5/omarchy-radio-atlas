@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
-if [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
-  runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
-else
-  runtime_dir="/tmp/omarchy-radio-atlas-$UID"
-fi
-mkdir -p "$runtime_dir"
+: "${XDG_RUNTIME_DIR:?Radio Atlas requires XDG_RUNTIME_DIR}"
+runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
+install -d -m 700 "$runtime_dir"
 
 world_file="$runtime_dir/world.json"
 results_file="$runtime_dir/results.json"
-user_agent='Radio Atlas/0.1 (https://github.com/AksharP5/omarchy-radio-atlas)'
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+version=$(jq -r '.version' "$script_dir/manifest.json")
+user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
+search_dir=""
+
+cleanup() {
+  [[ -z $search_dir ]] || rm -rf "$search_dir"
+}
+trap cleanup EXIT
 
 discover_bases() {
   local ip hostname
@@ -30,18 +36,26 @@ discover_bases() {
 mapfile -t bases < <(discover_bases | awk '!seen[$0]++' | shuf)
 
 normalize='def number_or_null: try tonumber catch null;
+  def clean($limit):
+    if type == "string"
+    then gsub("[\\r\\n\\t]"; " ") | gsub("  +"; " ") | .[0:$limit]
+    else ""
+    end;
+  def compact($limit):
+    if type == "string" then gsub("[\\r\\n\\t]"; "") | .[0:$limit] else "" end;
   map({
-    uuid: (.stationuuid // ""),
-    name: ((.name // "Unknown station") | gsub("[\\r\\n\\t]"; " ") | gsub("  +"; " ")),
-    url: ((.url_resolved // .url // "") | gsub("[\\r\\n\\t]"; "")),
-    homepage: (.homepage // ""),
-    favicon: (.favicon // ""),
-    country: (.country // ""),
-    countryCode: ((.countrycode // "") | ascii_upcase),
-    state: (.state // ""),
-    language: (.language // ""),
-    tags: (.tags // ""),
-    codec: (.codec // ""),
+    uuid: ((.stationuuid // "") | compact(64)),
+    name: (((.name // "Unknown station") | clean(160)) as $name
+      | if $name == "" then "Unknown station" else $name end),
+    url: ((.url_resolved // .url // "") | compact(2048)),
+    homepage: ((.homepage // "") | compact(2048)),
+    favicon: ((.favicon // "") | compact(2048)),
+    country: ((.country // "") | clean(100)),
+    countryCode: ((.countrycode // "") | clean(2) | ascii_upcase),
+    state: ((.state // "") | clean(100)),
+    language: ((.language // "") | clean(120)),
+    tags: ((.tags // "") | clean(500)),
+    codec: ((.codec // "") | clean(32)),
     bitrate: ((.bitrate // 0) | number_or_null // 0),
     votes: ((.votes // 0) | number_or_null // 0),
     clicks: ((.clickcount // 0) | number_or_null // 0),
@@ -58,34 +72,54 @@ normalize='def number_or_null: try tonumber catch null;
       if .seen[$station.uuid] then .
       else .seen[$station.uuid] = true | .rows += [$station]
       end)
-  | .rows'
+  | .rows[:500]'
 
 request() {
   local path=$1
   shift
-  local base error_file
+  local base error_file response_file
   error_file=$(mktemp "$runtime_dir/request.XXXXXX")
+  response_file=$(mktemp "$runtime_dir/response.XXXXXX")
   for base in "${bases[@]}"; do
-    if curl --fail --silent --show-error --location \
+    if curl --fail --silent --show-error \
       --connect-timeout 4 --max-time 12 --retry 1 \
-      --user-agent "$user_agent" --get "$base$path" "$@" 2>"$error_file"; then
-      rm -f "$error_file"
+      --max-filesize 4194304 --proto '=https' \
+      --user-agent "$user_agent" --get "$base$path" "$@" \
+      --output "$response_file" 2>"$error_file" \
+      && jq -e 'type == "array"' "$response_file" >/dev/null 2>&1; then
+      cat "$response_file"
+      rm -f "$error_file" "$response_file"
       return 0
+    fi
+    if [[ ! -s $error_file ]]; then
+      printf 'Radio Browser returned invalid station data from %s\n' "$base" > "$error_file"
     fi
   done
   cat "$error_file" >&2
-  rm -f "$error_file"
+  rm -f "$error_file" "$response_file"
   return 1
+}
+
+publish_copy() {
+  local source=$1
+  local target=$2
+  local temporary
+  temporary=$(mktemp "$runtime_dir/publish.XXXXXX")
+  cp "$source" "$temporary"
+  mv "$temporary" "$target"
 }
 
 store_results() {
   local target=$1
   local temporary
   temporary=$(mktemp "$runtime_dir/results.XXXXXX")
-  jq -c "$normalize" > "$temporary"
+  if ! jq -ce "$normalize" > "$temporary"; then
+    rm -f "$temporary"
+    return 1
+  fi
   mv "$temporary" "$target"
   if [[ $target != "$results_file" ]]; then
-    cp "$target" "$results_file"
+    publish_copy "$target" "$results_file"
   fi
   cat "$target"
 }
@@ -104,7 +138,7 @@ fetch_world() {
   if [[ -s $world_file ]] \
     && jq -e 'type == "array" and length > 0' "$world_file" >/dev/null 2>&1 \
     && find "$world_file" -mmin -30 -print -quit | grep -q .; then
-    cp "$world_file" "$results_file"
+    publish_copy "$world_file" "$results_file"
     cat "$world_file"
     return
   fi
@@ -120,7 +154,6 @@ fetch_world() {
 
 fetch_search() {
   local query=$1
-  local search_dir
   search_dir=$(mktemp -d "$runtime_dir/search.XXXXXX")
 
   request '/json/stations/search' \
@@ -173,12 +206,14 @@ fetch_search() {
   jq -s 'add' "$search_dir/name.json" "$search_dir/country.json" "$search_dir/tag.json" \
     | store_results "$results_file"
   rm -rf "$search_dir"
+  search_dir=""
 }
 
 resolve_stations() {
   local uuids=$1
   [[ $uuids =~ ^[0-9A-Fa-f-]{20,}(,[0-9A-Fa-f-]{20,})*$ ]] \
     || { echo 'Invalid station ids' >&2; exit 2; }
+  (( ${#uuids} <= 4096 )) || { echo 'Too many station ids' >&2; exit 2; }
 
   request '/json/stations/byuuid' \
     --data-urlencode "uuids=$uuids" \
@@ -204,6 +239,7 @@ case "$action" in
   search)
     query=${2:-}
     [[ -n ${query//[[:space:]]/} ]] || { echo 'Search text is empty' >&2; exit 2; }
+    (( ${#query} <= 128 )) || { echo 'Search text is too long' >&2; exit 2; }
     fetch_search "$query"
     ;;
   random)

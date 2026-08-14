@@ -1,24 +1,100 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
-if [[ -n ${XDG_RUNTIME_DIR:-} ]]; then
-  runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
-else
-  runtime_dir="/tmp/omarchy-radio-atlas-$UID"
-fi
+: "${XDG_RUNTIME_DIR:?Radio Atlas requires XDG_RUNTIME_DIR}"
+runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
 data_root=${XDG_DATA_HOME:-$HOME/.local/share}
 state_dir="$data_root/radio-atlas"
-state_file="$data_root/radio-atlas/state.json"
-state_lock="$state_dir/state.lock"
+state_file="$state_dir/state.json"
 socket="$runtime_dir/mpv.sock"
 playlist="$runtime_dir/playlist.m3u"
 queue_file="$runtime_dir/playlist.json"
 status_file="$runtime_dir/status.json"
+pid_file="$runtime_dir/player.pid"
+proxy_socket="$runtime_dir/proxy.sock"
+generation_file="$runtime_dir/player.generation"
 log_file="$runtime_dir/mpv.log"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 fetch_path=${RADIO_ATLAS_FETCH_PATH:-$script_dir/radio-fetch}
+state_path="$script_dir/radio-state"
 status_script="$script_dir/radio-status.lua"
-mkdir -p "$runtime_dir" "$state_dir"
+version=$(jq -r '.version' "$script_dir/manifest.json")
+user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
+install -d -m 700 "$runtime_dir" "$state_dir"
+exec 8>"$runtime_dir/player.lock"
+
+process_start_time() {
+  local pid=$1
+  [[ -r /proc/$pid/stat ]] || return 1
+  awk '$3 != "Z" { print $22 }' "/proc/$pid/stat"
+}
+
+player_alive() {
+  local pid expected_start actual_start
+  [[ -s $pid_file ]] || return 1
+  read -r pid expected_start < "$pid_file" || return 1
+  [[ $pid =~ ^[0-9]+$ && $expected_start =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  actual_start=$(process_start_time "$pid") || return 1
+  [[ $actual_start == "$expected_start" ]]
+}
+
+write_player_pid() {
+  local pid=$1
+  local start_time temporary
+  start_time=$(process_start_time "$pid")
+  temporary=$(mktemp "$runtime_dir/player.XXXXXX")
+  printf '%s %s\n' "$pid" "$start_time" > "$temporary"
+  mv "$temporary" "$pid_file"
+}
+
+cleanup_dead_player() {
+  player_alive && return
+  rm -f "$pid_file" "$proxy_socket" "$socket"
+}
+
+terminate_tracked_player() {
+  local pid
+  player_alive || return 0
+  read -r pid _ < "$pid_file"
+  kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+  for _ in $(seq 1 100); do
+    player_alive || break
+    sleep 0.02
+  done
+  if player_alive; then
+    kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      player_alive || break
+      sleep 0.02
+    done
+  fi
+  player_alive && return 1
+  cleanup_dead_player
+}
+
+player_generation() {
+  local generation=0
+  if [[ -s $generation_file ]]; then
+    read -r generation < "$generation_file" || generation=0
+  fi
+  [[ $generation =~ ^[0-9]+$ ]] || generation=0
+  printf '%s\n' "$generation"
+}
+
+cancel_pending_plays() {
+  local generation temporary
+  generation=$(player_generation)
+  temporary=$(mktemp "$runtime_dir/generation.XXXXXX")
+  printf '%s\n' "$((generation + 1))" > "$temporary"
+  mv "$temporary" "$generation_file"
+}
+
+playable_filter='def playable:
+    (.url | type == "string")
+    and (.url | test("^https?://"; "i"))
+    and (.url | test("[\\r\\n]") | not);'
 
 configured_volume() {
   if [[ -s $state_file ]]; then
@@ -30,17 +106,7 @@ configured_volume() {
 
 persist_volume() {
   local volume=$1
-  local temporary
-  (
-    flock -x 9
-    temporary=$(mktemp "$state_dir/state.XXXXXX")
-    if [[ -s $state_file ]] && jq -e 'type == "object"' "$state_file" >/dev/null 2>&1; then
-      jq -c --argjson volume "$volume" '.volume = $volume' "$state_file" > "$temporary"
-    else
-      jq -cn --argjson volume "$volume" '{favorites:[],recent:[],volume:$volume}' > "$temporary"
-    fi
-    mv "$temporary" "$state_file"
-  ) 9>"$state_lock"
+  "$state_path" volume "$volume" >/dev/null
 }
 
 write_status() {
@@ -66,6 +132,7 @@ send_command() {
 
 status() {
   if [[ ! -S $socket ]]; then
+    cleanup_dead_player
     write_status "$(jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,loaded:false,station:{}}')"
     return
   fi
@@ -83,7 +150,7 @@ status() {
   )
 
   if ! jq -e 'select(.request_id == 1)' <<< "$response" >/dev/null 2>&1; then
-    rm -f "$socket"
+    cleanup_dead_player
     write_status "$(jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,loaded:false,station:{}}')"
     return
   fi
@@ -118,6 +185,7 @@ set_volume() {
   local volume=${1:-}
   [[ $volume =~ ^[0-9]+$ ]] || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
   (( volume >= 0 && volume <= 100 )) || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
+  "$state_path" get >/dev/null
   local command
   command=$(jq -cn --argjson volume "$volume" '{command:["set_property","volume",$volume]}')
   if [[ -S $socket ]] && ! send_command "$command"; then
@@ -142,27 +210,35 @@ player_command() {
 }
 
 stop_player() {
+  cancel_pending_plays
   if [[ ! -S $socket ]]; then
+    if ! terminate_tracked_player; then
+      echo 'Radio player could not be stopped' >&2
+      exit 4
+    fi
     status
     return
   fi
 
   if ! send_command '{"command":["quit"]}'; then
-    status >/dev/null
-    if [[ ! -S $socket ]]; then
-      status
-      return
+    if ! terminate_tracked_player; then
+      echo 'Radio player could not be stopped' >&2
+      exit 4
     fi
-    echo 'Radio player could not be stopped' >&2
-    exit 4
+    status
+    return
   fi
 
   for _ in $(seq 1 100); do
-    [[ ! -S $socket ]] && break
+    if [[ ! -S $socket ]] && ! player_alive; then
+      break
+    fi
     sleep 0.02
   done
-  status >/dev/null
-  [[ ! -S $socket ]] || { echo 'Radio player could not be stopped' >&2; exit 4; }
+  if { [[ -S $socket ]] || player_alive; } && ! terminate_tracked_player; then
+    echo 'Radio player could not be stopped' >&2
+    exit 4
+  fi
   status
 }
 
@@ -211,7 +287,8 @@ refresh_saved_stations() {
 play_station() {
   local uuid=$1
   local scope=${2:-results}
-  local source_file
+  local source_file starting_generation
+  starting_generation=$(player_generation)
   source_file=$(mktemp "$runtime_dir/source.XXXXXX")
   source_stations "$scope" > "$source_file"
 
@@ -219,13 +296,10 @@ play_station() {
     refresh_saved_stations "$source_file"
   fi
 
-  if ! jq -e --arg uuid "$uuid" '
+  if ! jq -e --arg uuid "$uuid" "$playable_filter
     any(.[];
-      .uuid == $uuid
-      and (.url | type == "string")
-      and (.url | test("^https?://"; "i"))
-      and (.url | test("[\\r\\n]")) == false)
-  ' "$source_file" >/dev/null; then
+      .uuid == \$uuid
+      and playable)" "$source_file" >/dev/null; then
     rm -f "$source_file"
     echo 'Station is unavailable or has an unsafe stream URL' >&2
     exit 3
@@ -235,12 +309,9 @@ play_station() {
   temporary_playlist=$(mktemp "$runtime_dir/playlist.XXXXXX")
   temporary_queue=$(mktemp "$runtime_dir/queue.XXXXXX")
   jq -c --arg uuid "$uuid" \
-    'def playable:
-      (.url | type == "string")
-      and (.url | test("^https?://"; "i"))
-      and (.url | test("[\\r\\n]")) == false;
-    ([.[] | select(.uuid == $uuid and playable)]
-      + [.[] | select(.uuid != $uuid and playable)])' \
+    "$playable_filter
+    ([.[] | select(.uuid == \$uuid and playable)]
+      + [.[] | select(.uuid != \$uuid and playable)])" \
     "$source_file" > "$temporary_queue"
   {
     printf '#EXTM3U\n'
@@ -251,11 +322,18 @@ play_station() {
   } > "$temporary_playlist"
   rm -f "$source_file"
 
+  flock -x 8
+  if [[ $(player_generation) != "$starting_generation" ]]; then
+    rm -f "$temporary_playlist" "$temporary_queue"
+    echo 'Radio playback was canceled' >&2
+    exit 4
+  fi
+
   local load_command
   load_command=$(jq -cn --arg path "$temporary_playlist" '{command:["loadlist",$path,"replace"]}')
   if ! send_command "$load_command"; then
     status >/dev/null
-    if [[ -S $socket ]]; then
+    if [[ -S $socket ]] || player_alive; then
       rm -f "$temporary_playlist" "$temporary_queue"
       echo 'Radio player could not load this station' >&2
       exit 4
@@ -264,7 +342,7 @@ play_station() {
     mv "$temporary_playlist" "$playlist"
     RADIO_ATLAS_STATUS_FILE="$status_file" \
     RADIO_ATLAS_QUEUE_FILE="$queue_file" \
-    setsid -f mpv \
+    setsid "$script_dir/radio-session" mpv \
       --no-video \
       --force-window=no \
       --audio-display=no \
@@ -277,13 +355,27 @@ play_station() {
       --playlist="$playlist" \
       --no-terminal \
       --really-quiet \
-      > "$log_file" 2>&1
+      > "$log_file" 2>&1 8>&- &
+    local player_pid=$!
+    if ! write_player_pid "$player_pid"; then
+      kill -- "-$player_pid" 2>/dev/null || kill "$player_pid" 2>/dev/null || true
+      wait "$player_pid" 2>/dev/null || true
+      rm -f "$proxy_socket" "$socket"
+      echo 'Radio player could not start' >&2
+      exit 4
+    fi
 
-    for _ in $(seq 1 50); do
+    for _ in $(seq 1 150); do
       [[ -S $socket ]] && break
       sleep 0.02
     done
-    [[ -S $socket ]] || { echo 'Radio player could not start' >&2; exit 4; }
+    if [[ ! -S $socket ]]; then
+      terminate_tracked_player || true
+      wait "$player_pid" 2>/dev/null || true
+      rm -f "$pid_file" "$proxy_socket" "$socket"
+      echo 'Radio player could not start' >&2
+      exit 4
+    fi
   else
     mv "$temporary_queue" "$queue_file"
     mv "$temporary_playlist" "$playlist"
@@ -292,15 +384,16 @@ play_station() {
   fi
 
   if [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]]; then
-    curl --fail --silent --max-time 4 \
-      --user-agent 'Radio Atlas/0.1 (https://github.com/AksharP5/omarchy-radio-atlas)' \
-      "https://all.api.radio-browser.info/json/url/$uuid" >/dev/null 2>&1 &
+    curl --fail --silent --max-time 4 --proto '=https' \
+      --user-agent "$user_agent" \
+      "https://all.api.radio-browser.info/json/url/$uuid" >/dev/null 2>&1 8>&- &
   fi
 
   status
 }
 
 action=${1:-status}
+[[ $action == play ]] || flock -x 8
 case "$action" in
   play)
     play_station "${2:-}" "${3:-results}"

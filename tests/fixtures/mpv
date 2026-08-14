@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+mapfile -t interfaces < <(ip -o link show | awk -F': ' '{ print $2 }')
+[[ ${#interfaces[@]} == 1 && ${interfaces[0]} == lo ]]
+grep -Eq '^CapEff:[[:space:]]+0+$' /proc/self/status
+[[ ${http_proxy:-} == http://127.0.0.1:18765 ]]
+[[ ${https_proxy:-} == "$http_proxy" ]]
+[[ -z ${RADIO_ATLAS_TEST_MPV_MARKER:-} ]] || : > "$RADIO_ATLAS_TEST_MPV_MARKER"
 exit 0

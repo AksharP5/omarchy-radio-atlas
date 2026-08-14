@@ -5,6 +5,8 @@ signal to play it, or click a country to browse its stations. Playback runs in
 Omarchy's existing `mpv` and `mpv-mpris` setup, so `omarchy.media` provides the
 usual play, pause, previous, and next controls.
 
+[View Radio Atlas on the Omarchy Plugin Marketplace](https://omarchyplugins.com/plugin.html?id=akshar.radio-atlas)
+
 ![Radio Atlas showing live stations across the globe](preview.png)
 
 ## Features
@@ -26,9 +28,10 @@ usual play, pause, previous, and next controls.
 omarchy plugin add https://github.com/AksharP5/omarchy-radio-atlas.git --enable
 ```
 
-Radio Atlas uses `curl`, `jq`, `mpv`, `socat`, `coreutils`, and `util-linux`.
-These packages ship with Omarchy. `mpv-mpris` connects playback to
-`omarchy.media` and is also part of the standard Omarchy installation.
+Radio Atlas uses `bubblewrap`, `curl`, `iproute2`, `jq`, `mpv`, `python`,
+`socat`, `coreutils`, and `util-linux`. These packages ship with Omarchy.
+`mpv-mpris` connects playback to `omarchy.media` and is also part of the
+standard Omarchy installation.
 
 ## Remove
 
@@ -49,7 +52,7 @@ Favorites, listening history, and the saved volume remain in
 | --- | --- |
 | Drag globe | Rotate |
 | Wheel over globe | Zoom |
-| Click signal | Select station |
+| Click signal | Play station |
 | Click country | Browse country |
 | `/` | Focus search |
 | Up / Down | Move through stations |
@@ -72,7 +75,21 @@ and version as the HTTP user agent. Starting a station calls Radio Browser's
 click-count endpoint. Favorites and history stay in
 `~/.local/share/radio-atlas/state.json`.
 
+Station metadata and stream URLs are community supplied. Labels are rendered
+as plain text. Playback runs in an isolated network namespace and reaches
+stations through a proxy that permits only public destinations, including after
+redirects. It still connects directly to third-party stations; HTTP streams are
+unencrypted. Only play stations you trust.
+
 Map geometry comes from public-domain Natural Earth data.
+
+## Troubleshooting
+
+Player and proxy diagnostics are written to
+`$XDG_RUNTIME_DIR/omarchy-radio-atlas/mpv.log` and `proxy.log`. If saved state
+is malformed, Radio Atlas refuses to overwrite it and reports
+`~/.local/share/radio-atlas/state.json`; back up that file before repairing or
+removing it.
 
 ## Development
 

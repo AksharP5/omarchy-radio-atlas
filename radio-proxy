@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+
+import ipaddress
+import os
+import select
+import signal
+import socket
+import socketserver
+import stat
+import sys
+from urllib.parse import urlsplit
+
+MAX_HEADER_BYTES = 65_536
+
+
+class ProxyError(Exception):
+    def __init__(self, status: bytes):
+        self.status = status
+
+
+def public_endpoints(host: str, port: int):
+    try:
+        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as error:
+        raise ProxyError(b"502 Bad Gateway") from error
+
+    endpoints = []
+    seen = set()
+    for family, kind, protocol, _, address in addresses:
+        ip = ipaddress.ip_address(address[0].split("%", 1)[0])
+        if (
+            not ip.is_global
+            or ip.is_multicast
+            or ip.is_unspecified
+            or ip.is_reserved
+            or getattr(ip, "is_site_local", False)
+        ):
+            raise ProxyError(b"403 Forbidden")
+        key = (family, address)
+        if key not in seen:
+            seen.add(key)
+            endpoints.append((family, kind, protocol, address))
+
+    if not endpoints:
+        raise ProxyError(b"502 Bad Gateway")
+    return endpoints
+
+
+def connect_public(host: str, port: int):
+    last_error = None
+    for family, kind, protocol, address in public_endpoints(host, port):
+        upstream = socket.socket(family, kind, protocol)
+        upstream.settimeout(12)
+        try:
+            upstream.connect(address)
+            return upstream
+        except OSError as error:
+            last_error = error
+            upstream.close()
+    raise ProxyError(b"502 Bad Gateway") from last_error
+
+
+def parse_authority(authority: str, default_port: int):
+    try:
+        target = urlsplit(f"//{authority}")
+        host = target.hostname
+        port = target.port or default_port
+    except ValueError as error:
+        raise ProxyError(b"400 Bad Request") from error
+    if not host or target.username is not None or target.password is not None:
+        raise ProxyError(b"400 Bad Request")
+    if target.path or target.query or target.fragment or not 1 <= port <= 65_535:
+        raise ProxyError(b"400 Bad Request")
+    return host, port
+
+
+def read_header(client: socket.socket):
+    data = bytearray()
+    while b"\r\n\r\n" not in data:
+        chunk = client.recv(min(16_384, MAX_HEADER_BYTES - len(data) + 1))
+        if not chunk:
+            raise ProxyError(b"400 Bad Request")
+        data.extend(chunk)
+        if len(data) > MAX_HEADER_BYTES:
+            raise ProxyError(b"431 Request Header Fields Too Large")
+    boundary = data.index(b"\r\n\r\n") + 4
+    return bytes(data[:boundary]), bytes(data[boundary:])
+
+
+def parse_request(header: bytes):
+    lines = header[:-4].split(b"\r\n")
+    try:
+        method, target, version = lines[0].decode("ascii").split(" ")
+    except (UnicodeDecodeError, ValueError) as error:
+        raise ProxyError(b"400 Bad Request") from error
+    if version not in {"HTTP/1.0", "HTTP/1.1"}:
+        raise ProxyError(b"400 Bad Request")
+
+    headers = []
+    for line in lines[1:]:
+        if not line or line[:1].isspace() or b":" not in line:
+            raise ProxyError(b"400 Bad Request")
+        name, _ = line.split(b":", 1)
+        try:
+            normalized = name.decode("ascii").lower()
+        except UnicodeDecodeError as error:
+            raise ProxyError(b"400 Bad Request") from error
+        if normalized not in {"proxy-connection", "connection", "host"}:
+            headers.append(line)
+
+    if method == "CONNECT":
+        host, port = parse_authority(target, 443)
+        return method, host, port, b""
+
+    if method not in {"GET", "HEAD"}:
+        raise ProxyError(b"405 Method Not Allowed")
+    try:
+        destination = urlsplit(target)
+        port = destination.port or 80
+    except ValueError as error:
+        raise ProxyError(b"400 Bad Request") from error
+    if destination.scheme.lower() != "http" or not destination.hostname:
+        raise ProxyError(b"400 Bad Request")
+    if destination.username is not None or destination.password is not None:
+        raise ProxyError(b"400 Bad Request")
+    if destination.fragment or not 1 <= port <= 65_535:
+        raise ProxyError(b"400 Bad Request")
+
+    path = destination.path or "/"
+    if destination.query:
+        path += f"?{destination.query}"
+    try:
+        request_line = f"{method} {path} {version}".encode("ascii")
+        host_header = destination.netloc.encode("ascii")
+    except UnicodeEncodeError as error:
+        raise ProxyError(b"400 Bad Request") from error
+    forwarded = b"\r\n".join(
+        [request_line, *headers, b"Host: " + host_header, b"Connection: close", b"", b""]
+    )
+    return method, destination.hostname, port, forwarded
+
+
+def relay(left: socket.socket, right: socket.socket):
+    while True:
+        readable, _, _ = select.select((left, right), (), (), 60)
+        for source in readable:
+            data = source.recv(65_536)
+            if not data:
+                return
+            (right if source is left else left).sendall(data)
+
+
+class ProxyHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.settimeout(12)
+        try:
+            header, pending = read_header(self.request)
+            method, host, port, forwarded = parse_request(header)
+            with connect_public(host, port) as upstream:
+                if method == "CONNECT":
+                    self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                else:
+                    upstream.sendall(forwarded)
+                if pending:
+                    upstream.sendall(pending)
+                relay(self.request, upstream)
+        except ProxyError as error:
+            try:
+                self.request.sendall(b"HTTP/1.1 " + error.status + b"\r\nConnection: close\r\n\r\n")
+            except OSError:
+                return
+        except (BrokenPipeError, ConnectionError, OSError, TimeoutError):
+            return
+
+
+class ProxyServer(socketserver.ThreadingUnixStreamServer):
+    daemon_threads = True
+    request_queue_size = 32
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit("Usage: radio-proxy SOCKET")
+    path = sys.argv[1]
+    if os.path.exists(path):
+        if not stat.S_ISSOCK(os.stat(path).st_mode):
+            raise SystemExit("Proxy path exists and is not a socket")
+        os.unlink(path)
+
+    os.umask(0o077)
+    server = ProxyServer(path, ProxyHandler)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        if os.path.exists(path):
+            os.unlink(path)
+
+
+if __name__ == "__main__":
+    main()

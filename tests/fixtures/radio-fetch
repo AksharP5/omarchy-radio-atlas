@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: > "${RADIO_ATLAS_TEST_FETCH_READY:?}"
+while [[ ! -e ${RADIO_ATLAS_TEST_FETCH_RELEASE:?} ]]; do
+  sleep 0.01
+done
+printf '%s\n' '[{"uuid":"12345678-1234-1234-1234-123456789abc","name":"Test Radio","url":"https://example.com/refreshed.mp3","countryCode":"US","latitude":40,"longitude":-74}]'

@@ -19,6 +19,14 @@ BarWidget {
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
   readonly property string statusPath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas/status.json"
 
+  function singleLineText(value, limit) {
+    return String(value || "").replace(/[\r\n\t]+/g, " ").slice(0, limit)
+  }
+
+  function safeTooltipText(value) {
+    return root.singleLineText(value, 160).replace(/</g, "‹").replace(/>/g, "›")
+  }
+
   function applyPlayerState(raw) {
     try {
       var state = JSON.parse(raw || "{}")
@@ -27,7 +35,8 @@ BarWidget {
       root.playerMuted = state.muted === true
       root.reportedVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
       if (root.pendingVolume < 0) root.playerVolume = root.reportedVolume
-      root.playerTitle = String(state.title || (state.station && state.station.name) || "")
+      root.playerTitle = root.singleLineText(
+        state.title || (state.station && state.station.name) || "", 160)
     } catch (error) {
       return
     }
@@ -98,7 +107,7 @@ BarWidget {
     text: "\uf0ac"
     active: root.playerRunning && !root.playerPaused
     tooltipText: root.playerRunning
-      ? (root.playerPaused ? "Radio paused: " : "Playing: ") + root.playerTitle
+      ? (root.playerPaused ? "Radio paused: " : "Playing: ") + root.safeTooltipText(root.playerTitle)
         + "  ·  " + (root.playerMuted ? "muted" : root.playerVolume + "%")
       : "Open Radio Atlas"
 

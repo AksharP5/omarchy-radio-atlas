@@ -37,6 +37,7 @@ Item {
   signal stationActivated(var station)
   signal countryActivated(string code, string name)
   signal interactionStarted()
+  signal pointerMoved()
 
   Accessible.name: "Interactive world radio globe"
   Accessible.description: "Drag to rotate, use the mouse wheel to zoom, and select a station signal or country"
@@ -168,7 +169,7 @@ Item {
 
   function paintGrid(ctx, centreX, centreY, globeRadius) {
     ctx.strokeStyle = withAlpha(gridColor, 0.18)
-    ctx.lineWidth = Math.max(0.7, globeRadius / 500)
+    ctx.lineWidth = Math.min(1.5, Math.max(0.7, globeRadius / 500))
     var latitude = centreLatitude * Math.PI / 180
     var longitude = centreLongitude * Math.PI / 180
     var sinLatitude = Math.sin(latitude)
@@ -457,6 +458,7 @@ Item {
       root.hoverX = mouse.x
       root.hoverY = mouse.y
       if (!(pressedButtons & Qt.LeftButton)) {
+        root.pointerMoved()
         root.hoveredStation = root.stationUnderPointer(mouse.x, mouse.y)
         return
       }
@@ -508,6 +510,7 @@ Item {
       anchors.centerIn: parent
       width: Math.min(220, implicitWidth)
       text: root.hoveredStation ? root.hoveredStation.name : ""
+      textFormat: Text.PlainText
       color: root.textColor
       font.family: root.fontFamily
       font.pixelSize: 12

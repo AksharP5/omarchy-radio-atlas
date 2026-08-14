@@ -8,6 +8,19 @@ local update_timer = nil
 local last_volume = 70
 local station_loaded = false
 
+local function clean_text(value, limit)
+  if type(value) ~= "string" then return "" end
+  value = value:gsub("[%c]", " "):gsub("  +", " ")
+  if #value <= limit then return value end
+  local last = limit
+  while last > 0 do
+    local next_byte = value:byte(last + 1)
+    if not next_byte or next_byte < 128 or next_byte > 191 then break end
+    last = last - 1
+  end
+  return value:sub(1, last)
+end
+
 local function empty_station()
   return { uuid = "", name = "", country = "", countryCode = "" }
 end
@@ -27,7 +40,7 @@ end
 
 local function write_status(state)
   if not status_path then return end
-  local temporary = status_path .. ".tmp"
+  local temporary = status_path .. "." .. tostring(mp.get_property_number("pid", 0)) .. ".tmp"
   local file = io.open(temporary, "w")
   if not file then return end
   file:write(utils.format_json(state), "\n")
@@ -43,7 +56,7 @@ local function current_status()
     running = true,
     paused = mp.get_property_bool("pause", false),
     muted = mp.get_property_bool("mute", false),
-    title = mp.get_property("media-title", ""),
+    title = clean_text(mp.get_property("media-title", ""), 512),
     playlistPosition = position,
     playlistCount = mp.get_property_number("playlist-count", 0),
     volume = last_volume,

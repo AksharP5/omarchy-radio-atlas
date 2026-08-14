@@ -6,13 +6,17 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
+  and .version == "0.1.1"
   and (.kinds | index("overlay"))
   and (.kinds | index("bar-widget"))
 ' "$project_dir/manifest.json" >/dev/null
 
-bash -n "$project_dir/radio-fetch" "$project_dir/radio-player" "$project_dir/radio-state"
+bash -n "$project_dir/radio-fetch" "$project_dir/radio-player" \
+  "$project_dir/radio-sandbox" "$project_dir/radio-session" "$project_dir/radio-state" \
+  "$project_dir/tests/fixtures/"*
 luac -p "$project_dir/radio-status.lua"
 node "$project_dir/tests/model.test.mjs"
+python3 "$project_dir/tests/proxy.test.py"
 ! rg -q 'playerStatusProcess|refreshPlayerStatus' \
   "$project_dir/BarWidget.qml" "$project_dir/RadioAtlas.qml"
 ! rg -q 'inertia' "$project_dir/Globe.qml"
@@ -30,13 +34,51 @@ rg -q 'playingStationUuid === stationRow.modelData.uuid' "$project_dir/RadioAtla
 rg -q 'rowMouse.containsMouse' "$project_dir/RadioAtlas.qml"
 ! rg -q 'selectedIndex === index.*Style.selectedFillFor' "$project_dir/RadioAtlas.qml"
 ! rg -q 'send_command .*\|\| true' "$project_dir/radio-player"
+rg -q 'maximumLength: 128' "$project_dir/RadioAtlas.qml"
+rg -Fq 'Math.min(1.5, Math.max(0.7, globeRadius / 500))' "$project_dir/Globe.qml"
+rg -q 'WlrLayershell.keyboardFocus: root.opened' "$project_dir/RadioAtlas.qml"
+rg -q 'keyboardSelectionVisible' "$project_dir/RadioAtlas.qml"
+rg -q 'reportedVolume' "$project_dir/RadioAtlas.qml"
+rg -q 'submittedVolume' "$project_dir/RadioAtlas.qml"
+rg -q 'playPreparing' "$project_dir/RadioAtlas.qml"
+rg -q 'id: stopProcess' "$project_dir/RadioAtlas.qml"
+! rg -q 'playerAction\("stop"\)' "$project_dir/RadioAtlas.qml"
+rg -Fq 'safeTooltipText(root.playerTitle)' "$project_dir/BarWidget.qml"
+for qml in "$project_dir/RadioAtlas.qml" "$project_dir/Globe.qml"; do
+  [[ $(rg -c '^\s*Text \{' "$qml") == $(rg -c 'textFormat: Text\.PlainText' "$qml") ]]
+done
+! rg -q '/tmp/omarchy-radio-atlas' \
+  "$project_dir/radio-fetch" "$project_dir/radio-player" "$project_dir/radio-state"
+rg -q -- '--max-filesize 4194304' "$project_dir/radio-fetch"
+rg -q -- "--proto '=https'" "$project_dir/radio-fetch"
+! rg -q -- '--location' "$project_dir/radio-fetch"
 
 test_root=$(mktemp -d)
 listener_pid=""
+lock_holder_pid=""
+locked_status_pid=""
+session_pid=""
+preparing_pid=""
 cleanup() {
   if [[ -n $listener_pid ]]; then
     kill "$listener_pid" 2>/dev/null || true
     wait "$listener_pid" 2>/dev/null || true
+  fi
+  if [[ -n $locked_status_pid ]]; then
+    kill "$locked_status_pid" 2>/dev/null || true
+    wait "$locked_status_pid" 2>/dev/null || true
+  fi
+  if [[ -n $lock_holder_pid ]]; then
+    kill "$lock_holder_pid" 2>/dev/null || true
+    wait "$lock_holder_pid" 2>/dev/null || true
+  fi
+  if [[ -n $session_pid ]]; then
+    kill -KILL -- "-$session_pid" 2>/dev/null || true
+    wait "$session_pid" 2>/dev/null || true
+  fi
+  if [[ -n $preparing_pid ]]; then
+    kill -KILL -- "-$preparing_pid" 2>/dev/null || true
+    wait "$preparing_pid" 2>/dev/null || true
   fi
   rm -rf "$test_root"
 }
@@ -45,6 +87,17 @@ export XDG_RUNTIME_DIR="$test_root/runtime"
 export XDG_DATA_HOME="$test_root/data"
 runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
 mkdir -p "$runtime_dir"
+
+track_player_pid() {
+  local pid=$1
+  printf '%s %s\n' "$pid" "$(awk '{ print $22 }' "/proc/$pid/stat")" \
+    > "$runtime_dir/player.pid"
+}
+
+if env -u XDG_RUNTIME_DIR "$project_dir/radio-state" get >/dev/null 2>&1; then
+  echo "Missing XDG_RUNTIME_DIR was accepted" >&2
+  exit 1
+fi
 
 PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" country US \
   > "$test_root/normalized.json"
@@ -55,6 +108,28 @@ jq -e '
   and .[0].url == "https://example.com/first"
   and .[1].uuid == "aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"
 ' "$test_root/normalized.json" >/dev/null
+[[ $(stat -c '%a' "$runtime_dir") == 700 ]]
+
+malformed_marker="$test_root/malformed-response"
+RADIO_ATLAS_TEST_CURL_MALFORMED_ONCE=1 \
+RADIO_ATLAS_TEST_CURL_MARKER="$malformed_marker" \
+PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" country US > "$test_root/fallback.json"
+jq -e 'length == 2' "$test_root/fallback.json" >/dev/null
+
+oversized_marker="$test_root/oversized-response"
+RADIO_ATLAS_TEST_CURL_OVERSIZED=once \
+RADIO_ATLAS_TEST_CURL_OVERSIZED_MARKER="$oversized_marker" \
+PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" country US > "$test_root/oversized-fallback.json"
+jq -e 'length == 2' "$test_root/oversized-fallback.json" >/dev/null
+cp "$runtime_dir/results.json" "$test_root/results-before-failure.json"
+if RADIO_ATLAS_TEST_CURL_OVERSIZED=always PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" country US >/dev/null 2>&1; then
+  echo "Oversized responses were accepted" >&2
+  exit 1
+fi
+cmp "$test_root/results-before-failure.json" "$runtime_dir/results.json"
 
 PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" search 93 \
   > "$test_root/search.json"
@@ -75,8 +150,47 @@ status=$("$project_dir/radio-player" status)
 jq -e '.running == false and .station == {}' <<< "$status" >/dev/null
 jq -e '.running == false and .station == {}' "$runtime_dir/status.json" >/dev/null
 
+lock_ready="$test_root/player-lock-ready"
+lock_release="$test_root/player-lock-release"
+(
+  exec 7>"$runtime_dir/player.lock"
+  flock -x 7
+  : > "$lock_ready"
+  while [[ ! -e $lock_release ]]; do
+    sleep 0.01
+  done
+) &
+lock_holder_pid=$!
+for _ in $(seq 1 100); do
+  [[ -e $lock_ready ]] && break
+  sleep 0.01
+done
+[[ -e $lock_ready ]]
+"$project_dir/radio-player" status > "$test_root/locked-status.json" &
+locked_status_pid=$!
+sleep 0.05
+kill -0 "$locked_status_pid"
+: > "$lock_release"
+wait "$lock_holder_pid"
+lock_holder_pid=""
+wait "$locked_status_pid"
+locked_status_pid=""
+jq -e '.running == false' "$test_root/locked-status.json" >/dev/null
+
 printf '{"favorites":"bad","recent":null,"volume":"loud"}\n' \
   > "$XDG_DATA_HOME/radio-atlas/state.json"
+cp "$XDG_DATA_HOME/radio-atlas/state.json" "$test_root/invalid-state.json"
+if "$project_dir/radio-state" get >/dev/null 2>&1; then
+  echo "Invalid saved state was silently accepted" >&2
+  exit 1
+fi
+cmp "$test_root/invalid-state.json" "$XDG_DATA_HOME/radio-atlas/state.json"
+if "$project_dir/radio-player" volume 42 >/dev/null 2>&1; then
+  echo "Volume update overwrote invalid saved state" >&2
+  exit 1
+fi
+cmp "$test_root/invalid-state.json" "$XDG_DATA_HOME/radio-atlas/state.json"
+rm "$XDG_DATA_HOME/radio-atlas/state.json"
 "$project_dir/radio-state" get \
   | jq -e '.favorites == [] and .recent == [] and .volume == 70' >/dev/null
 
@@ -91,6 +205,11 @@ printf '%s\n' "$fixture" > "$runtime_dir/world.json"
 "$project_dir/radio-state" favorite 12345678-1234-1234-1234-123456789abc \
   | jq -e '.favorites | length == 0' >/dev/null
 
+queue_fixture='[{"uuid":"87654321-4321-4321-4321-cba987654321","name":"Queued Radio","url":"https://example.com/queued.mp3","countryCode":"CA","latitude":43,"longitude":-79}]'
+printf '%s\n' "$queue_fixture" > "$runtime_dir/playlist.json"
+"$project_dir/radio-state" played 87654321-4321-4321-4321-cba987654321 \
+  | jq -e '.recent[0].uuid == "87654321-4321-4321-4321-cba987654321"' >/dev/null
+
 for volume in 23 47 81; do
   "$project_dir/radio-player" volume "$volume" \
     | jq -e --argjson volume "$volume" '.running == false and .volume == $volume' >/dev/null
@@ -101,8 +220,36 @@ done
   | jq -e '.running == false and .volume == 81' >/dev/null
 jq -e '.volume == 81' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 
+fetch_ready="$test_root/fetch-ready"
+fetch_release="$test_root/fetch-release"
+mpv_marker="$test_root/canceled-mpv-started"
+setsid env \
+  RADIO_ATLAS_FETCH_PATH="$project_dir/tests/fixtures/radio-fetch" \
+  RADIO_ATLAS_TEST_FETCH_READY="$fetch_ready" \
+  RADIO_ATLAS_TEST_FETCH_RELEASE="$fetch_release" \
+  RADIO_ATLAS_TEST_MPV_MARKER="$mpv_marker" \
+  PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" play 12345678-1234-1234-1234-123456789abc recent \
+  > "$test_root/preparing-player.out" 2> "$test_root/preparing-player.err" &
+preparing_pid=$!
+for _ in $(seq 1 100); do
+  [[ -e $fetch_ready ]] && break
+  sleep 0.01
+done
+[[ -e $fetch_ready ]]
+timeout 1 "$project_dir/radio-player" status >/dev/null
+timeout 1 "$project_dir/radio-player" stop >/dev/null
+: > "$fetch_release"
+if wait "$preparing_pid"; then
+  echo "Canceled playback preparation was started" >&2
+  exit 1
+fi
+preparing_pid=""
+[[ ! -e $mpv_marker ]]
+
 /usr/bin/socat UNIX-LISTEN:"$runtime_dir/mpv.sock" EXEC:/usr/bin/cat &
 listener_pid=$!
+track_player_pid "$listener_pid"
 for _ in $(seq 1 50); do
   [[ -S $runtime_dir/mpv.sock ]] && break
   sleep 0.02
@@ -126,16 +273,70 @@ fi
 jq -e 'length == 1 and .[0].uuid == "existing"' \
   "$runtime_dir/playlist.json" >/dev/null
 
-if RADIO_ATLAS_TEST_SOCAT_MODE=success PATH="$project_dir/tests/fixtures:$PATH" \
-  "$project_dir/radio-player" stop >/dev/null 2>&1; then
-  echo "Unconfirmed player stop was reported as success" >&2
-  exit 1
-fi
-[[ -S $runtime_dir/mpv.sock ]]
-kill "$listener_pid"
+RADIO_ATLAS_TEST_SOCAT_MODE=success PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" stop \
+  | jq -e '.running == false' >/dev/null
 wait "$listener_pid" 2>/dev/null || true
 listener_pid=""
-rm -f "$runtime_dir/mpv.sock"
+[[ ! -S $runtime_dir/mpv.sock ]]
+"$project_dir/radio-player" status >/dev/null
+[[ ! -e $runtime_dir/player.pid ]]
+
+python3 - "$runtime_dir/mpv.sock" <<'PY'
+import socket
+import sys
+
+server = socket.socket(socket.AF_UNIX)
+server.bind(sys.argv[1])
+server.close()
+PY
+setsid sleep 60 &
+session_pid=$!
+track_player_pid "$session_pid"
+RADIO_ATLAS_TEST_SOCAT_MODE=success-unlink \
+RADIO_ATLAS_TEST_SOCKET="$runtime_dir/mpv.sock" \
+PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" stop | jq -e '.running == false' >/dev/null
+wait "$session_pid" 2>/dev/null || true
+session_pid=""
+[[ ! -S $runtime_dir/mpv.sock ]]
+[[ ! -e $runtime_dir/player.pid ]]
+
+sleep 60 &
+orphan_pid=$!
+track_player_pid "$orphan_pid"
+"$project_dir/radio-player" stop | jq -e '.running == false' >/dev/null
+wait "$orphan_pid" 2>/dev/null || true
+if kill -0 "$orphan_pid" 2>/dev/null; then
+  echo "Tracked player without a socket was left running" >&2
+  exit 1
+fi
+[[ ! -e $runtime_dir/player.pid ]]
+
+session_child_file="$test_root/session-child.pid"
+setsid "$project_dir/radio-session" bash --noprofile --norc -c \
+  'printf "%s\n" "$$" > "$1"; exec sleep 60' radio-atlas-test "$session_child_file" \
+  > "$test_root/session.log" 2>&1 &
+session_pid=$!
+for _ in $(seq 1 100); do
+  [[ -s $session_child_file && -S $runtime_dir/proxy.sock ]] && break
+  sleep 0.02
+done
+[[ -s $session_child_file && -S $runtime_dir/proxy.sock ]]
+session_child_pid=$(<"$session_child_file")
+track_player_pid "$session_pid"
+"$project_dir/radio-player" stop | jq -e '.running == false' >/dev/null
+wait "$session_pid" 2>/dev/null || true
+session_pid=""
+for _ in $(seq 1 50); do
+  kill -0 "$session_child_pid" 2>/dev/null || break
+  sleep 0.02
+done
+if kill -0 "$session_child_pid" 2>/dev/null; then
+  echo "Sandbox child survived player termination" >&2
+  exit 1
+fi
+[[ ! -S $runtime_dir/proxy.sock ]]
 
 for _ in $(seq 1 30); do
   printf '{"favorites":[],"recent":[],"volume":70}\n' \
@@ -150,12 +351,23 @@ for _ in $(seq 1 30); do
     "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 done
 
+track_player_pid "$$"
 if PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" play 12345678-1234-1234-1234-123456789abc results \
+  >/dev/null 2>&1; then
+  echo "A second player was started while a tracked player was alive" >&2
+  exit 1
+fi
+rm "$runtime_dir/player.pid"
+
+mpv_marker="$test_root/mpv-started"
+if RADIO_ATLAS_TEST_MPV_MARKER="$mpv_marker" PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" play 12345678-1234-1234-1234-123456789abc results \
   >/dev/null 2>&1; then
   echo "Player startup failure was reported as success" >&2
   exit 1
 fi
+[[ -e $mpv_marker ]]
 
 unsafe='[{"uuid":"abcdefab-1234-1234-1234-abcdefabcdef","name":"Unsafe","url":"file:///etc/passwd"}]'
 printf '%s\n' "$unsafe" > "$runtime_dir/results.json"
