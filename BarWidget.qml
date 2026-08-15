@@ -16,6 +16,7 @@ BarWidget {
   property int reportedVolume: 70
   property int pendingVolume: -1
   property string playerTitle: ""
+  property bool statusReady: false
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
   readonly property string statusPath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas/status.json"
 
@@ -29,11 +30,14 @@ BarWidget {
 
   function applyPlayerState(raw) {
     try {
+      if (typeof raw !== "string" || raw.length > 65536) return
       var state = JSON.parse(raw || "{}")
       root.playerRunning = state.running === true
       root.playerPaused = state.paused === true
       root.playerMuted = state.muted === true
-      root.reportedVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
+      var nextVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
+      root.reportedVolume = isFinite(nextVolume)
+        ? Math.max(0, Math.min(100, nextVolume)) : 70
       if (root.pendingVolume < 0) root.playerVolume = root.reportedVolume
       root.playerTitle = root.singleLineText(
         state.title || (state.station && state.station.name) || "", 160)
@@ -66,7 +70,7 @@ BarWidget {
   implicitHeight: button.implicitHeight
 
   FileView {
-    path: root.statusPath
+    path: root.statusReady ? root.statusPath : ""
     watchChanges: true
     atomicWrites: true
     printErrors: false
@@ -75,8 +79,19 @@ BarWidget {
   }
 
   Process {
+    id: statusInitProcess
+    command: []
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.statusReady = true
+    }
+  }
+
+  Process {
     id: actionProcess
     command: []
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.statusReady = true
+    }
   }
 
   Process {
@@ -85,11 +100,16 @@ BarWidget {
     command: []
     onExited: function(exitCode) {
       if (exitCode !== 0) {
-        root.pendingVolume = -1
-        root.playerVolume = root.reportedVolume
+        if (root.pendingVolume === submittedVolume) {
+          root.pendingVolume = -1
+          root.playerVolume = root.reportedVolume
+        } else {
+          Qt.callLater(root.flushVolume)
+        }
         return
       }
 
+      root.statusReady = true
       root.reportedVolume = submittedVolume
       if (root.pendingVolume === submittedVolume) {
         root.pendingVolume = -1
@@ -98,6 +118,11 @@ BarWidget {
       }
       Qt.callLater(root.flushVolume)
     }
+  }
+
+  Component.onCompleted: {
+    statusInitProcess.command = [playerPath, "status"]
+    statusInitProcess.running = true
   }
 
   WidgetButton {

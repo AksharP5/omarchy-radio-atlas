@@ -5,6 +5,7 @@ set -euo pipefail
 
 output=""
 max_filesize=""
+limit=""
 while (( $# > 0 )); do
   case "$1" in
     --output)
@@ -13,6 +14,12 @@ while (( $# > 0 )); do
       ;;
     --max-filesize)
       max_filesize=${2:-}
+      shift 2
+      ;;
+    --data-urlencode)
+      if [[ ${2:-} == limit=* ]]; then
+        limit=${2#limit=}
+      fi
       shift 2
       ;;
     *)
@@ -44,6 +51,19 @@ if [[ ${RADIO_ATLAS_TEST_CURL_OVERSIZED:-} == always ]] \
     && mkdir "${RADIO_ATLAS_TEST_CURL_OVERSIZED_MARKER:?}" 2>/dev/null; }; then
   [[ -z $output ]] || printf '%s\n' '["partial response"]' > "$output"
   exit 63
+fi
+
+if [[ ${RADIO_ATLAS_TEST_CURL_TOO_MANY:-} == always ]] \
+  || { [[ ${RADIO_ATLAS_TEST_CURL_TOO_MANY:-} == once ]] \
+    && mkdir "${RADIO_ATLAS_TEST_CURL_TOO_MANY_MARKER:?}" 2>/dev/null; }; then
+  records=$(( ${limit:-500} + 1 ))
+  payload=$(jq -cn --argjson records "$records" '[range(0; $records) | {}]')
+fi
+
+if [[ ${RADIO_ATLAS_TEST_CURL_MULTIPLE:-} == always ]] \
+  || { [[ ${RADIO_ATLAS_TEST_CURL_MULTIPLE:-} == once ]] \
+    && mkdir "${RADIO_ATLAS_TEST_CURL_MULTIPLE_MARKER:?}" 2>/dev/null; }; then
+  payload=$'[]\n[]'
 fi
 
 if [[ -n $output ]]; then

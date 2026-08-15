@@ -1,21 +1,73 @@
 #!/usr/bin/env python3
 
 import ipaddress
+import json
 import os
 import select
 import signal
 import socket
 import socketserver
 import stat
+import subprocess
 import sys
+import threading
 from urllib.parse import urlsplit
 
 MAX_HEADER_BYTES = 65_536
+MAX_ACTIVE_CONNECTIONS = 32
+MAX_RESOLVED_ENDPOINTS = 16
+NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
+IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
 
 
 class ProxyError(Exception):
     def __init__(self, status: bytes):
         self.status = status
+
+
+def embeds_non_public_ipv4(ip: ipaddress.IPv4Address | ipaddress.IPv6Address):
+    if not isinstance(ip, ipaddress.IPv6Address):
+        return False
+
+    embedded = []
+    if ip.ipv4_mapped:
+        embedded.append(ip.ipv4_mapped)
+    if ip.sixtofour:
+        embedded.append(ip.sixtofour)
+    if ip.teredo:
+        embedded.extend(ip.teredo)
+    if ip in NAT64_WELL_KNOWN:
+        embedded.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+    if ip in IPV4_COMPATIBLE:
+        embedded.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
+    return any(not address.is_global for address in embedded)
+
+
+def route_is_local(ip: ipaddress.IPv4Address | ipaddress.IPv6Address):
+    try:
+        result = subprocess.run(
+            ["/usr/bin/ip", "-j", "route", "get", str(ip)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ProxyError(b"502 Bad Gateway") from error
+
+    if result.returncode != 0:
+        return False
+    try:
+        routes = json.loads(result.stdout)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ProxyError(b"502 Bad Gateway") from error
+    if not isinstance(routes, list):
+        raise ProxyError(b"502 Bad Gateway")
+    return any(
+        isinstance(route, dict)
+        and (route.get("type") == "local" or route.get("dev") == "lo")
+        for route in routes
+    )
 
 
 def public_endpoints(host: str, port: int):
@@ -27,6 +79,12 @@ def public_endpoints(host: str, port: int):
     endpoints = []
     seen = set()
     for family, kind, protocol, _, address in addresses:
+        key = (family, address)
+        if key in seen:
+            continue
+        if len(seen) >= MAX_RESOLVED_ENDPOINTS:
+            raise ProxyError(b"502 Bad Gateway")
+        seen.add(key)
         ip = ipaddress.ip_address(address[0].split("%", 1)[0])
         if (
             not ip.is_global
@@ -34,12 +92,12 @@ def public_endpoints(host: str, port: int):
             or ip.is_unspecified
             or ip.is_reserved
             or getattr(ip, "is_site_local", False)
+            or embeds_non_public_ipv4(ip)
         ):
             raise ProxyError(b"403 Forbidden")
-        key = (family, address)
-        if key not in seen:
-            seen.add(key)
-            endpoints.append((family, kind, protocol, address))
+        if route_is_local(ip):
+            raise ProxyError(b"403 Forbidden")
+        endpoints.append((family, kind, protocol, address))
 
     if not endpoints:
         raise ProxyError(b"502 Bad Gateway")
@@ -143,6 +201,8 @@ def parse_request(header: bytes):
 def relay(left: socket.socket, right: socket.socket):
     while True:
         readable, _, _ = select.select((left, right), (), (), 60)
+        if not readable:
+            return
         for source in readable:
             data = source.recv(65_536)
             if not data:
@@ -176,6 +236,26 @@ class ProxyHandler(socketserver.BaseRequestHandler):
 class ProxyServer(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
     request_queue_size = 32
+
+    def __init__(self, *args, **kwargs):
+        self.connection_slots = threading.BoundedSemaphore(MAX_ACTIVE_CONNECTIONS)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self.connection_slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.connection_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.connection_slots.release()
 
 
 def main():

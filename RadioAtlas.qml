@@ -47,6 +47,9 @@ Item {
   property string playingStationUuid: ""
   property string recordedStationUuid: ""
   property bool playCancellationRequested: false
+  property var pendingPlayStation: null
+  property string pendingPlayScope: ""
+  property bool statusReady: false
   readonly property bool playPreparing: playerActionProcess.running
     && playerActionProcess.action === "play"
   readonly property bool playerActionBusy: playerActionProcess.running || stopProcess.running
@@ -159,6 +162,7 @@ Item {
   }
 
   function setStationList(nextMode, stations) {
+    cancelPendingPlay()
     mode = nextMode
     if (nextMode !== "favorites" && nextMode !== "recent") results = stations
     setSelection(stations.length > 0 ? 0 : -1)
@@ -167,6 +171,11 @@ Item {
   function cancelPendingFetch() {
     pendingFetchAction = ""
     pendingFetchValue = ""
+  }
+
+  function cancelPendingPlay() {
+    pendingPlayStation = null
+    pendingPlayScope = ""
   }
 
   function startFetch(action, value) {
@@ -273,15 +282,34 @@ Item {
   }
 
   function playSelected() {
-    if (!selectedStation || playerActionBusy) return
+    if (!selectedStation) return
+    playStation(selectedStation, playlistScope())
+  }
+
+  function playStation(station, scope) {
+    if (!station) return
+    if (playerActionBusy) {
+      pendingPlayStation = station
+      pendingPlayScope = scope
+      return
+    }
+    cancelPendingPlay()
     playCancellationRequested = false
-    highlightStationCountry(selectedStation, true)
+    highlightStationCountry(station, true)
     playerError = ""
     playerActionProcess.action = "play"
     playerActionProcess.output = ""
     playerActionProcess.errorOutput = ""
-    playerActionProcess.command = [playerPath, "play", selectedStation.uuid, playlistScope()]
+    playerActionProcess.command = [playerPath, "play", station.uuid, scope]
     playerActionProcess.running = true
+  }
+
+  function playPendingStation() {
+    if (!pendingPlayStation || playerActionBusy) return
+    var station = pendingPlayStation
+    var scope = pendingPlayScope
+    cancelPendingPlay()
+    playStation(station, scope)
   }
 
   function playerAction(action) {
@@ -295,6 +323,7 @@ Item {
   }
 
   function stopPlayer() {
+    cancelPendingPlay()
     if (stopProcess.running || playCancellationRequested) return
     if (playerActionProcess.running && !playPreparing) return
     if (playPreparing) playCancellationRequested = true
@@ -305,6 +334,8 @@ Item {
 
   function applyPlayerState(raw) {
     try {
+      if (typeof raw !== "string" || raw.length > 65536)
+        throw new Error("Player status is too large")
       var state = JSON.parse(raw || "{}")
       var previousUuid = playingStationUuid
       var nextPlayingStation = state.station && typeof state.station === "object"
@@ -484,12 +515,20 @@ Item {
   }
 
   FileView {
-    path: root.statusPath
+    path: root.statusReady ? root.statusPath : ""
     watchChanges: true
     atomicWrites: true
     printErrors: false
     onLoaded: root.applyPlayerState(text())
     onFileChanged: reload()
+  }
+
+  Process {
+    id: statusInitProcess
+    command: []
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.statusReady = true
+    }
   }
 
   Process {
@@ -566,12 +605,18 @@ Item {
     }
     onExited: function(exitCode) {
       if (exitCode !== 0) {
-        root.pendingVolume = -1
-        root.playerVolume = root.reportedVolume
+        if (root.pendingVolume === submittedVolume) {
+          root.pendingVolume = -1
+          root.playerVolume = root.reportedVolume
+        } else {
+          Qt.callLater(root.flushPlayerVolume)
+        }
         root.playerError = "Could not change volume"
         return
       }
 
+      root.statusReady = true
+      root.playerError = ""
       root.reportedVolume = submittedVolume
       if (root.pendingVolume === submittedVolume) {
         root.pendingVolume = -1
@@ -604,6 +649,8 @@ Item {
         root.playerError = playerActionProcess.action === "play"
           ? "Could not play this station" : "Player action failed"
       }
+      if (exitCode === 0) root.statusReady = true
+      Qt.callLater(root.playPendingStation)
     }
   }
 
@@ -612,6 +659,8 @@ Item {
     command: []
     onExited: function(exitCode) {
       if (exitCode !== 0) root.playerError = "Could not stop the player"
+      else root.statusReady = true
+      Qt.callLater(root.playPendingStation)
     }
   }
 
@@ -696,6 +745,11 @@ Item {
     interval: 90
     repeat: false
     onTriggered: root.flushPlayerVolume()
+  }
+
+  Component.onCompleted: {
+    statusInitProcess.command = [playerPath, "status"]
+    statusInitProcess.running = true
   }
 
   PanelWindow {

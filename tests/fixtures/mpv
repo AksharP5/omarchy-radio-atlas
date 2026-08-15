@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+arguments=" $* "
+[[ $arguments == *" --cache-secs=20 "* ]]
+[[ $arguments == *" --demuxer-max-bytes=8MiB "* ]]
+[[ $arguments == *" --demuxer-max-back-bytes=2MiB "* ]]
+[[ $arguments == *" --network-timeout=30 "* ]]
+[[ $arguments == *" --load-unsafe-playlists=no "* ]]
 mapfile -t interfaces < <(ip -o link show | awk -F': ' '{ print $2 }')
 [[ ${#interfaces[@]} == 1 && ${interfaces[0]} == lo ]]
 grep -Eq '^CapEff:[[:space:]]+0+$' /proc/self/status

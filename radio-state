@@ -8,44 +8,71 @@ data_root=${XDG_DATA_HOME:-$HOME/.local/share}
 state_dir="$data_root/radio-atlas"
 state_file="$state_dir/state.json"
 state_lock="$state_dir/state.lock"
+max_json_bytes=4194304
 install -d -m 700 "$runtime_dir" "$state_dir"
 
 exec 9>"$state_lock"
 flock -x 9
+
+file_within_limit() {
+  local path=$1
+  [[ -s $path ]] && (( $(stat -c '%s' -- "$path") <= max_json_bytes ))
+}
+
+valid_state_file() {
+  local path=$1
+  file_within_limit "$path" && jq -e -s '
+    length == 1 and (.[0]
+      | type == "object"
+      and (.favorites | type == "array")
+      and (.favorites | length <= 500)
+      and (.recent | type == "array")
+      and (.recent | length <= 30)
+      and ((.volume // 70) | type == "number")
+      and ((.volume // 70) >= 0 and (.volume // 70) <= 100))
+  ' "$path" >/dev/null 2>&1
+}
 
 ensure_state() {
   if [[ ! -e $state_file ]]; then
     printf '{"favorites":[],"recent":[],"volume":70}\n' > "$state_file"
     return
   fi
-  if [[ -s $state_file ]] && jq -e '
-    type == "object"
-    and (.favorites | type == "array")
-    and (.recent | type == "array")
-    and ((.volume // 70) | type == "number")
-    and ((.volume // 70) >= 0 and (.volume // 70) <= 100)
-  ' "$state_file" >/dev/null 2>&1; then
-    return
-  fi
+  valid_state_file "$state_file" && return
   echo "Radio Atlas saved state is invalid; refusing to overwrite $state_file" >&2
   exit 4
 }
 
+ensure_runtime_array() {
+  local path=$1
+  if ! file_within_limit "$path" \
+    || ! jq -e -s 'length == 1 and (.[0] | type == "array" and length <= 500)' \
+      "$path" >/dev/null 2>&1; then
+    printf '[]\n' > "$path"
+  fi
+}
+
 ensure_runtime_data() {
-  [[ -f $runtime_dir/results.json ]] || printf '[]\n' > "$runtime_dir/results.json"
-  [[ -f $runtime_dir/world.json ]] || printf '[]\n' > "$runtime_dir/world.json"
-  [[ -f $runtime_dir/playlist.json ]] || printf '[]\n' > "$runtime_dir/playlist.json"
+  ensure_runtime_array "$runtime_dir/results.json"
+  ensure_runtime_array "$runtime_dir/world.json"
+  ensure_runtime_array "$runtime_dir/playlist.json"
 }
 
 find_station() {
   local uuid=$1
-  jq -cs --arg uuid "$uuid" '
-    (.[0] // []) + (.[1] // []) + (.[2] // [])
-      + ((.[3] // {}).favorites // []) + ((.[3] // {}).recent // [])
-    | map(select(.uuid == $uuid))
-    | first // empty
-  ' "$runtime_dir/playlist.json" "$runtime_dir/results.json" \
-    "$runtime_dir/world.json" "$state_file" 2>/dev/null
+  local source station
+  for source in "$runtime_dir/playlist.json" "$runtime_dir/results.json" \
+    "$runtime_dir/world.json"; do
+    station=$(jq -c --arg uuid "$uuid" \
+      'first(.[] | select(.uuid == $uuid)) // empty' "$source" 2>/dev/null || true)
+    if [[ -n $station ]]; then
+      printf '%s\n' "$station"
+      return
+    fi
+  done
+  jq -c --arg uuid "$uuid" \
+    'first((.favorites[]?, .recent[]?) | select(.uuid == $uuid)) // empty' \
+    "$state_file" 2>/dev/null
 }
 
 write_state() {
@@ -54,6 +81,11 @@ write_state() {
   local temporary
   temporary=$(mktemp "$state_dir/state.XXXXXX")
   jq -c --argjson station "$station" "$filter" "$state_file" > "$temporary"
+  if ! valid_state_file "$temporary"; then
+    rm -f "$temporary"
+    echo 'Radio Atlas could not save this station safely' >&2
+    return 4
+  fi
   mv "$temporary" "$state_file"
 }
 
@@ -62,16 +94,21 @@ write_volume() {
   local temporary
   temporary=$(mktemp "$state_dir/state.XXXXXX")
   jq -c --argjson volume "$volume" '.volume = $volume' "$state_file" > "$temporary"
+  if ! valid_state_file "$temporary"; then
+    rm -f "$temporary"
+    echo 'Radio Atlas could not save the volume safely' >&2
+    return 4
+  fi
   mv "$temporary" "$state_file"
 }
 
 ensure_state
-ensure_runtime_data
 action=${1:-get}
 case "$action" in
   get)
     ;;
   favorite)
+    ensure_runtime_data
     uuid=${2:-}
     [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
     station=$(find_station "$uuid")
@@ -79,11 +116,12 @@ case "$action" in
     write_state '
       if any(.favorites[]?; .uuid == $station.uuid)
       then .favorites = [.favorites[] | select(.uuid != $station.uuid)]
-      else .favorites = [$station] + [.favorites[] | select(.uuid != $station.uuid)]
+      else .favorites = ([$station] + [.favorites[] | select(.uuid != $station.uuid)])[:500]
       end
     ' "$station"
     ;;
   played)
+    ensure_runtime_data
     uuid=${2:-}
     [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
     station=$(find_station "$uuid")
@@ -104,4 +142,4 @@ case "$action" in
     ;;
 esac
 
-jq -c . "$state_file"
+cat "$state_file"

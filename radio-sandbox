@@ -14,7 +14,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-socat TCP4-LISTEN:18765,bind=127.0.0.1,reuseaddr,fork \
+socat TCP4-LISTEN:18765,bind=127.0.0.1,reuseaddr,fork,max-children=32 \
   UNIX-CONNECT:"$proxy_socket" >/dev/null 2>&1 &
 bridge_pid=$!
 for _ in $(seq 1 100); do

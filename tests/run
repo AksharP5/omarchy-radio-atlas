@@ -6,7 +6,7 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
-  and .version == "0.1.1"
+  and .version == "0.1.2"
   and (.kinds | index("overlay"))
   and (.kinds | index("bar-widget"))
 ' "$project_dir/manifest.json" >/dev/null
@@ -49,9 +49,17 @@ for qml in "$project_dir/RadioAtlas.qml" "$project_dir/Globe.qml"; do
 done
 ! rg -q '/tmp/omarchy-radio-atlas' \
   "$project_dir/radio-fetch" "$project_dir/radio-player" "$project_dir/radio-state"
-rg -q -- '--max-filesize 4194304' "$project_dir/radio-fetch"
+rg -q '^max_response_bytes=4194304$' "$project_dir/radio-fetch"
+rg -Fq -- '--max-filesize "$max_response_bytes"' "$project_dir/radio-fetch"
 rg -q -- "--proto '=https'" "$project_dir/radio-fetch"
 ! rg -q -- '--location' "$project_dir/radio-fetch"
+rg -Fq '.[:500]' "$project_dir/radio-fetch"
+rg -q 'pendingPlayStation' "$project_dir/RadioAtlas.qml"
+rg -q 'playPendingStation' "$project_dir/RadioAtlas.qml"
+rg -q 'statusReady' "$project_dir/RadioAtlas.qml" "$project_dir/BarWidget.qml"
+rg -Fq -- '--demuxer-max-bytes=8MiB' "$project_dir/radio-player"
+rg -Fq 'max-children=32' "$project_dir/radio-sandbox"
+rg -q 'MAX_ACTIVE_CONNECTIONS = 32' "$project_dir/radio-proxy"
 
 test_root=$(mktemp -d)
 listener_pid=""
@@ -121,6 +129,16 @@ jq -e '
 ' "$test_root/normalized.json" >/dev/null
 [[ $(stat -c '%a' "$runtime_dir") == 700 ]]
 
+truncate -s 4194305 "$runtime_dir/world.json"
+PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" world \
+  > "$test_root/world-after-oversized-cache.json"
+jq -e 'length == 2' "$test_root/world-after-oversized-cache.json" >/dev/null
+
+jq -cn '[range(0; 501) | {}]' > "$runtime_dir/world.json"
+PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" world \
+  > "$test_root/world-after-excessive-cache.json"
+jq -e 'length == 2' "$test_root/world-after-excessive-cache.json" >/dev/null
+
 malformed_marker="$test_root/malformed-response"
 RADIO_ATLAS_TEST_CURL_MALFORMED_ONCE=1 \
 RADIO_ATLAS_TEST_CURL_MARKER="$malformed_marker" \
@@ -141,6 +159,32 @@ if RADIO_ATLAS_TEST_CURL_OVERSIZED=always PATH="$project_dir/tests/fixtures:$PAT
   exit 1
 fi
 cmp "$test_root/results-before-failure.json" "$runtime_dir/results.json"
+
+too_many_marker="$test_root/too-many-response"
+RADIO_ATLAS_TEST_CURL_TOO_MANY=once \
+RADIO_ATLAS_TEST_CURL_TOO_MANY_MARKER="$too_many_marker" \
+PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" country US > "$test_root/too-many-fallback.json"
+jq -e 'length == 2' "$test_root/too-many-fallback.json" >/dev/null
+cp "$runtime_dir/results.json" "$test_root/results-before-cardinality-failure.json"
+if RADIO_ATLAS_TEST_CURL_TOO_MANY=always PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" country US >/dev/null 2>&1; then
+  echo "Responses with excessive record counts were accepted" >&2
+  exit 1
+fi
+cmp "$test_root/results-before-cardinality-failure.json" "$runtime_dir/results.json"
+
+multiple_marker="$test_root/multiple-response"
+RADIO_ATLAS_TEST_CURL_MULTIPLE=once \
+RADIO_ATLAS_TEST_CURL_MULTIPLE_MARKER="$multiple_marker" \
+PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" country US > "$test_root/multiple-fallback.json"
+jq -e 'length == 2' "$test_root/multiple-fallback.json" >/dev/null
+if RADIO_ATLAS_TEST_CURL_MULTIPLE=always PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" country US >/dev/null 2>&1; then
+  echo "Multiple JSON documents were accepted as one response" >&2
+  exit 1
+fi
 
 PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" search 93 \
   > "$test_root/search.json"
@@ -202,12 +246,44 @@ if "$project_dir/radio-player" volume 42 >/dev/null 2>&1; then
 fi
 cmp "$test_root/invalid-state.json" "$XDG_DATA_HOME/radio-atlas/state.json"
 rm "$XDG_DATA_HOME/radio-atlas/state.json"
+
+truncate -s 4194305 "$XDG_DATA_HOME/radio-atlas/state.json"
+if timeout 2 "$project_dir/radio-state" get >/dev/null 2>&1; then
+  echo "Oversized saved state was accepted" >&2
+  exit 1
+fi
+[[ $(stat -c '%s' "$XDG_DATA_HOME/radio-atlas/state.json") == 4194305 ]]
+rm "$XDG_DATA_HOME/radio-atlas/state.json"
+
+jq -cn '{favorites: [range(0; 501) | {uuid: tostring}], recent: [], volume: 70}' \
+  > "$XDG_DATA_HOME/radio-atlas/state.json"
+if "$project_dir/radio-state" get >/dev/null 2>&1; then
+  echo "Saved state with too many favorites was accepted" >&2
+  exit 1
+fi
+rm "$XDG_DATA_HOME/radio-atlas/state.json"
+
+printf '%s\n%s\n' \
+  '{"favorites":[],"recent":[],"volume":70}' \
+  '{"favorites":[],"recent":[],"volume":70}' \
+  > "$XDG_DATA_HOME/radio-atlas/state.json"
+if "$project_dir/radio-state" get >/dev/null 2>&1; then
+  echo "Multiple saved-state documents were accepted as one" >&2
+  exit 1
+fi
+rm "$XDG_DATA_HOME/radio-atlas/state.json"
+
 "$project_dir/radio-state" get \
   | jq -e '.favorites == [] and .recent == [] and .volume == 70' >/dev/null
 
 fixture='[{"uuid":"12345678-1234-1234-1234-123456789abc","name":"Test Radio","url":"https://example.com/radio.mp3","countryCode":"US","latitude":40,"longitude":-74}]'
 printf '%s\n' "$fixture" > "$runtime_dir/results.json"
 printf '%s\n' "$fixture" > "$runtime_dir/world.json"
+
+truncate -s 4194305 "$runtime_dir/playlist.json"
+"$project_dir/radio-state" played 12345678-1234-1234-1234-123456789abc \
+  | jq -e '.recent | length == 1' >/dev/null
+jq -e 'length == 0' "$runtime_dir/playlist.json" >/dev/null
 
 "$project_dir/radio-state" played 12345678-1234-1234-1234-123456789abc \
   | jq -e '.recent | length == 1' >/dev/null
@@ -348,6 +424,28 @@ for _ in $(seq 1 50); do
 done
 if kill -0 "$session_child_pid" 2>/dev/null; then
   echo "Sandbox child survived player termination" >&2
+  exit 1
+fi
+[[ ! -S $runtime_dir/proxy.sock ]]
+
+setsid "$project_dir/radio-session" sleep 60 > "$test_root/killed-session.log" 2>&1 &
+session_pid=$!
+for _ in $(seq 1 100); do
+  [[ -S $runtime_dir/proxy.sock ]] && break
+  sleep 0.02
+done
+[[ -S $runtime_dir/proxy.sock ]]
+orphan_proxy_pid=$(pgrep -P "$session_pid" -f 'radio-proxy' | head -n 1)
+[[ -n $orphan_proxy_pid ]]
+kill -KILL "$session_pid"
+wait "$session_pid" 2>/dev/null || true
+session_pid=""
+for _ in $(seq 1 100); do
+  kill -0 "$orphan_proxy_pid" 2>/dev/null || break
+  sleep 0.02
+done
+if kill -0 "$orphan_proxy_pid" 2>/dev/null; then
+  echo "Proxy survived an uncatchable session exit" >&2
   exit 1
 fi
 [[ ! -S $runtime_dir/proxy.sock ]]

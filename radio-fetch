@@ -11,6 +11,7 @@ results_file="$runtime_dir/results.json"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 version=$(jq -r '.version' "$script_dir/manifest.json")
 user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
+max_response_bytes=4194304
 search_dir=""
 
 cleanup() {
@@ -43,7 +44,8 @@ normalize='def number_or_null: try tonumber catch null;
     end;
   def compact($limit):
     if type == "string" then gsub("[\\r\\n\\t]"; "") | .[0:$limit] else "" end;
-  map({
+  .[:500]
+  | map({
     uuid: ((.stationuuid // "") | compact(64)),
     name: (((.name // "Unknown station") | clean(160)) as $name
       | if $name == "" then "Unknown station" else $name end),
@@ -75,18 +77,22 @@ normalize='def number_or_null: try tonumber catch null;
   | .rows[:500]'
 
 request() {
-  local path=$1
-  shift
+  local max_records=$1
+  local path=$2
+  shift 2
   local base error_file response_file
   error_file=$(mktemp "$runtime_dir/request.XXXXXX")
   response_file=$(mktemp "$runtime_dir/response.XXXXXX")
   for base in "${bases[@]}"; do
     if curl --fail --silent --show-error \
       --connect-timeout 4 --max-time 12 --retry 1 \
-      --max-filesize 4194304 --proto '=https' \
+      --max-filesize "$max_response_bytes" --proto '=https' \
       --user-agent "$user_agent" --get "$base$path" "$@" \
       --output "$response_file" 2>"$error_file" \
-      && jq -e 'type == "array"' "$response_file" >/dev/null 2>&1; then
+      && (( $(stat -c '%s' -- "$response_file") <= max_response_bytes )) \
+      && jq -e -s --argjson maxRecords "$max_records" \
+        'length == 1 and (.[0] | type == "array" and length <= $maxRecords)' \
+        "$response_file" >/dev/null 2>&1; then
       cat "$response_file"
       rm -f "$error_file" "$response_file"
       return 0
@@ -136,14 +142,17 @@ store_random_results() {
 
 fetch_world() {
   if [[ -s $world_file ]] \
-    && jq -e 'type == "array" and length > 0' "$world_file" >/dev/null 2>&1 \
+    && (( $(stat -c '%s' -- "$world_file") <= max_response_bytes )) \
+    && jq -e -s 'length == 1 and (.[0]
+      | type == "array" and length > 0 and length <= 500)' \
+      "$world_file" >/dev/null 2>&1 \
     && find "$world_file" -mmin -30 -print -quit | grep -q .; then
     publish_copy "$world_file" "$results_file"
     cat "$world_file"
     return
   fi
 
-  request '/json/stations/search' \
+  request 500 '/json/stations/search' \
     --data-urlencode 'has_geo_info=true' \
     --data-urlencode 'hidebroken=true' \
     --data-urlencode 'order=clickcount' \
@@ -156,7 +165,7 @@ fetch_search() {
   local query=$1
   search_dir=$(mktemp -d "$runtime_dir/search.XXXXXX")
 
-  request '/json/stations/search' \
+  request 80 '/json/stations/search' \
     --data-urlencode "name=$query" \
     --data-urlencode 'hidebroken=true' \
     --data-urlencode 'order=clickcount' \
@@ -164,7 +173,7 @@ fetch_search() {
     --data-urlencode 'limit=80' > "$search_dir/name.json" &
   local name_pid=$!
 
-  request '/json/stations/search' \
+  request 80 '/json/stations/search' \
     --data-urlencode "country=$query" \
     --data-urlencode 'hidebroken=true' \
     --data-urlencode 'order=clickcount' \
@@ -172,7 +181,7 @@ fetch_search() {
     --data-urlencode 'limit=80' > "$search_dir/country.json" &
   local country_pid=$!
 
-  request '/json/stations/search' \
+  request 80 '/json/stations/search' \
     --data-urlencode "tag=$query" \
     --data-urlencode 'hidebroken=true' \
     --data-urlencode 'order=clickcount' \
@@ -215,7 +224,8 @@ resolve_stations() {
     || { echo 'Invalid station ids' >&2; exit 2; }
   (( ${#uuids} <= 4096 )) || { echo 'Too many station ids' >&2; exit 2; }
 
-  request '/json/stations/byuuid' \
+  local commas=${uuids//[^,]/}
+  request "$(( ${#commas} + 1 ))" '/json/stations/byuuid' \
     --data-urlencode "uuids=$uuids" \
     | jq -c "$normalize"
 }
@@ -228,7 +238,7 @@ case "$action" in
   country)
     code=${2:-}
     [[ $code =~ ^[A-Za-z]{2}$ ]] || { echo 'Country code must contain two letters' >&2; exit 2; }
-    request '/json/stations/search' \
+    request 150 '/json/stations/search' \
       --data-urlencode "countrycode=${code^^}" \
       --data-urlencode 'hidebroken=true' \
       --data-urlencode 'order=clickcount' \
@@ -243,7 +253,7 @@ case "$action" in
     fetch_search "$query"
     ;;
   random)
-    request '/json/stations/search' \
+    request 60 '/json/stations/search' \
       --data-urlencode 'has_geo_info=true' \
       --data-urlencode 'hidebroken=true' \
       --data-urlencode 'order=random' \

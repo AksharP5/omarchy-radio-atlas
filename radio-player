@@ -15,6 +15,8 @@ pid_file="$runtime_dir/player.pid"
 proxy_socket="$runtime_dir/proxy.sock"
 generation_file="$runtime_dir/player.generation"
 log_file="$runtime_dir/mpv.log"
+max_json_bytes=4194304
+max_ipc_bytes=65536
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 fetch_path=${RADIO_ATLAS_FETCH_PATH:-$script_dir/radio-fetch}
 state_path="$script_dir/radio-state"
@@ -27,7 +29,7 @@ exec 8>"$runtime_dir/player.lock"
 process_start_time() {
   local pid=$1
   [[ -r /proc/$pid/stat ]] || return 1
-  awk '$3 != "Z" { print $22 }' "/proc/$pid/stat"
+  awk '$3 != "Z" { print $22 }' "/proc/$pid/stat" 2>/dev/null
 }
 
 player_alive() {
@@ -97,11 +99,11 @@ playable_filter='def playable:
     and (.url | test("[\\r\\n]") | not);'
 
 configured_volume() {
-  if [[ -s $state_file ]]; then
-    jq -r '(.volume // 70) | tonumber | round | if . < 0 then 0 elif . > 100 then 100 else . end' "$state_file" 2>/dev/null || printf '70\n'
-  else
-    printf '70\n'
-  fi
+  local volume
+  volume=$("$state_path" get 2>/dev/null \
+    | jq -r '(.volume // 70) | tonumber | round | if . < 0 then 0 elif . > 100 then 100 else . end') \
+    || volume=70
+  printf '%s\n' "$volume"
 }
 
 persist_volume() {
@@ -112,6 +114,10 @@ persist_volume() {
 write_status() {
   local state=$1
   local temporary
+  if (( $(printf '%s' "$state" | wc -c) > max_ipc_bytes )); then
+    echo 'Radio player returned an oversized status' >&2
+    return 4
+  fi
   temporary=$(mktemp "$runtime_dir/status.XXXXXX")
   printf '%s\n' "$state" > "$temporary"
   mv "$temporary" "$status_file"
@@ -124,7 +130,10 @@ send_command() {
   local response
   [[ -S $socket ]] || return 1
   payload=$(jq -c --argjson requestId "$request_id" '. + {request_id: $requestId}' <<< "$payload") || return 1
-  response=$(printf '%s\n' "$payload" | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null) || return 1
+  response=$(printf '%s\n' "$payload" \
+    | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
+    | head -c "$((max_ipc_bytes + 1))") || return 1
+  (( $(printf '%s' "$response" | wc -c) <= max_ipc_bytes )) || return 1
   jq -e --argjson requestId "$request_id" \
     'select(.request_id == $requestId and .error == "success")' \
     <<< "$response" >/dev/null 2>&1
@@ -146,8 +155,12 @@ status() {
       '{"command":["get_property","playlist-count"],"request_id":4}' \
       '{"command":["get_property","volume"],"request_id":5}' \
       '{"command":["get_property","mute"],"request_id":6}' \
-      | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null || true
+      | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
+      | head -c "$((max_ipc_bytes + 1))" || true
   )
+  if (( $(printf '%s' "$response" | wc -c) > max_ipc_bytes )); then
+    response=""
+  fi
 
   if ! jq -e 'select(.request_id == 1)' <<< "$response" >/dev/null 2>&1; then
     cleanup_dead_player
@@ -158,12 +171,23 @@ status() {
   local position station loaded station_uuid loaded_uuid
   position=$(jq -r 'select(.request_id == 3) | .data' <<< "$response" | head -n 1)
   station='{}'
-  if [[ $position =~ ^[0-9]+$ ]] && [[ -s $queue_file ]]; then
-    station=$(jq -c --argjson position "$position" '.[$position] // {}' "$queue_file" 2>/dev/null || printf '{}')
+  if [[ $position =~ ^[0-9]+$ ]] && valid_runtime_array "$queue_file"; then
+    station=$(jq -c --argjson position "$position" '
+      (.[$position] // {})
+      | {
+          uuid: (if (.uuid | type) == "string" then .uuid[:64] else "" end),
+          name: (if (.name | type) == "string" then .name[:160] else "" end),
+          country: (if (.country | type) == "string" then .country[:100] else "" end),
+          countryCode: (if (.countryCode | type) == "string" then .countryCode[:2] else "" end),
+          latitude: (if (.latitude | type) == "number" then .latitude else null end),
+          longitude: (if (.longitude | type) == "number" then .longitude else null end)
+        }
+    ' "$queue_file" 2>/dev/null || printf '{}')
   fi
   loaded=false
   station_uuid=$(jq -r '.uuid // ""' <<< "$station")
-  if [[ -n $station_uuid && -s $status_file ]]; then
+  if [[ -n $station_uuid && -s $status_file ]] \
+    && (( $(stat -c '%s' -- "$status_file") <= max_ipc_bytes )); then
     loaded_uuid=$(jq -r 'select(.loaded == true) | .station.uuid // ""' "$status_file" 2>/dev/null || true)
     [[ $loaded_uuid == "$station_uuid" ]] && loaded=true
   fi
@@ -172,7 +196,8 @@ status() {
     running: true,
     paused: ([.[] | select(.request_id == 1) | .data][0] // false),
     muted: ([.[] | select(.request_id == 6) | .data][0] // false),
-    title: ([.[] | select(.request_id == 2) | .data][0] // ""),
+    title: (([.[] | select(.request_id == 2) | .data][0] // "")
+      | if type == "string" then gsub("[\\r\\n\\t]"; " ")[:512] else "" end),
     playlistPosition: ([.[] | select(.request_id == 3) | .data][0] // -1),
     playlistCount: ([.[] | select(.request_id == 4) | .data][0] // 0),
     volume: ([.[] | select(.request_id == 5) | .data][0] // 70),
@@ -256,15 +281,24 @@ source_stations() {
   local scope=$1
   case "$scope" in
     favorites)
-      jq -c '.favorites // []' "$state_file"
+      "$state_path" get | jq -c '.favorites // []'
       ;;
     recent)
-      jq -c '.recent // []' "$state_file"
+      "$state_path" get | jq -c '.recent // []'
       ;;
     *)
-      cat "$runtime_dir/results.json"
+      valid_runtime_array "$runtime_dir/results.json" \
+        && cat "$runtime_dir/results.json"
       ;;
   esac
+}
+
+valid_runtime_array() {
+  local path=$1
+  [[ -s $path ]] \
+    && (( $(stat -c '%s' -- "$path") <= max_json_bytes )) \
+    && jq -e -s 'length == 1 and (.[0] | type == "array" and length <= 500)' \
+      "$path" >/dev/null 2>&1
 }
 
 refresh_saved_stations() {
@@ -290,7 +324,11 @@ play_station() {
   local source_file starting_generation
   starting_generation=$(player_generation)
   source_file=$(mktemp "$runtime_dir/source.XXXXXX")
-  source_stations "$scope" > "$source_file"
+  if ! source_stations "$scope" > "$source_file"; then
+    rm -f "$source_file"
+    echo 'Station data is unavailable or invalid' >&2
+    exit 3
+  fi
 
   if [[ $scope == favorites || $scope == recent ]]; then
     refresh_saved_stations "$source_file"
@@ -348,6 +386,11 @@ play_station() {
       --audio-display=no \
       --idle=yes \
       --loop-playlist=inf \
+      --cache-secs=20 \
+      --demuxer-max-bytes=8MiB \
+      --demuxer-max-back-bytes=2MiB \
+      --network-timeout=30 \
+      --load-unsafe-playlists=no \
       --volume="$(configured_volume)" \
       --volume-max=100 \
       --input-ipc-server="$socket" \

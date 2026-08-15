@@ -77,9 +77,11 @@ click-count endpoint. Favorites and history stay in
 
 Station metadata and stream URLs are community supplied. Labels are rendered
 as plain text. Playback runs in an isolated network namespace and reaches
-stations through a proxy that permits only public destinations, including after
-redirects. It still connects directly to third-party stations; HTTP streams are
-unencrypted. Only play stations you trust.
+stations through a bounded proxy that rejects private and effectively local
+destinations, including after redirects. Remote metadata and local JSON are
+size- and record-limited before they reach the shell. Radio Atlas still connects
+directly to third-party stations; HTTP streams are unencrypted. Only play
+stations you trust.
 
 Map geometry comes from public-domain Natural Earth data.
 
@@ -87,7 +89,8 @@ Map geometry comes from public-domain Natural Earth data.
 
 Player and proxy diagnostics are written to
 `$XDG_RUNTIME_DIR/omarchy-radio-atlas/mpv.log` and `proxy.log`. If saved state
-is malformed, Radio Atlas refuses to overwrite it and reports
+is malformed, oversized, or contains too many entries, Radio Atlas refuses to
+overwrite it and reports
 `~/.local/share/radio-atlas/state.json`; back up that file before repairing or
 removing it.
 

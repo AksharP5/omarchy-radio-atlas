@@ -7,6 +7,7 @@ local queue = nil
 local update_timer = nil
 local last_volume = 70
 local station_loaded = false
+local max_queue_bytes = 4194304
 
 local function clean_text(value, limit)
   if type(value) ~= "string" then return "" end
@@ -25,6 +26,20 @@ local function empty_station()
   return { uuid = "", name = "", country = "", countryCode = "" }
 end
 
+local function status_station(station)
+  if type(station) ~= "table" then return empty_station() end
+  local latitude = type(station.latitude) == "number" and station.latitude or nil
+  local longitude = type(station.longitude) == "number" and station.longitude or nil
+  return {
+    uuid = clean_text(station.uuid, 64),
+    name = clean_text(station.name, 160),
+    country = clean_text(station.country, 100),
+    countryCode = clean_text(station.countryCode, 2),
+    latitude = latitude,
+    longitude = longitude
+  }
+end
+
 local function read_queue()
   if queue then return queue end
   queue = {}
@@ -32,9 +47,15 @@ local function read_queue()
 
   local file = io.open(queue_path, "r")
   if not file then return queue end
+  local size = file:seek("end")
+  if not size or size > max_queue_bytes then
+    file:close()
+    return queue
+  end
+  file:seek("set", 0)
   local parsed = utils.parse_json(file:read("*a"))
   file:close()
-  if type(parsed) == "table" then queue = parsed end
+  if type(parsed) == "table" and #parsed <= 500 then queue = parsed end
   return queue
 end
 
@@ -61,7 +82,7 @@ local function current_status()
     playlistCount = mp.get_property_number("playlist-count", 0),
     volume = last_volume,
     loaded = station_loaded,
-    station = read_queue()[position + 1] or empty_station()
+    station = status_station(read_queue()[position + 1])
   }
 end
 

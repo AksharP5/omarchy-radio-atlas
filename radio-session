@@ -22,7 +22,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 rm -f "$proxy_socket"
-python3 "$script_dir/radio-proxy" "$proxy_socket" > "$runtime_dir/proxy.log" 2>&1 &
+setpriv --pdeathsig TERM python3 "$script_dir/radio-proxy" "$proxy_socket" \
+  > "$runtime_dir/proxy.log" 2>&1 &
 proxy_pid=$!
 for _ in $(seq 1 100); do
   [[ -S $proxy_socket ]] && break
