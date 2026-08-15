@@ -89,6 +89,7 @@ Item {
   property color urgent: Color.urgent
   property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.56)
   property color faint: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.12)
+  property color favoriteColor: lightTheme ? "#8a6100" : "#f2c94c"
   property color mapBackground: lightTheme ? "#e7e6e1" : "#090a0c"
   property color mapSphere: lightTheme ? "#d2d0ca" : "#11151a"
   property color mapLand: lightTheme ? "#a9aaa6" : "#283039"
@@ -910,16 +911,6 @@ Item {
           font.bold: true
         }
 
-        Rectangle {
-          anchors.left: title.right
-          anchors.leftMargin: Style.spacing.md
-          anchors.verticalCenter: parent.verticalCenter
-          width: Style.space(6)
-          height: width
-          radius: width / 2
-          color: root.fetching ? root.dim : (root.fetchError ? root.urgent : root.accent)
-        }
-
         TextField {
           id: searchField
           anchors.right: randomButton.left
@@ -1023,22 +1014,27 @@ Item {
           }
 
           Text {
+            id: mapHint
             anchors.left: parent.left
             anchors.leftMargin: Style.spacing.panelPadding
+            anchors.right: signalCount.left
+            anchors.rightMargin: Style.spacing.md
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Style.spacing.md
             text: root.fetchError || root.localError
               ? root.fetchError || root.localError
               : (root.activeCountryName
-                ? root.activeCountryName + "  ·  click another country to retune"
+                ? root.activeCountryName + "  ·  click another country to browse"
                 : "Drag to rotate  ·  wheel to zoom  ·  click a signal or country")
             textFormat: Text.PlainText
             color: root.fetchError || root.localError ? root.urgent : root.dim
             font.family: Style.font.menuFamily
             font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
           }
 
           Text {
+            id: signalCount
             anchors.right: parent.right
             anchors.rightMargin: Style.spacing.panelPadding
             anchors.bottom: parent.bottom
@@ -1209,8 +1205,8 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: root.isFavorite(stationRow.modelData.uuid) ? "\uf005" : "\uf006"
                 tooltipText: root.isFavorite(stationRow.modelData.uuid) ? "Remove favorite" : "Add favorite"
-                active: root.isFavorite(stationRow.modelData.uuid)
-                foreground: root.foreground
+                foreground: root.isFavorite(stationRow.modelData.uuid)
+                  ? root.favoriteColor : root.foreground
                 accent: root.accent
                 onClicked: root.toggleFavorite(stationRow.modelData.uuid)
               }
@@ -1328,9 +1324,9 @@ Item {
               tooltipText: root.isFavorite(root.playingStationUuid)
                 ? "Remove playing station from favorites"
                 : "Add playing station to favorites"
-              active: root.isFavorite(root.playingStationUuid)
               focusable: true
-              foreground: root.foreground
+              foreground: root.isFavorite(root.playingStationUuid)
+                ? root.favoriteColor : root.foreground
               accent: root.accent
               Accessible.role: Accessible.Button
               Accessible.name: tooltipText

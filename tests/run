@@ -63,6 +63,15 @@ sed -n '/id: playerPanel/,/^          }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'root.playingStationName || root.playerTitle || "Unknown station"'
 sed -n '/id: playingFavoriteButton/,/^            }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'root.toggleFavorite(root.playingStationUuid)'
+rg -q 'property color favoriteColor: lightTheme' "$project_dir/RadioAtlas.qml"
+[[ $(rg -c '\? root\.favoriteColor : root\.foreground' "$project_dir/RadioAtlas.qml") == 2 ]]
+! rg -q 'active: root\.isFavorite' "$project_dir/RadioAtlas.qml"
+! rg -Fq 'color: root.fetching ? root.dim' "$project_dir/RadioAtlas.qml"
+rg -Fq 'click another country to browse' "$project_dir/RadioAtlas.qml"
+sed -n '/id: mapHint/,/^          }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'anchors.right: signalCount.left'
+sed -n '/id: mapHint/,/^          }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'elide: Text.ElideRight'
 rg -q 'rowMouse.containsMouse' "$project_dir/RadioAtlas.qml"
 ! rg -q 'selectedIndex === index.*Style.selectedFillFor' "$project_dir/RadioAtlas.qml"
 ! rg -q 'send_command .*\|\| true' "$project_dir/radio-player"
