@@ -19,6 +19,7 @@
     "overlay",
     "bar-widget"
   ],
+  "keepLoaded": true,
   "entryPoints": {
     "overlay": "RadioAtlas.qml",
     "barWidget": "BarWidget.qml"

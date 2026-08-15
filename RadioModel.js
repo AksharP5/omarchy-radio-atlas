@@ -292,10 +292,9 @@ function mergeGeoStations(primary, secondary, countries) {
   return output
 }
 
-function mergeStations(primary, secondary, maximum) {
+function combineStations(groups, maximum, replaceDuplicates) {
   var output = []
   var seen = ({})
-  var groups = [primary, secondary]
   var limit = Math.max(1, Number(maximum || 500))
 
   for (var g = 0; g < groups.length; g++) {
@@ -305,7 +304,7 @@ function mergeStations(primary, secondary, maximum) {
       if (!row || !row.uuid) continue
       var key = "$" + row.uuid
       if (seen[key] !== undefined) {
-        if (g > 0) output[seen[key]] = row
+        if (replaceDuplicates && g > 0) output[seen[key]] = row
         continue
       }
       if (output.length >= limit) continue
@@ -314,6 +313,14 @@ function mergeStations(primary, secondary, maximum) {
     }
   }
   return output
+}
+
+function mergeStations(primary, secondary, maximum) {
+  return combineStations([primary, secondary], maximum, true)
+}
+
+function prioritizeStations(priority, fallback, maximum) {
+  return combineStations([priority, fallback], maximum, false)
 }
 
 function searchStations(stations, query, maximum) {

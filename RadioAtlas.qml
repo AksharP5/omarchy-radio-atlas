@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls as QQC
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
@@ -132,6 +133,17 @@ Item {
     close()
     if (shell && typeof shell.hide === "function")
       shell.hide((manifest && manifest.id) || "akshar.radio-atlas")
+  }
+
+  function handleHyprlandEvent(event) {
+    if (!opened || String(event && event.name || "") !== "openwindow") return
+    var parts = []
+    try {
+      parts = event.parse(4)
+    } catch (error) {
+      parts = String(event && event.data || "").split(",")
+    }
+    if (String(parts[2] || "") === "org.omarchy.screensaver") dismiss()
   }
 
   function highlightStationCountry(station, focusGlobe) {
@@ -295,7 +307,10 @@ Item {
     if (!countryName) countryName = countryCode
     searchDebounce.stop()
     cancelPendingFetch()
-    setStationList("country", RadioModel.stationsForCountry(worldStations, countryCode))
+    var cachedStations = RadioModel.stationsForCountry(worldStations, countryCode)
+    worldStations = RadioModel.prioritizeStations(
+      cachedStations, worldStations, worldStationLimit)
+    setStationList("country", cachedStations)
     activeCountryCode = countryCode
     activeCountryName = countryName
     fetchError = ""
@@ -710,7 +725,10 @@ Item {
       if (root.fetchAction === "world") {
         root.setStationList("world", root.worldStations)
       } else if (root.fetchAction === "country") {
-        root.setStationList("country", RadioModel.mergeStations(root.results, stations, 500))
+        var countryStations = RadioModel.mergeStations(root.results, stations, 500)
+        root.worldStations = RadioModel.prioritizeStations(
+          countryStations, root.worldStations, root.worldStationLimit)
+        root.setStationList("country", countryStations)
       } else if (root.fetchAction === "search") {
         root.setStationList("search", stations)
       } else if (root.fetchAction === "random") {
@@ -935,6 +953,11 @@ Item {
   Component.onCompleted: {
     statusInitProcess.command = [playerPath, "status"]
     statusInitProcess.running = true
+  }
+
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) { root.handleHyprlandEvent(event) }
   }
 
   PanelWindow {

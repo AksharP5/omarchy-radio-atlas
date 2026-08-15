@@ -78,6 +78,30 @@ const fullCountryRefresh = Array.from({ length: 25 }, (_, index) => ({
 }))
 assert.equal(model.mergeStations(fullCountryCache, fullCountryRefresh, 500).length, 175)
 
+const fullAtlas = Array.from({ length: 5000 }, (_, index) => ({
+  uuid: `atlas-${index}`,
+  name: `Background ${index}`
+}))
+const discoveredStations = [
+  { uuid: "country-new", name: "Newly discovered" },
+  { uuid: "atlas-4999", name: "Fresh country metadata" }
+]
+const prioritizedAtlas = model.prioritizeStations(discoveredStations, fullAtlas, 5000)
+assert.equal(prioritizedAtlas.length, 5000)
+assert.deepEqual(
+  Array.from(prioritizedAtlas.slice(0, 2), station => station.uuid),
+  ["country-new", "atlas-4999"]
+)
+assert.equal(prioritizedAtlas[1].name, "Fresh country metadata")
+assert.equal(prioritizedAtlas.some(station => station.uuid === "atlas-4998"), false)
+const reprioritizedAtlas = model.prioritizeStations(
+  [{ uuid: "second-country", name: "Second country" }], prioritizedAtlas, 5000
+)
+assert.deepEqual(
+  Array.from(reprioritizedAtlas.slice(0, 3), station => station.uuid),
+  ["second-country", "country-new", "atlas-4999"]
+)
+
 const fullWorld = Array.from({ length: 500 }, (_, index) => ({
   uuid: `world-${index}`,
   latitude: 0,

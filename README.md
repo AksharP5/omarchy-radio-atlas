@@ -12,8 +12,8 @@ usual play, pause, previous, and next controls.
 ## Features
 
 - Precise drag rotation and deep wheel zoom on a theme-aware globe
-- A fast cached world view that progressively adds thousands of stations while open
-- Station and country selection directly on the map, with worldwide signals retained while browsing
+- A fast cached world view that progressively adds thousands of stations and keeps the session catalog when closed
+- Country stations stay on the session globe and take priority over background signals
 - Country-level map estimates when a station has no published coordinates
 - Automatic country focus for the station that is actually playing
 - Current station identity, track metadata, and one-click favoriting in the player
@@ -21,6 +21,7 @@ usual play, pause, previous, and next controls.
 - Random tuning that avoids recent stations, plus favorites and listening history
 - Independent volume slider, mute, and bar-wheel volume control
 - Click-through desktop focus outside the atlas panel
+- Automatic dismissal when Omarchy starts its screensaver
 - Keyboard navigation
 - Persistent world and country caches with background refresh and transient retries
 - Automatic skip to the next playlist entry when a stream fails
