@@ -1,5 +1,6 @@
 var radians = Math.PI / 180
 var degrees = 180 / Math.PI
+var estimatedLocationCache = ({})
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value))
@@ -148,6 +149,97 @@ function countryCentre(features, code) {
   return null
 }
 
+function estimatedCountryLocation(features, code, key) {
+  var rows = Array.isArray(features) ? features : []
+  var wanted = String(code || "").toUpperCase()
+  var cacheKey = "$" + wanted + ":" + String(key || wanted)
+  if (estimatedLocationCache[cacheKey] !== undefined)
+    return estimatedLocationCache[cacheKey]
+  var bestRing = null
+  var bestArea = 0
+
+  for (var i = 0; i < rows.length; i++) {
+    var feature = rows[i]
+    if (!feature || !feature.geometry || !feature.properties) continue
+    if (String(feature.properties.code || "").toUpperCase() !== wanted) continue
+
+    var geometry = feature.geometry
+    var polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
+    if (!Array.isArray(polygons)) break
+    for (var p = 0; p < polygons.length; p++) {
+      var ring = polygons[p] && polygons[p][0]
+      if (!Array.isArray(ring) || ring.length < 3) continue
+      var points = []
+      var previousLongitude = Number(ring[0][0])
+      for (var pointIndex = 0; pointIndex < ring.length; pointIndex++) {
+        var longitude = Number(ring[pointIndex][0])
+        var latitude = Number(ring[pointIndex][1])
+        if (!isFinite(longitude) || !isFinite(latitude)) continue
+        if (points.length > 0) {
+          while (longitude - previousLongitude > 180) longitude -= 360
+          while (longitude - previousLongitude < -180) longitude += 360
+        }
+        points.push([longitude, latitude])
+        previousLongitude = longitude
+      }
+      if (points.length < 3) continue
+
+      var area = 0
+      for (var n = 0, previous = points.length - 1; n < points.length; previous = n++)
+        area += points[previous][0] * points[n][1] - points[n][0] * points[previous][1]
+      area = Math.abs(area)
+      if (area > bestArea) {
+        bestArea = area
+        bestRing = points
+      }
+    }
+    break
+  }
+
+  if (!bestRing) return null
+  var minimumLongitude = Infinity
+  var maximumLongitude = -Infinity
+  var minimumLatitude = Infinity
+  var maximumLatitude = -Infinity
+  for (var boundIndex = 0; boundIndex < bestRing.length; boundIndex++) {
+    minimumLongitude = Math.min(minimumLongitude, bestRing[boundIndex][0])
+    maximumLongitude = Math.max(maximumLongitude, bestRing[boundIndex][0])
+    minimumLatitude = Math.min(minimumLatitude, bestRing[boundIndex][1])
+    maximumLatitude = Math.max(maximumLatitude, bestRing[boundIndex][1])
+  }
+
+  var seed = 2166136261
+  var source = String(key || wanted)
+  for (var character = 0; character < source.length; character++) {
+    seed ^= source.charCodeAt(character)
+    seed = Math.imul(seed, 16777619)
+  }
+  seed >>>= 0
+
+  function random() {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return seed / 4294967296
+  }
+
+  for (var attempt = 0; attempt < 96; attempt++) {
+    var candidateLongitude = minimumLongitude
+      + random() * (maximumLongitude - minimumLongitude)
+    var candidateLatitude = minimumLatitude
+      + random() * (maximumLatitude - minimumLatitude)
+    if (pointInRing(candidateLongitude, candidateLatitude, bestRing)) {
+      var location = {
+        latitude: candidateLatitude,
+        longitude: wrapLongitude(candidateLongitude)
+      }
+      estimatedLocationCache[cacheKey] = location
+      return location
+    }
+  }
+  var centre = countryCentre(features, wanted)
+  if (centre) estimatedLocationCache[cacheKey] = centre
+  return centre
+}
+
 function stationPosition(station, width, height, scale, centreLatitude, centreLongitude) {
   if (!station || station.latitude === null || station.longitude === null) return null
   var point = project(station.latitude, station.longitude, centreLatitude, centreLongitude)
@@ -178,27 +270,104 @@ function stationAt(stations, x, y, width, height, scale, centreLatitude, centreL
   return nearest
 }
 
-function mergeGeoStations(primary, secondary) {
+function mergeGeoStations(primary, secondary, countries) {
+  var rows = mergeStations(primary, secondary, 5500)
+  var output = []
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]
+    if (row.latitude === null || row.longitude === null) {
+      var estimate = estimatedCountryLocation(countries, row.countryCode, row.uuid)
+      if (!estimate) continue
+      var estimated = ({})
+      for (var key in row) estimated[key] = row[key]
+      estimated.latitude = estimate.latitude
+      estimated.longitude = estimate.longitude
+      estimated.estimatedLocation = true
+      output.push(estimated)
+    } else {
+      output.push(row)
+    }
+    if (output.length >= 5500) break
+  }
+  return output
+}
+
+function mergeStations(primary, secondary, maximum) {
   var output = []
   var seen = ({})
   var groups = [primary, secondary]
+  var limit = Math.max(1, Number(maximum || 500))
 
   for (var g = 0; g < groups.length; g++) {
     var rows = Array.isArray(groups[g]) ? groups[g] : []
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i]
       if (!row || !row.uuid) continue
-      if (row.latitude === null || row.longitude === null) continue
       var key = "$" + row.uuid
       if (seen[key] !== undefined) {
         if (g > 0) output[seen[key]] = row
         continue
       }
-      if (output.length >= 700) continue
+      if (output.length >= limit) continue
       seen[key] = output.length
       output.push(row)
     }
   }
+  return output
+}
+
+function searchStations(stations, query, maximum) {
+  var rows = Array.isArray(stations) ? stations : []
+  var wanted = String(query || "").trim().toLowerCase()
+  if (!wanted) return []
+
+  var output = []
+  var limit = Math.max(1, Number(maximum || 150))
+  for (var i = 0; i < rows.length && output.length < limit; i++) {
+    var station = rows[i]
+    if (!station) continue
+    var fields = [
+      station.name,
+      station.country,
+      station.countryCode,
+      station.state,
+      station.language,
+      station.tags,
+      station.codec
+    ]
+    for (var fieldIndex = 0; fieldIndex < fields.length; fieldIndex++) {
+      if (String(fields[fieldIndex] || "").toLowerCase().indexOf(wanted) < 0) continue
+      output.push(station)
+      break
+    }
+  }
+  return output
+}
+
+function stationsForCountry(stations, code, maximum) {
+  var rows = Array.isArray(stations) ? stations : []
+  var wanted = String(code || "").toUpperCase()
+  if (!wanted) return []
+
+  var output = []
+  var limit = Math.max(1, Number(maximum || 150))
+  for (var i = 0; i < rows.length && output.length < limit; i++) {
+    if (String(rows[i] && rows[i].countryCode || "").toUpperCase() === wanted)
+      output.push(rows[i])
+  }
+  return output
+}
+
+function stationWindow(stations, uuid, maximum) {
+  var rows = Array.isArray(stations) ? stations : []
+  var index = indexByUuid(rows, uuid)
+  if (index < 0) return []
+
+  var limit = Math.min(rows.length, Math.max(1, Number(maximum || 500)))
+  var before = Math.floor((limit - 1) / 2)
+  var start = (index - before + rows.length) % rows.length
+  var output = []
+  for (var i = 0; i < limit; i++) output.push(rows[(start + i) % rows.length])
   return output
 }
 

@@ -6,6 +6,7 @@ set -euo pipefail
 output=""
 max_filesize=""
 limit=""
+request_url=""
 while (( $# > 0 )); do
   case "$1" in
     --output)
@@ -21,6 +22,10 @@ while (( $# > 0 )); do
         limit=${2#limit=}
       fi
       shift 2
+      ;;
+    https://*)
+      request_url=$1
+      shift
       ;;
     *)
       shift
@@ -40,6 +45,22 @@ payload='[
   {"stationuuid":"cccccccc-1111-1111-1111-cccccccccccc","name":"Unsafe","url_resolved":"file:///etc/passwd","countrycode":"US","geo_lat":40,"geo_long":-74},
   {"stationuuid":"dddddddd-1111-1111-1111-dddddddddddd","name":"Invalid coordinates","url_resolved":"https://example.com/invalid","countrycode":"US","geo_lat":140,"geo_long":-74}
 ]'
+
+if [[ ${RADIO_ATLAS_TEST_CURL_UNKNOWN_LOCATION:-0} == 1 ]]; then
+  payload=$(jq -c '. + [{
+    stationuuid: "eeeeeeee-1111-1111-1111-eeeeeeeeeeee",
+    name: "Unknown location",
+    url_resolved: "https://example.com/unknown",
+    countrycode: "",
+    geo_lat: null,
+    geo_long: null
+  }]' <<< "$payload")
+fi
+
+if [[ $request_url =~ /bycountrycodeexact/([A-Za-z]{2}) ]]; then
+  payload=$(jq -c --arg code "${BASH_REMATCH[1]^^}" \
+    '[.[] | select((.countrycode // "" | ascii_upcase) == $code)]' <<< "$payload")
+fi
 
 if [[ ${RADIO_ATLAS_TEST_CURL_MALFORMED_ONCE:-0} == 1 ]] \
   && mkdir "${RADIO_ATLAS_TEST_CURL_MARKER:?}" 2>/dev/null; then

@@ -56,13 +56,14 @@ ensure_runtime_data() {
   ensure_runtime_array "$runtime_dir/results.json"
   ensure_runtime_array "$runtime_dir/world.json"
   ensure_runtime_array "$runtime_dir/playlist.json"
+  ensure_runtime_array "$runtime_dir/favorite-selection.json"
 }
 
 find_station() {
   local uuid=$1
   local source station
-  for source in "$runtime_dir/playlist.json" "$runtime_dir/results.json" \
-    "$runtime_dir/world.json"; do
+  for source in "$runtime_dir/favorite-selection.json" "$runtime_dir/playlist.json" \
+    "$runtime_dir/results.json" "$runtime_dir/world.json"; do
     station=$(jq -c --arg uuid "$uuid" \
       'first(.[] | select(.uuid == $uuid)) // empty' "$source" 2>/dev/null || true)
     if [[ -n $station ]]; then

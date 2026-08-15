@@ -6,7 +6,7 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
-  and .version == "0.1.2"
+  and .version == "0.1.3"
   and (.kinds | index("overlay"))
   and (.kinds | index("bar-widget"))
 ' "$project_dir/manifest.json" >/dev/null
@@ -22,32 +22,41 @@ python3 "$project_dir/tests/proxy.test.py"
 ! rg -q 'inertia' "$project_dir/Globe.qml"
 rg -q 'maximumScale: 24' "$project_dir/Globe.qml"
 rg -q 'searchDebounce.restart()' "$project_dir/RadioAtlas.qml"
+rg -q 'worldStationLimit: 5000' "$project_dir/RadioAtlas.qml"
+rg -q 'id: worldExpandTimer' "$project_dir/RadioAtlas.qml"
+rg -q 'id: worldExpandProcess' "$project_dir/RadioAtlas.qml"
 ! rg -q 'enabled: !root.fetching' "$project_dir/RadioAtlas.qml"
-rg -Fq 'mergeGeoStations(worldStations, displayStations)' "$project_dir/RadioAtlas.qml"
+rg -Fq 'mergeGeoStations(worldStations, displayStations, countries)' "$project_dir/RadioAtlas.qml"
 rg -Fq 'if (mode === "world") return "world"' "$project_dir/RadioAtlas.qml"
 sed -n '/function activateMapStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -q 'worldStations'
 sed -n '/function activateMapStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'showWorld(false)'
 sed -n '/function search(text)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'setStationList("search", [])'
+  | rg -Fq 'previewSearch(query)'
 sed -n '/function browseCountry/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'setStationList("country", [])'
+  | rg -Fq 'RadioModel.stationsForCountry(worldStations, countryCode)'
 sed -n '/function tuneRandom/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'startFetch("random", randomExclusions())'
 sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -q 'showWorld\(\).*tuneRandom\(\)' -U --multiline-dotall
+sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'scheduleWorldExpansion(800)'
 sed -n '/function randomExclusions/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'append(playingStationUuid)'
 sed -n '/function randomExclusions/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'append(lastRandomUuid)'
 sed -n '/function randomExclusions/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'i < recent.length'
-world_update_line=$(rg -n 'root.worldStations = stations' "$project_dir/RadioAtlas.qml" \
+world_update_line=$(rg -n 'root.worldStations = RadioModel.mergeStations' "$project_dir/RadioAtlas.qml" \
   | cut -d: -f1)
 pending_fetch_line=$(rg -n 'if \(root.pendingFetchAction\)' "$project_dir/RadioAtlas.qml" \
   | cut -d: -f1)
 (( world_update_line < pending_fetch_line ))
+sed -n '/if (root.fetchAction === "world") {/,/^      }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'root.setStationList("world", root.worldStations)'
+rg -Fq 'RadioModel.mergeStations(root.results, stations, 500)' \
+  "$project_dir/RadioAtlas.qml"
 sed -n '/if (root.pendingFetchAction)/,/^        }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'nextAction === "random" ? root.randomExclusions() : nextValue'
 ! sed -n '/function playSelected()/,/^  }/p' "$project_dir/RadioAtlas.qml" | rg -q 'recordPlayed'
@@ -77,6 +86,7 @@ rg -q 'rowMouse.containsMouse' "$project_dir/RadioAtlas.qml"
 ! rg -q 'send_command .*\|\| true' "$project_dir/radio-player"
 rg -q 'maximumLength: 128' "$project_dir/RadioAtlas.qml"
 rg -Fq 'Math.min(1.5, Math.max(0.7, globeRadius / 500))' "$project_dir/Globe.qml"
+rg -Fq 'estimatedLocation === true' "$project_dir/Globe.qml"
 rg -q 'WlrLayershell.keyboardFocus: root.opened' "$project_dir/RadioAtlas.qml"
 rg -q 'keyboardSelectionVisible' "$project_dir/RadioAtlas.qml"
 rg -q 'reportedVolume' "$project_dir/RadioAtlas.qml"
@@ -92,19 +102,48 @@ done
   "$project_dir/radio-fetch" "$project_dir/radio-player" "$project_dir/radio-state"
 rg -q '^max_response_bytes=4194304$' "$project_dir/radio-fetch"
 rg -q '^world_cache_minutes=1440$' "$project_dir/radio-fetch"
+rg -q '^country_cache_minutes=1440$' "$project_dir/radio-fetch"
 rg -Fq 'world_cache_file="$cache_dir/world.json"' "$project_dir/radio-fetch"
 rg -q '^refresh_world_cache_in_background\(\)' "$project_dir/radio-fetch"
+rg -q '^refresh_country_cache_in_background\(\)' "$project_dir/radio-fetch"
 rg -Fq -- '--max-filesize "$max_response_bytes"' "$project_dir/radio-fetch"
 rg -q -- "--proto '=https'" "$project_dir/radio-fetch"
+rg -Fq 'setpriv --pdeathsig TERM curl' "$project_dir/radio-fetch"
 ! rg -q -- '--location' "$project_dir/radio-fetch"
-! rg -q -- '--retry' "$project_dir/radio-fetch"
+rg -Fq -- '--retry 1 --retry-delay 0' "$project_dir/radio-fetch"
 rg -Fq '.[:500]' "$project_dir/radio-fetch"
+! sed -n '/  random)/,/^    ;;/p' "$project_dir/radio-fetch" \
+  | rg -Fq 'has_geo_info=true'
 rg -q 'pendingPlayStation' "$project_dir/RadioAtlas.qml"
 rg -q 'playPendingStation' "$project_dir/RadioAtlas.qml"
+rg -q 'pendingPlayStations' "$project_dir/RadioAtlas.qml"
+! sed -n '/function setStationList/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -q 'cancelPendingPlay'
+sed -n '/function playPendingStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'playStation(station, scope, stations)'
+sed -n '/function playStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'writeSelection(playSelectionFile, station, stations)'
+sed -n '/function writeSelection/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'RadioModel.stationWindow(stations, station && station.uuid, 500)'
+sed -n '/id: playSelectionFile/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'blockWrites: true'
+sed -n '/id: favoriteSelectionFile/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'blockWrites: true'
+rg -Fq 'selection_file="$runtime_dir/play-selection.json"' "$project_dir/radio-player"
+rg -q 'pendingFavoriteRequests' "$project_dir/RadioAtlas.qml"
+! sed -n '/function toggleFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -q 'favoriteSelectionFile\.setText'
+sed -n '/function startFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'favoriteSelectionFile.setText(JSON.stringify(request.rows)'
+rg -Fq 'favorite-selection.json' "$project_dir/radio-state"
 rg -q 'statusReady' "$project_dir/RadioAtlas.qml" "$project_dir/BarWidget.qml"
 rg -Fq -- '--demuxer-max-bytes=8MiB' "$project_dir/radio-player"
 rg -Fq 'max-children=32' "$project_dir/radio-sandbox"
 rg -q 'MAX_ACTIVE_CONNECTIONS = 32' "$project_dir/radio-proxy"
+rg -Fq 'setpriv --pdeathsig TERM socat TCP4-LISTEN:18765' \
+  "$project_dir/radio-sandbox"
+rg -Fq 'bwrap --unshare-net --unshare-pid --die-with-parent' \
+  "$project_dir/radio-session"
 
 test_root=$(mktemp -d)
 listener_pid=""
@@ -168,14 +207,40 @@ fi
 PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" country US \
   > "$test_root/normalized.json"
 jq -e '
-  length == 2
+  length == 1
   and .[0].uuid == "bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb"
   and .[0].name == "First"
   and .[0].url == "https://example.com/first"
-  and .[1].uuid == "aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"
 ' "$test_root/normalized.json" >/dev/null
 [[ $(stat -c '%a' "$runtime_dir") == 700 ]]
 [[ $(stat -c '%a' "$cache_dir") == 700 ]]
+[[ $(stat -c '%a' "$cache_dir/countries") == 700 ]]
+jq -e 'length == 1' "$cache_dir/countries/US.json" >/dev/null
+
+PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" world-more \
+  > "$test_root/world-more.json"
+jq -e 'length == 2' "$test_root/world-more.json" >/dev/null
+
+stale_country='[{"uuid":"eeeeeeee-1111-1111-1111-eeeeeeeeeeee","name":"Old country cache","url":"https://example.com/old","countryCode":"US","latitude":40,"longitude":-74}]'
+printf '%s\n' "$stale_country" > "$cache_dir/countries/US.json"
+touch -d '2 days ago' "$cache_dir/countries/US.json"
+PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" country US \
+  > "$test_root/stale-country.json"
+jq -e 'length == 1 and .[0].name == "Old country cache"' \
+  "$test_root/stale-country.json" >/dev/null
+for _ in $(seq 1 100); do
+  jq -e 'length == 1 and .[0].name == "First"' \
+    "$cache_dir/countries/US.json" >/dev/null 2>&1 && break
+  sleep 0.01
+done
+jq -e 'length == 1 and .[0].name == "First"' \
+  "$cache_dir/countries/US.json" >/dev/null
+jq -e 'length == 1 and .[0].name == "Old country cache"' \
+  "$runtime_dir/results.json" >/dev/null
+
+RADIO_ATLAS_TEST_CURL_FAIL=1 PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" country US > "$test_root/cached-country.json"
+jq -e 'length == 1' "$test_root/cached-country.json" >/dev/null
 
 legacy_world='[{"uuid":"cccccccc-1111-1111-1111-cccccccccccc","name":"Cached","url":"https://example.com/cached","country":"Canada","countryCode":"CA","latitude":43,"longitude":-79}]'
 printf '%s\n' "$legacy_world" > "$runtime_dir/world.json"
@@ -208,20 +273,29 @@ done
 jq -e 'length == 2' "$cache_dir/world.json" >/dev/null
 jq -e 'length == 1 and .[0].name == "Cached"' "$runtime_dir/results.json" >/dev/null
 
+printf '%s\n' "$legacy_world" > "$cache_dir/world.json"
+rm -f "$cache_dir/countries/CA.json"
+RADIO_ATLAS_TEST_CURL_FAIL=1 PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" country CA > "$test_root/world-country.json"
+jq -e 'length == 1 and .[0].name == "Cached"' "$test_root/world-country.json" >/dev/null
+
 malformed_marker="$test_root/malformed-response"
+rm -f "$cache_dir/countries/US.json"
 RADIO_ATLAS_TEST_CURL_MALFORMED_ONCE=1 \
 RADIO_ATLAS_TEST_CURL_MARKER="$malformed_marker" \
 PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-fetch" country US > "$test_root/fallback.json"
-jq -e 'length == 2' "$test_root/fallback.json" >/dev/null
+jq -e 'length == 1' "$test_root/fallback.json" >/dev/null
 
 oversized_marker="$test_root/oversized-response"
+rm -f "$cache_dir/countries/US.json"
 RADIO_ATLAS_TEST_CURL_OVERSIZED=once \
 RADIO_ATLAS_TEST_CURL_OVERSIZED_MARKER="$oversized_marker" \
 PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-fetch" country US > "$test_root/oversized-fallback.json"
-jq -e 'length == 2' "$test_root/oversized-fallback.json" >/dev/null
+jq -e 'length == 1' "$test_root/oversized-fallback.json" >/dev/null
 cp "$runtime_dir/results.json" "$test_root/results-before-failure.json"
+rm -f "$cache_dir/countries/US.json"
 if RADIO_ATLAS_TEST_CURL_OVERSIZED=always PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-fetch" country US >/dev/null 2>&1; then
   echo "Oversized responses were accepted" >&2
@@ -230,12 +304,14 @@ fi
 cmp "$test_root/results-before-failure.json" "$runtime_dir/results.json"
 
 too_many_marker="$test_root/too-many-response"
+rm -f "$cache_dir/countries/US.json"
 RADIO_ATLAS_TEST_CURL_TOO_MANY=once \
 RADIO_ATLAS_TEST_CURL_TOO_MANY_MARKER="$too_many_marker" \
 PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-fetch" country US > "$test_root/too-many-fallback.json"
-jq -e 'length == 2' "$test_root/too-many-fallback.json" >/dev/null
+jq -e 'length == 1' "$test_root/too-many-fallback.json" >/dev/null
 cp "$runtime_dir/results.json" "$test_root/results-before-cardinality-failure.json"
+rm -f "$cache_dir/countries/US.json"
 if RADIO_ATLAS_TEST_CURL_TOO_MANY=always PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-fetch" country US >/dev/null 2>&1; then
   echo "Responses with excessive record counts were accepted" >&2
@@ -244,11 +320,13 @@ fi
 cmp "$test_root/results-before-cardinality-failure.json" "$runtime_dir/results.json"
 
 multiple_marker="$test_root/multiple-response"
+rm -f "$cache_dir/countries/US.json"
 RADIO_ATLAS_TEST_CURL_MULTIPLE=once \
 RADIO_ATLAS_TEST_CURL_MULTIPLE_MARKER="$multiple_marker" \
 PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-fetch" country US > "$test_root/multiple-fallback.json"
-jq -e 'length == 2' "$test_root/multiple-fallback.json" >/dev/null
+jq -e 'length == 1' "$test_root/multiple-fallback.json" >/dev/null
+rm -f "$cache_dir/countries/US.json"
 if RADIO_ATLAS_TEST_CURL_MULTIPLE=always PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-fetch" country US >/dev/null 2>&1; then
   echo "Multiple JSON documents were accepted as one response" >&2
@@ -265,9 +343,14 @@ if RADIO_ATLAS_TEST_CURL_FAIL=1 PATH="$project_dir/tests/fixtures:$PATH" \
   exit 1
 fi
 
+RADIO_ATLAS_TEST_CURL_UNKNOWN_LOCATION=1 \
 PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" random \
   > "$test_root/random.json"
-jq -e '.[0].uuid == "aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"' \
+jq -e 'length == 2
+  and .[0].uuid == "aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"
+  and all(.[];
+    ((.latitude != null and .longitude != null)
+      or (.countryCode | test("^[A-Z]{2}$"))))' \
   "$test_root/random.json" >/dev/null
 printf '%s\n' \
   '{"favorites":[],"recent":[{"uuid":"aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"}],"volume":70}' \
@@ -383,6 +466,13 @@ jq -e 'length == 0' "$runtime_dir/playlist.json" >/dev/null
 "$project_dir/radio-state" favorite 12345678-1234-1234-1234-123456789abc \
   | jq -e '.favorites | length == 0' >/dev/null
 
+selection_only='[{"uuid":"fedcbafe-1234-1234-1234-fedcbafedcba","name":"Selection only","url":"https://example.com/selection.mp3","countryCode":"CA","latitude":43,"longitude":-79}]'
+printf '%s\n' "$selection_only" > "$runtime_dir/favorite-selection.json"
+"$project_dir/radio-state" favorite fedcbafe-1234-1234-1234-fedcbafedcba \
+  | jq -e '.favorites[0].uuid == "fedcbafe-1234-1234-1234-fedcbafedcba"' >/dev/null
+"$project_dir/radio-state" favorite fedcbafe-1234-1234-1234-fedcbafedcba \
+  | jq -e '.favorites | length == 0' >/dev/null
+
 queue_fixture='[{"uuid":"87654321-4321-4321-4321-cba987654321","name":"Queued Radio","url":"https://example.com/queued.mp3","countryCode":"CA","latitude":43,"longitude":-79}]'
 printf '%s\n' "$queue_fixture" > "$runtime_dir/playlist.json"
 "$project_dir/radio-state" played 87654321-4321-4321-4321-cba987654321 \
@@ -449,6 +539,21 @@ if RADIO_ATLAS_TEST_SOCAT_MODE=error PATH="$project_dir/tests/fixtures:$PATH" \
   exit 1
 fi
 jq -e 'length == 1 and .[0].uuid == "existing"' \
+  "$runtime_dir/playlist.json" >/dev/null
+
+selection_fixture='[
+  {"uuid":"11111111-1234-1234-1234-111111111111","name":"Before","url":"https://example.com/before.mp3","countryCode":"CA","latitude":43,"longitude":-79},
+  {"uuid":"abcdefab-1234-1234-1234-abcdefabcdef","name":"Selected Radio","url":"https://example.com/selected.mp3","countryCode":"CA","latitude":43,"longitude":-79},
+  {"uuid":"22222222-1234-1234-1234-222222222222","name":"After","url":"https://example.com/after.mp3","countryCode":"CA","latitude":43,"longitude":-79}
+]'
+printf '%s\n' "$selection_fixture" > "$runtime_dir/play-selection.json"
+RADIO_ATLAS_TEST_SOCAT_MODE=success PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" play abcdefab-1234-1234-1234-abcdefabcdef selection \
+  >/dev/null
+jq -e 'length == 3
+  and .[0].uuid == "abcdefab-1234-1234-1234-abcdefabcdef"
+  and .[1].uuid == "22222222-1234-1234-1234-222222222222"
+  and .[2].uuid == "11111111-1234-1234-1234-111111111111"' \
   "$runtime_dir/playlist.json" >/dev/null
 
 RADIO_ATLAS_TEST_SOCAT_MODE=success PATH="$project_dir/tests/fixtures:$PATH" \
@@ -528,15 +633,31 @@ done
 [[ -S $runtime_dir/proxy.sock ]]
 orphan_proxy_pid=$(pgrep -P "$session_pid" -f 'radio-proxy' | head -n 1)
 [[ -n $orphan_proxy_pid ]]
+orphan_bridge_pid=""
+for _ in $(seq 1 100); do
+  orphan_bridge_pid=$(pgrep -f \
+    "^socat TCP4-LISTEN:18765,bind=127.0.0.1,reuseaddr,fork,max-children=32 UNIX-CONNECT:$runtime_dir/proxy.sock$" \
+    | head -n 1 || true)
+  [[ -n $orphan_bridge_pid ]] && break
+  sleep 0.02
+done
+[[ -n $orphan_bridge_pid ]]
 kill -KILL "$session_pid"
 wait "$session_pid" 2>/dev/null || true
 session_pid=""
 for _ in $(seq 1 100); do
-  kill -0 "$orphan_proxy_pid" 2>/dev/null || break
+  if ! kill -0 "$orphan_proxy_pid" 2>/dev/null \
+      && ! kill -0 "$orphan_bridge_pid" 2>/dev/null; then
+    break
+  fi
   sleep 0.02
 done
 if kill -0 "$orphan_proxy_pid" 2>/dev/null; then
   echo "Proxy survived an uncatchable session exit" >&2
+  exit 1
+fi
+if kill -0 "$orphan_bridge_pid" 2>/dev/null; then
+  echo "Sandbox bridge survived an uncatchable session exit" >&2
   exit 1
 fi
 [[ ! -S $runtime_dir/proxy.sock ]]

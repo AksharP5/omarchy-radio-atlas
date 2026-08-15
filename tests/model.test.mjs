@@ -59,6 +59,25 @@ const mergedStations = model.mergeGeoStations(worldStations, filteredStations)
 assert.deepEqual(Array.from(mergedStations, station => station.uuid), ["world", "shared", "country"])
 assert.equal(mergedStations[1].name, "Fresh metadata")
 
+const mergedCountryStations = model.mergeStations(
+  [{ uuid: "cached", name: "Cached" }, { uuid: "shared", name: "Old" }],
+  [{ uuid: "shared", name: "Fresh" }, { uuid: "remote", name: "Remote" }],
+  3
+)
+assert.deepEqual(
+  Array.from(mergedCountryStations, station => station.uuid),
+  ["cached", "shared", "remote"]
+)
+assert.equal(mergedCountryStations[1].name, "Fresh")
+
+const fullCountryCache = Array.from({ length: 150 }, (_, index) => ({
+  uuid: `country-cache-${index}`
+}))
+const fullCountryRefresh = Array.from({ length: 25 }, (_, index) => ({
+  uuid: `country-refresh-${index}`
+}))
+assert.equal(model.mergeStations(fullCountryCache, fullCountryRefresh, 500).length, 175)
+
 const fullWorld = Array.from({ length: 500 }, (_, index) => ({
   uuid: `world-${index}`,
   latitude: 0,
@@ -70,7 +89,84 @@ const fullFilter = Array.from({ length: 300 }, (_, index) => ({
   longitude: index / 10
 }))
 const cappedStations = model.mergeGeoStations(fullWorld, fullFilter)
-assert.equal(cappedStations.length, 700)
+assert.equal(cappedStations.length, 800)
 assert.equal(cappedStations.filter(station => station.uuid.startsWith("world-")).length, 500)
+
+const largeWorld = Array.from({ length: 5000 }, (_, index) => ({
+  uuid: `large-world-${index}`,
+  latitude: 0,
+  longitude: 0
+}))
+const largeFilter = Array.from({ length: 1000 }, (_, index) => ({
+  uuid: `large-filter-${index}`,
+  latitude: 1,
+  longitude: 1
+}))
+assert.equal(model.mergeGeoStations(largeWorld, largeFilter).length, 5500)
+
+const estimatedCountries = [{
+  properties: { code: "ZZ", name: "Testland" },
+  geometry: {
+    type: "Polygon",
+    coordinates: [[[10, 20], [20, 20], [20, 30], [10, 30], [10, 20]]]
+  }
+}]
+const missingLocations = [
+  { uuid: "estimate-one", name: "One", countryCode: "ZZ", latitude: null, longitude: null },
+  { uuid: "estimate-two", name: "Two", countryCode: "ZZ", latitude: null, longitude: null }
+]
+const estimatedStations = model.mergeGeoStations([], missingLocations, estimatedCountries)
+assert.equal(estimatedStations.length, 2)
+assert.equal(estimatedStations.every(station => station.estimatedLocation === true), true)
+assert.equal(estimatedStations.every(station => station.latitude >= 20 && station.latitude <= 30), true)
+assert.equal(estimatedStations.every(station => station.longitude >= 10 && station.longitude <= 20), true)
+assert.notDeepEqual(
+  [estimatedStations[0].latitude, estimatedStations[0].longitude],
+  [estimatedStations[1].latitude, estimatedStations[1].longitude]
+)
+assert.deepEqual(
+  Array.from(model.mergeGeoStations([], missingLocations, estimatedCountries), station => [station.latitude, station.longitude]),
+  Array.from(estimatedStations, station => [station.latitude, station.longitude])
+)
+
+const searchableStations = [
+  {
+    uuid: "jazz",
+    name: "Blue Note 93",
+    country: "United States",
+    countryCode: "US",
+    state: "New York",
+    language: "English",
+    tags: "jazz,soul",
+    codec: "AAC"
+  },
+  {
+    uuid: "ambient",
+    name: "Night Signals",
+    country: "Germany",
+    countryCode: "DE",
+    state: "Berlin",
+    language: "German",
+    tags: "ambient,electronic",
+    codec: "MP3"
+  }
+]
+assert.deepEqual(Array.from(model.searchStations(searchableStations, "93"), station => station.uuid), ["jazz"])
+assert.deepEqual(Array.from(model.searchStations(searchableStations, "germany"), station => station.uuid), ["ambient"])
+assert.deepEqual(Array.from(model.searchStations(searchableStations, "SOUL"), station => station.uuid), ["jazz"])
+assert.deepEqual(Array.from(model.searchStations(searchableStations, "")), [])
+assert.deepEqual(Array.from(model.stationsForCountry(searchableStations, "de"), station => station.uuid), ["ambient"])
+assert.equal(model.searchStations(searchableStations, "a", 1).length, 1)
+
+const playlistRows = Array.from({ length: 8 }, (_, index) => ({ uuid: `queue-${index}` }))
+assert.deepEqual(
+  Array.from(model.stationWindow(playlistRows, "queue-4", 5), station => station.uuid),
+  ["queue-2", "queue-3", "queue-4", "queue-5", "queue-6"]
+)
+assert.deepEqual(
+  Array.from(model.stationWindow(playlistRows, "queue-0", 5), station => station.uuid),
+  ["queue-6", "queue-7", "queue-0", "queue-1", "queue-2"]
+)
+assert.deepEqual(Array.from(model.stationWindow(playlistRows, "missing", 5)), [])
 
 console.log("RadioModel tests passed")

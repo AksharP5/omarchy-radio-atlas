@@ -509,7 +509,10 @@ Item {
       id: tooltipText
       anchors.centerIn: parent
       width: Math.min(220, implicitWidth)
-      text: root.hoveredStation ? root.hoveredStation.name : ""
+      text: root.hoveredStation
+        ? root.hoveredStation.name
+          + (root.hoveredStation.estimatedLocation === true ? " · approximate location" : "")
+        : ""
       textFormat: Text.PlainText
       color: root.textColor
       font.family: root.fontFamily

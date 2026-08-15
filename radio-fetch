@@ -6,7 +6,8 @@ umask 077
 runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
 cache_root=${XDG_CACHE_HOME:-$HOME/.cache}
 cache_dir="$cache_root/omarchy-radio-atlas"
-install -d -m 700 "$runtime_dir" "$cache_dir"
+country_cache_dir="$cache_dir/countries"
+install -d -m 700 "$runtime_dir" "$cache_dir" "$country_cache_dir"
 
 world_file="$runtime_dir/world.json"
 world_cache_file="$cache_dir/world.json"
@@ -17,10 +18,15 @@ version=$(jq -r '.version' "$script_dir/manifest.json")
 user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
 max_response_bytes=4194304
 world_cache_minutes=1440
+country_cache_minutes=1440
 search_dir=""
+world_more_response=""
+world_more_result=""
 
 cleanup() {
   [[ -z $search_dir ]] || rm -rf "$search_dir"
+  [[ -z $world_more_response ]] || rm -f "$world_more_response"
+  [[ -z $world_more_result ]] || rm -f "$world_more_result"
 }
 trap cleanup EXIT
 
@@ -91,8 +97,8 @@ request() {
   error_file=$(mktemp "$runtime_dir/request.XXXXXX")
   response_file=$(mktemp "$runtime_dir/response.XXXXXX")
   for base in "${bases[@]}"; do
-    if curl --fail --silent --show-error \
-      --connect-timeout 4 --max-time "$max_time" \
+    if setpriv --pdeathsig TERM curl --fail --silent --show-error \
+      --connect-timeout 4 --max-time "$max_time" --retry 1 --retry-delay 0 \
       --max-filesize "$max_response_bytes" --proto '=https' \
       --user-agent "$user_agent" --get "$base$path" "$@" \
       --output "$response_file" 2>"$error_file" \
@@ -131,6 +137,17 @@ valid_world_data() {
       "$path" >/dev/null 2>&1
 }
 
+valid_country_data() {
+  local path=$1
+  local code=$2
+  [[ -s $path ]] \
+    && (( $(stat -c '%s' -- "$path") <= max_response_bytes )) \
+    && jq -e -s --arg code "$code" 'length == 1 and (.[0]
+      | type == "array" and length <= 25
+      and all(.[]; (.countryCode // "") == $code))' \
+      "$path" >/dev/null 2>&1
+}
+
 publish_world_cache() {
   publish_copy "$world_cache_file" "$world_file"
   publish_copy "$world_cache_file" "$results_file"
@@ -157,8 +174,12 @@ store_random_results() {
   jq -c --arg exclusions "$exclusions" '
     ($exclusions | split(",") | map(select(length > 0))
       | map({key: ., value: true}) | from_entries) as $excluded
-    | (map(select($excluded[.uuid] != true))) as $fresh
-    | if ($fresh | length) > 0 then $fresh[] else .[] end
+    | (map(select(
+        (.latitude != null and .longitude != null)
+        or (.countryCode | test("^[A-Z]{2}$"))
+      ))) as $mappable
+    | ($mappable | map(select($excluded[.uuid] != true))) as $fresh
+    | if ($fresh | length) > 0 then $fresh[] else $mappable[] end
   ' "$target" | shuf | jq -sc . > "$temporary"
   mv "$temporary" "$target"
   cat "$target"
@@ -180,6 +201,86 @@ refresh_world_cache_in_background() {
     flock -n 9 || exit 0
     refresh_world_cache
   ) </dev/null >/dev/null 2>&1 &
+}
+
+refresh_country_cache() {
+  local code=$1
+  local target=$2
+  local temporary
+  temporary=$(mktemp "$country_cache_dir/refresh.XXXXXX")
+  if request 25 "/json/stations/bycountrycodeexact/$code" \
+      --data-urlencode 'hidebroken=true' \
+      --data-urlencode 'order=clickcount' \
+      --data-urlencode 'reverse=true' \
+      --data-urlencode 'limit=25' \
+      | store_results "$temporary" >/dev/null \
+      && valid_country_data "$temporary" "$code"; then
+    mv "$temporary" "$target"
+    return
+  fi
+  rm -f "$temporary"
+  return 1
+}
+
+refresh_country_cache_in_background() {
+  local code=$1
+  local target=$2
+  (
+    exec 9>"$country_cache_dir/$code.lock"
+    flock -n 9 || exit 0
+    refresh_country_cache "$code" "$target"
+  ) </dev/null >/dev/null 2>&1 &
+}
+
+publish_country_cache() {
+  local source=$1
+  publish_copy "$source" "$results_file"
+  cat "$source"
+}
+
+publish_world_country() {
+  local code=$1
+  local source=""
+  local temporary
+  if valid_world_data "$world_cache_file"; then
+    source=$world_cache_file
+  elif valid_world_data "$world_file"; then
+    source=$world_file
+  else
+    return 1
+  fi
+
+  temporary=$(mktemp "$runtime_dir/country.XXXXXX")
+  jq -ce --arg code "$code" \
+    '[.[] | select((.countryCode // "") == $code)][:100]' \
+    "$source" > "$temporary"
+  if ! jq -e 'length > 0' "$temporary" >/dev/null; then
+    rm -f "$temporary"
+    return 1
+  fi
+  mv "$temporary" "$results_file"
+  cat "$results_file"
+}
+
+fetch_country() {
+  local code=$1
+  local country_cache_file="$country_cache_dir/$code.json"
+  if valid_country_data "$country_cache_file" "$code"; then
+    publish_country_cache "$country_cache_file"
+    if ! find "$country_cache_file" -mmin "-$country_cache_minutes" \
+      -print -quit | grep -q .; then
+      refresh_country_cache_in_background "$code" "$country_cache_file"
+    fi
+    return
+  fi
+
+  if publish_world_country "$code"; then
+    refresh_country_cache_in_background "$code" "$country_cache_file"
+    return
+  fi
+
+  refresh_country_cache "$code" "$country_cache_file"
+  publish_country_cache "$country_cache_file"
 }
 
 fetch_world() {
@@ -263,6 +364,25 @@ fetch_search() {
   search_dir=""
 }
 
+fetch_world_more() {
+  world_more_response=$(mktemp "$runtime_dir/world-more-response.XXXXXX")
+  world_more_result=$(mktemp "$runtime_dir/world-more-result.XXXXXX")
+  if request 500 '/json/stations/search' \
+      --data-urlencode 'hidebroken=true' \
+      --data-urlencode 'order=random' \
+      --data-urlencode 'limit=500' > "$world_more_response" \
+      && store_results "$world_more_result" < "$world_more_response"; then
+    rm -f "$world_more_response" "$world_more_result"
+    world_more_response=""
+    world_more_result=""
+    return
+  fi
+  rm -f "$world_more_response" "$world_more_result"
+  world_more_response=""
+  world_more_result=""
+  return 1
+}
+
 resolve_stations() {
   local uuids=$1
   [[ $uuids =~ ^[0-9A-Fa-f-]{20,}(,[0-9A-Fa-f-]{20,})*$ ]] \
@@ -283,19 +403,16 @@ case "$action" in
   country)
     code=${2:-}
     [[ $code =~ ^[A-Za-z]{2}$ ]] || { echo 'Country code must contain two letters' >&2; exit 2; }
-    request 150 '/json/stations/search' \
-      --data-urlencode "countrycode=${code^^}" \
-      --data-urlencode 'hidebroken=true' \
-      --data-urlencode 'order=clickcount' \
-      --data-urlencode 'reverse=true' \
-      --data-urlencode 'limit=150' \
-      | store_results "$results_file"
+    fetch_country "${code^^}"
     ;;
   search)
     query=${2:-}
     [[ -n ${query//[[:space:]]/} ]] || { echo 'Search text is empty' >&2; exit 2; }
     (( ${#query} <= 128 )) || { echo 'Search text is too long' >&2; exit 2; }
     fetch_search "$query"
+    ;;
+  world-more)
+    fetch_world_more
     ;;
   random)
     exclusions=${2:-}
@@ -316,7 +433,6 @@ case "$action" in
     ')
     (( ${#exclusions} <= 4096 )) || { echo 'Too many excluded station ids' >&2; exit 2; }
     request 60 '/json/stations/search' \
-      --data-urlencode 'has_geo_info=true' \
       --data-urlencode 'hidebroken=true' \
       --data-urlencode 'order=random' \
       --data-urlencode 'limit=60' \

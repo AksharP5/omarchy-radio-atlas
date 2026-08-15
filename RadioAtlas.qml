@@ -35,6 +35,8 @@ Item {
   property string fetchError: ""
   property string fetchOutput: ""
   property string fetchStderr: ""
+  property string worldExpandOutput: ""
+  readonly property int worldStationLimit: 5000
 
   property bool playerRunning: false
   property bool playerPaused: false
@@ -50,6 +52,7 @@ Item {
   property bool playCancellationRequested: false
   property var pendingPlayStation: null
   property string pendingPlayScope: ""
+  property var pendingPlayStations: []
   property bool statusReady: false
   readonly property bool playPreparing: playerActionProcess.running
     && playerActionProcess.action === "play"
@@ -59,18 +62,22 @@ Item {
   property string playerError: ""
   property string localError: ""
   property bool localReloadPending: false
-  property var pendingFavoriteUuids: []
+  property var pendingFavoriteRequests: []
   property string pendingRecentUuid: ""
 
   readonly property string fetchPath: Qt.resolvedUrl("radio-fetch").toString().replace(/^file:\/\//, "")
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
   readonly property string statePath: Qt.resolvedUrl("radio-state").toString().replace(/^file:\/\//, "")
-  readonly property string statusPath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas/status.json"
+  readonly property string runtimePath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas"
+  readonly property string statusPath: runtimePath + "/status.json"
+  readonly property string playSelectionPath: runtimePath + "/play-selection.json"
+  readonly property string favoriteSelectionPath: runtimePath + "/favorite-selection.json"
 
   readonly property var displayStations: mode === "favorites"
     ? favorites
     : (mode === "recent" ? recent : results)
-  readonly property var currentGeoStations: RadioModel.mergeGeoStations(worldStations, displayStations)
+  readonly property var currentGeoStations:
+    RadioModel.mergeGeoStations(worldStations, displayStations, countries)
   readonly property string playingStationName: playingStation
     ? String(playingStation.name || "").trim() : ""
   readonly property string playingTrackTitle: {
@@ -111,15 +118,18 @@ Item {
       if (worldStations.length === 0) showWorld()
       tuneRandom()
     } else if (worldStations.length === 0) showWorld()
+    scheduleWorldExpansion(800)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function close() {
     opened = false
+    worldExpandTimer.stop()
+    if (worldExpandProcess.running) worldExpandProcess.running = false
   }
 
   function dismiss() {
-    opened = false
+    close()
     if (shell && typeof shell.hide === "function")
       shell.hide((manifest && manifest.id) || "akshar.radio-atlas")
   }
@@ -173,10 +183,16 @@ Item {
   }
 
   function setStationList(nextMode, stations) {
-    cancelPendingPlay()
     mode = nextMode
     if (nextMode !== "favorites" && nextMode !== "recent") results = stations
     setSelection(stations.length > 0 ? 0 : -1)
+  }
+
+  function scheduleWorldExpansion(delay) {
+    if (!opened || worldStations.length === 0
+        || worldStations.length >= worldStationLimit) return
+    worldExpandTimer.interval = Math.max(500, Number(delay || 1600))
+    worldExpandTimer.restart()
   }
 
   function cancelPendingFetch() {
@@ -187,6 +203,7 @@ Item {
   function cancelPendingPlay() {
     pendingPlayStation = null
     pendingPlayScope = ""
+    pendingPlayStations = []
   }
 
   function startFetch(action, value) {
@@ -245,27 +262,45 @@ Item {
     setSelection(recent.length > 0 ? 0 : -1)
   }
 
-  function search(text) {
+  function previewSearch(text) {
     var query = String(text || "").trim()
     if (!query) {
       showWorld()
-      return
+      return false
     }
     restorePlayingCountry(false)
-    setStationList("search", [])
     fetchError = ""
+    setStationList("search", RadioModel.searchStations(worldStations, query))
+    return true
+  }
+
+  function search(text) {
+    var query = String(text || "").trim()
+    if (!previewSearch(query)) return
     startFetch("search", query)
   }
 
   function browseCountry(code, name) {
+    var countryCode = String(code || "").toUpperCase()
+    if (!/^[A-Z]{2}$/.test(countryCode)) return
+    var countryName = String(name || "")
+    if (!countryName) {
+      for (var i = 0; i < countries.length; i++) {
+        var properties = countries[i] && countries[i].properties
+        if (String(properties && properties.code || "").toUpperCase() !== countryCode) continue
+        countryName = String(properties.name || "")
+        break
+      }
+    }
+    if (!countryName) countryName = countryCode
     searchDebounce.stop()
     cancelPendingFetch()
-    setStationList("country", [])
-    activeCountryCode = code
-    activeCountryName = name
+    setStationList("country", RadioModel.stationsForCountry(worldStations, countryCode))
+    activeCountryCode = countryCode
+    activeCountryName = countryName
     fetchError = ""
-    searchField.text = name
-    startFetch("country", code)
+    searchField.text = countryName
+    startFetch("country", countryCode)
     keyCatcher.forceActiveFocus()
   }
 
@@ -317,24 +352,40 @@ Item {
 
   function playSelected() {
     if (!selectedStation) return
-    playStation(selectedStation, playlistScope())
+    playStation(selectedStation, playlistScope(), displayStations)
   }
 
-  function playStation(station, scope) {
+  function writeSelection(fileView, station, stations) {
+    var rows = RadioModel.stationWindow(stations, station && station.uuid, 500)
+    if (rows.length === 0) return false
+    fileView.setText(JSON.stringify(rows) + "\n")
+    return true
+  }
+
+  function playStation(station, scope, stations) {
     if (!station) return
     if (playerActionBusy) {
       pendingPlayStation = station
       pendingPlayScope = scope
+      pendingPlayStations = Array.isArray(stations) ? stations.slice(0) : []
       return
     }
     cancelPendingPlay()
+    var playerScope = scope
+    if (scope === "world" || scope === "results") {
+      if (!writeSelection(playSelectionFile, station, stations)) {
+        playerError = "Could not prepare this station"
+        return
+      }
+      playerScope = "selection"
+    }
     playCancellationRequested = false
     highlightStationCountry(station, true)
     playerError = ""
     playerActionProcess.action = "play"
     playerActionProcess.output = ""
     playerActionProcess.errorOutput = ""
-    playerActionProcess.command = [playerPath, "play", station.uuid, scope]
+    playerActionProcess.command = [playerPath, "play", station.uuid, playerScope]
     playerActionProcess.running = true
   }
 
@@ -342,8 +393,9 @@ Item {
     if (!pendingPlayStation || playerActionBusy) return
     var station = pendingPlayStation
     var scope = pendingPlayScope
+    var stations = pendingPlayStations
     cancelPendingPlay()
-    playStation(station, scope)
+    playStation(station, scope, stations)
   }
 
   function playerAction(action) {
@@ -461,7 +513,7 @@ Item {
 
   function reloadLocalStateWhenIdle() {
     if (!localReloadPending || stateProcess.running || historyProcess.running
-        || pendingFavoriteUuids.length > 0 || pendingRecentUuid) return
+        || pendingFavoriteRequests.length > 0 || pendingRecentUuid) return
     loadState()
   }
 
@@ -483,18 +535,29 @@ Item {
   function toggleFavorite(uuid) {
     if (!uuid) return
     localError = ""
+    var request = { uuid: uuid, rows: [] }
+    var index = RadioModel.indexByUuid(displayStations, uuid)
+    if (remoteMode && index >= 0) {
+      request.rows = RadioModel.stationWindow(displayStations, uuid, 500)
+      if (request.rows.length === 0) {
+        localError = "Favorite could not be updated"
+        return
+      }
+    }
     if (stateProcess.running) {
-      pendingFavoriteUuids = pendingFavoriteUuids.concat([uuid])
+      pendingFavoriteRequests = pendingFavoriteRequests.concat([request])
       return
     }
-    startFavorite(uuid)
+    startFavorite(request)
   }
 
-  function startFavorite(uuid) {
+  function startFavorite(request) {
+    if (request.rows.length > 0)
+      favoriteSelectionFile.setText(JSON.stringify(request.rows) + "\n")
     stateProcess.action = "favorite"
     stateProcess.output = ""
     stateProcess.errorOutput = ""
-    stateProcess.command = [statePath, "favorite", uuid]
+    stateProcess.command = [statePath, "favorite", request.uuid]
     stateProcess.running = true
   }
 
@@ -557,6 +620,26 @@ Item {
     onFileChanged: reload()
   }
 
+  FileView {
+    id: playSelectionFile
+    path: root.playSelectionPath
+    watchChanges: false
+    blockWrites: true
+    atomicWrites: true
+    printErrors: true
+    onSaveFailed: root.playerError = "Could not prepare this station"
+  }
+
+  FileView {
+    id: favoriteSelectionFile
+    path: root.favoriteSelectionPath
+    watchChanges: false
+    blockWrites: true
+    atomicWrites: true
+    printErrors: true
+    onSaveFailed: root.localError = "Favorite could not be updated"
+  }
+
   Process {
     id: statusInitProcess
     command: []
@@ -589,7 +672,10 @@ Item {
         }
       }
       if (root.fetchAction === "world" && stations !== null)
-        root.worldStations = stations
+        root.worldStations = RadioModel.mergeStations(
+          root.worldStations, stations, root.worldStationLimit)
+      if (root.fetchAction === "world" && stations !== null)
+        root.scheduleWorldExpansion(1200)
 
       if (root.pendingFetchAction) {
         var nextAction = root.pendingFetchAction
@@ -610,7 +696,9 @@ Item {
       if (root.fetchAction === "search"
           && String(searchField.text || "").trim() !== root.fetchValue) return
       if (exitCode !== 0) {
-        root.fetchError = "Could not load stations"
+        root.fetchError = root.displayStations.length > 0
+          ? "Showing cached stations · Radio Browser is unavailable"
+          : "Radio Browser is unavailable. Try again shortly."
         return
       }
       if (stations === null) {
@@ -620,9 +708,9 @@ Item {
       root.fetchError = ""
 
       if (root.fetchAction === "world") {
-        root.setStationList("world", stations)
+        root.setStationList("world", root.worldStations)
       } else if (root.fetchAction === "country") {
-        root.setStationList("country", stations)
+        root.setStationList("country", RadioModel.mergeStations(root.results, stations, 500))
       } else if (root.fetchAction === "search") {
         root.setStationList("search", stations)
       } else if (root.fetchAction === "random") {
@@ -633,6 +721,43 @@ Item {
         }
       }
 
+    }
+  }
+
+  Process {
+    id: worldExpandProcess
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.worldExpandOutput = text
+    }
+    onExited: function(exitCode) {
+      var output = root.worldExpandOutput
+      root.worldExpandOutput = ""
+      if (!root.opened) return
+      if (exitCode !== 0) {
+        root.scheduleWorldExpansion(30000)
+        return
+      }
+
+      var stations = null
+      try {
+        var parsed = JSON.parse(output || "[]")
+        if (Array.isArray(parsed)) stations = parsed
+      } catch (error) {
+        stations = null
+      }
+      if (stations === null || stations.length === 0) {
+        root.scheduleWorldExpansion(30000)
+        return
+      }
+
+      var merged = RadioModel.mergeStations(
+        root.worldStations, stations, root.worldStationLimit)
+      var added = merged.length - root.worldStations.length
+      root.worldStations = merged
+      if (root.mode === "world") root.results = merged
+      root.scheduleWorldExpansion(added > 0 ? 1600 : 10000)
     }
   }
 
@@ -739,10 +864,10 @@ Item {
           ? "Favorite could not be updated" : "Saved stations could not be loaded"
       }
 
-      if (root.pendingFavoriteUuids.length > 0) {
-        var nextUuid = root.pendingFavoriteUuids[0]
-        root.pendingFavoriteUuids = root.pendingFavoriteUuids.slice(1)
-        Qt.callLater(function() { root.startFavorite(nextUuid) })
+      if (root.pendingFavoriteRequests.length > 0) {
+        var nextRequest = root.pendingFavoriteRequests[0]
+        root.pendingFavoriteRequests = root.pendingFavoriteRequests.slice(1)
+        Qt.callLater(function() { root.startFavorite(nextRequest) })
         return
       }
       if (root.localReloadPending) root.requestLocalStateReload()
@@ -785,6 +910,19 @@ Item {
     interval: 300
     repeat: false
     onTriggered: root.search(searchField.text)
+  }
+
+  Timer {
+    id: worldExpandTimer
+    interval: 1600
+    repeat: false
+    onTriggered: {
+      if (!root.opened || worldExpandProcess.running
+          || root.worldStations.length >= root.worldStationLimit) return
+      root.worldExpandOutput = ""
+      worldExpandProcess.command = [root.fetchPath, "world-more"]
+      worldExpandProcess.running = true
+    }
   }
 
   Timer {
@@ -922,13 +1060,7 @@ Item {
           foreground: root.foreground
           accent: root.accent
           onTextEdited: {
-            if (!String(text || "").trim()) {
-              root.showWorld()
-              return
-            }
-            root.mode = "search"
-            root.restorePlayingCountry(false)
-            root.fetchError = ""
+            if (!root.previewSearch(text)) return
             searchDebounce.restart()
           }
           onAccepted: {

@@ -10,6 +10,7 @@ state_file="$state_dir/state.json"
 socket="$runtime_dir/mpv.sock"
 playlist="$runtime_dir/playlist.m3u"
 queue_file="$runtime_dir/playlist.json"
+selection_file="$runtime_dir/play-selection.json"
 status_file="$runtime_dir/status.json"
 pid_file="$runtime_dir/player.pid"
 proxy_socket="$runtime_dir/proxy.sock"
@@ -290,9 +291,16 @@ source_stations() {
     recent)
       "$state_path" get | jq -c '.recent // []'
       ;;
-    *)
+    results)
       valid_runtime_array "$runtime_dir/results.json" \
         && cat "$runtime_dir/results.json"
+      ;;
+    selection)
+      valid_runtime_array "$selection_file" \
+        && cat "$selection_file"
+      ;;
+    *)
+      return 1
       ;;
   esac
 }
@@ -352,8 +360,10 @@ play_station() {
   temporary_queue=$(mktemp "$runtime_dir/queue.XXXXXX")
   jq -c --arg uuid "$uuid" \
     "$playable_filter
-    ([.[] | select(.uuid == \$uuid and playable)]
-      + [.[] | select(.uuid != \$uuid and playable)])" \
+    [.[] | select(playable)] as \$rows
+    | (first(range(0; \$rows | length) as \$index
+        | select(\$rows[\$index].uuid == \$uuid) | \$index)) as \$position
+    | (\$rows[\$position:] + \$rows[:\$position])" \
     "$source_file" > "$temporary_queue"
   {
     printf '#EXTM3U\n'
