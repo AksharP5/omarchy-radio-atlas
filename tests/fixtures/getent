@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case ${1:-} in
+  ahostsv4)
+    printf '%s\n' '192.0.2.1' '192.0.2.2'
+    ;;
+  hosts)
+    case ${2:-} in
+      192.0.2.1) printf '%s %s\n' "$2" 'de1.api.radio-browser.info' ;;
+      192.0.2.2) printf '%s %s\n' "$2" 'de2.api.radio-browser.info' ;;
+    esac
+    ;;
+esac

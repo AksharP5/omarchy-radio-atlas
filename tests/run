@@ -91,9 +91,13 @@ done
 ! rg -q '/tmp/omarchy-radio-atlas' \
   "$project_dir/radio-fetch" "$project_dir/radio-player" "$project_dir/radio-state"
 rg -q '^max_response_bytes=4194304$' "$project_dir/radio-fetch"
+rg -q '^world_cache_minutes=1440$' "$project_dir/radio-fetch"
+rg -Fq 'world_cache_file="$cache_dir/world.json"' "$project_dir/radio-fetch"
+rg -q '^refresh_world_cache_in_background\(\)' "$project_dir/radio-fetch"
 rg -Fq -- '--max-filesize "$max_response_bytes"' "$project_dir/radio-fetch"
 rg -q -- "--proto '=https'" "$project_dir/radio-fetch"
 ! rg -q -- '--location' "$project_dir/radio-fetch"
+! rg -q -- '--retry' "$project_dir/radio-fetch"
 rg -Fq '.[:500]' "$project_dir/radio-fetch"
 rg -q 'pendingPlayStation' "$project_dir/RadioAtlas.qml"
 rg -q 'playPendingStation' "$project_dir/RadioAtlas.qml"
@@ -145,7 +149,9 @@ cleanup() {
 trap cleanup EXIT
 export XDG_RUNTIME_DIR="$test_root/runtime"
 export XDG_DATA_HOME="$test_root/data"
+export XDG_CACHE_HOME="$test_root/cache"
 runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
+cache_dir="$XDG_CACHE_HOME/omarchy-radio-atlas"
 mkdir -p "$runtime_dir"
 
 track_player_pid() {
@@ -169,16 +175,38 @@ jq -e '
   and .[1].uuid == "aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"
 ' "$test_root/normalized.json" >/dev/null
 [[ $(stat -c '%a' "$runtime_dir") == 700 ]]
+[[ $(stat -c '%a' "$cache_dir") == 700 ]]
 
-truncate -s 4194305 "$runtime_dir/world.json"
+legacy_world='[{"uuid":"cccccccc-1111-1111-1111-cccccccccccc","name":"Cached","url":"https://example.com/cached","country":"Canada","countryCode":"CA","latitude":43,"longitude":-79}]'
+printf '%s\n' "$legacy_world" > "$runtime_dir/world.json"
+RADIO_ATLAS_TEST_CURL_FAIL=1 PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-fetch" world > "$test_root/imported-world.json"
+jq -e 'length == 1 and .[0].name == "Cached"' "$test_root/imported-world.json" >/dev/null
+cmp "$test_root/imported-world.json" "$cache_dir/world.json"
+
+rm -f "$runtime_dir/world.json"
+truncate -s 4194305 "$cache_dir/world.json"
 PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" world \
   > "$test_root/world-after-oversized-cache.json"
 jq -e 'length == 2' "$test_root/world-after-oversized-cache.json" >/dev/null
 
-jq -cn '[range(0; 501) | {}]' > "$runtime_dir/world.json"
+jq -cn '[range(0; 501) | {}]' > "$cache_dir/world.json"
 PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" world \
   > "$test_root/world-after-excessive-cache.json"
 jq -e 'length == 2' "$test_root/world-after-excessive-cache.json" >/dev/null
+
+printf '%s\n' "$legacy_world" > "$cache_dir/world.json"
+touch -d '2 days ago' "$cache_dir/world.json"
+PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" world \
+  > "$test_root/stale-world.json"
+jq -e 'length == 1 and .[0].name == "Cached"' "$test_root/stale-world.json" >/dev/null
+jq -e 'length == 1 and .[0].name == "Cached"' "$runtime_dir/results.json" >/dev/null
+for _ in $(seq 1 100); do
+  jq -e 'length == 2' "$cache_dir/world.json" >/dev/null 2>&1 && break
+  sleep 0.01
+done
+jq -e 'length == 2' "$cache_dir/world.json" >/dev/null
+jq -e 'length == 1 and .[0].name == "Cached"' "$runtime_dir/results.json" >/dev/null
 
 malformed_marker="$test_root/malformed-response"
 RADIO_ATLAS_TEST_CURL_MALFORMED_ONCE=1 \

@@ -20,7 +20,7 @@ usual play, pause, previous, and next controls.
 - Independent volume slider, mute, and bar-wheel volume control
 - Click-through desktop focus outside the atlas panel
 - Keyboard navigation
-- Radio Browser mirror fallback and a 30-minute world cache
+- Radio Browser mirror fallback and a persistent world cache with background refresh
 - Automatic skip to the next playlist entry when a stream fails
 
 ## Install
