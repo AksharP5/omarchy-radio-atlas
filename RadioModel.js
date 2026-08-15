@@ -181,19 +181,25 @@ function stationAt(stations, x, y, width, height, scale, centreLatitude, centreL
 function mergeGeoStations(primary, secondary) {
   var output = []
   var seen = ({})
-  var groups = [secondary, primary]
+  var groups = [primary, secondary]
 
   for (var g = 0; g < groups.length; g++) {
     var rows = Array.isArray(groups[g]) ? groups[g] : []
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i]
-      if (!row || !row.uuid || seen[row.uuid]) continue
+      if (!row || !row.uuid) continue
       if (row.latitude === null || row.longitude === null) continue
-      seen[row.uuid] = true
+      var key = "$" + row.uuid
+      if (seen[key] !== undefined) {
+        if (g > 0) output[seen[key]] = row
+        continue
+      }
+      if (output.length >= 700) continue
+      seen[key] = output.length
       output.push(row)
     }
   }
-  return output.slice(0, 700)
+  return output
 }
 
 function compactTags(tags, maximum) {

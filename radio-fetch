@@ -9,6 +9,7 @@ install -d -m 700 "$runtime_dir"
 world_file="$runtime_dir/world.json"
 results_file="$runtime_dir/results.json"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+state_path="$script_dir/radio-state"
 version=$(jq -r '.version' "$script_dir/manifest.json")
 user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
 max_response_bytes=4194304
@@ -132,10 +133,16 @@ store_results() {
 
 store_random_results() {
   local target=$1
+  local exclusions=${2:-}
   local temporary
   store_results "$target" >/dev/null
   temporary=$(mktemp "$runtime_dir/random.XXXXXX")
-  jq -c '.[]' "$target" | shuf | jq -sc . > "$temporary"
+  jq -c --arg exclusions "$exclusions" '
+    ($exclusions | split(",") | map(select(length > 0))
+      | map({key: ., value: true}) | from_entries) as $excluded
+    | (map(select($excluded[.uuid] != true))) as $fresh
+    | if ($fresh | length) > 0 then $fresh[] else .[] end
+  ' "$target" | shuf | jq -sc . > "$temporary"
   mv "$temporary" "$target"
   cat "$target"
 }
@@ -253,12 +260,29 @@ case "$action" in
     fetch_search "$query"
     ;;
   random)
+    exclusions=${2:-}
+    if [[ -n $exclusions ]]; then
+      [[ $exclusions =~ ^[0-9A-Fa-f-]{20,64}(,[0-9A-Fa-f-]{20,64})*$ ]] \
+        || { echo 'Invalid excluded station ids' >&2; exit 2; }
+      (( ${#exclusions} <= 4096 )) || { echo 'Too many excluded station ids' >&2; exit 2; }
+    fi
+    saved_exclusions=$("$state_path" get 2>/dev/null | jq -r '
+      [.recent[]?.uuid
+        | select(type == "string" and length >= 20 and length <= 64)
+        | select(test("^[0-9A-Fa-f-]+$"))][:30]
+      | join(",")
+    ' 2>/dev/null || true)
+    exclusions=$(jq -nr --arg requested "$exclusions" --arg saved "$saved_exclusions" '
+      [$requested, $saved] | map(split(",")) | add
+      | map(select(length > 0)) | unique | join(",")
+    ')
+    (( ${#exclusions} <= 4096 )) || { echo 'Too many excluded station ids' >&2; exit 2; }
     request 60 '/json/stations/search' \
       --data-urlencode 'has_geo_info=true' \
       --data-urlencode 'hidebroken=true' \
       --data-urlencode 'order=random' \
       --data-urlencode 'limit=60' \
-      | store_random_results "$results_file"
+      | store_random_results "$results_file" "$exclusions"
     ;;
   resolve)
     resolve_stations "${2:-}"

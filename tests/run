@@ -23,7 +23,33 @@ python3 "$project_dir/tests/proxy.test.py"
 rg -q 'maximumScale: 24' "$project_dir/Globe.qml"
 rg -q 'searchDebounce.restart()' "$project_dir/RadioAtlas.qml"
 ! rg -q 'enabled: !root.fetching' "$project_dir/RadioAtlas.qml"
-! rg -q 'return current.length > 0 ? current : worldStations' "$project_dir/RadioAtlas.qml"
+rg -Fq 'mergeGeoStations(worldStations, displayStations)' "$project_dir/RadioAtlas.qml"
+rg -Fq 'if (mode === "world") return "world"' "$project_dir/RadioAtlas.qml"
+sed -n '/function activateMapStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -q 'worldStations'
+sed -n '/function activateMapStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'showWorld(false)'
+sed -n '/function search(text)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'setStationList("search", [])'
+sed -n '/function browseCountry/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'setStationList("country", [])'
+sed -n '/function tuneRandom/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'startFetch("random", randomExclusions())'
+sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -q 'showWorld\(\).*tuneRandom\(\)' -U --multiline-dotall
+sed -n '/function randomExclusions/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'append(playingStationUuid)'
+sed -n '/function randomExclusions/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'append(lastRandomUuid)'
+sed -n '/function randomExclusions/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'i < recent.length'
+world_update_line=$(rg -n 'root.worldStations = stations' "$project_dir/RadioAtlas.qml" \
+  | cut -d: -f1)
+pending_fetch_line=$(rg -n 'if \(root.pendingFetchAction\)' "$project_dir/RadioAtlas.qml" \
+  | cut -d: -f1)
+(( world_update_line < pending_fetch_line ))
+sed -n '/if (root.pendingFetchAction)/,/^        }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'nextAction === "random" ? root.randomExclusions() : nextValue'
 ! sed -n '/function playSelected()/,/^  }/p' "$project_dir/RadioAtlas.qml" | rg -q 'recordPlayed'
 rg -q 'clockwiseArc' "$project_dir/Globe.qml"
 rg -q 'Accessible.onPressAction' "$project_dir/RadioAtlas.qml"
@@ -31,6 +57,12 @@ rg -q 'state.loaded === true' "$project_dir/RadioAtlas.qml"
 rg -q 'loaded = station_loaded' "$project_dir/radio-status.lua"
 rg -q 'pendingVolume' "$project_dir/BarWidget.qml"
 rg -q 'playingStationUuid === stationRow.modelData.uuid' "$project_dir/RadioAtlas.qml"
+rg -q 'readonly property string playingStationName' "$project_dir/RadioAtlas.qml"
+rg -q 'readonly property string playingTrackTitle' "$project_dir/RadioAtlas.qml"
+sed -n '/id: playerPanel/,/^          }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'root.playingStationName || root.playerTitle || "Unknown station"'
+sed -n '/id: playingFavoriteButton/,/^            }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'root.toggleFavorite(root.playingStationUuid)'
 rg -q 'rowMouse.containsMouse' "$project_dir/RadioAtlas.qml"
 ! rg -q 'selectedIndex === index.*Style.selectedFillFor' "$project_dir/RadioAtlas.qml"
 ! rg -q 'send_command .*\|\| true' "$project_dir/radio-player"
@@ -200,6 +232,28 @@ PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" random \
   > "$test_root/random.json"
 jq -e '.[0].uuid == "aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"' \
   "$test_root/random.json" >/dev/null
+printf '%s\n' \
+  '{"favorites":[],"recent":[{"uuid":"aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa"}],"volume":70}' \
+  > "$XDG_DATA_HOME/radio-atlas/state.json"
+PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" random \
+  > "$test_root/random-with-saved-history.json"
+jq -e 'length == 1 and .[0].uuid == "bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb"' \
+  "$test_root/random-with-saved-history.json" >/dev/null
+printf '%s\n' '{"favorites":[],"recent":[],"volume":70}' \
+  > "$XDG_DATA_HOME/radio-atlas/state.json"
+PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" random \
+  aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa > "$test_root/random-with-exclusion.json"
+jq -e 'length == 1 and .[0].uuid == "bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb"' \
+  "$test_root/random-with-exclusion.json" >/dev/null
+PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" random \
+  aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa,bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb \
+  > "$test_root/random-all-excluded.json"
+jq -e 'length == 2' "$test_root/random-all-excluded.json" >/dev/null
+if PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" random invalid \
+  >/dev/null 2>&1; then
+  echo "Invalid random exclusions were accepted" >&2
+  exit 1
+fi
 
 status=$("$project_dir/radio-player" status)
 jq -e '.running == false and .station == {}' <<< "$status" >/dev/null
@@ -474,7 +528,7 @@ rm "$runtime_dir/player.pid"
 
 mpv_marker="$test_root/mpv-started"
 if RADIO_ATLAS_TEST_MPV_MARKER="$mpv_marker" PATH="$project_dir/tests/fixtures:$PATH" \
-  "$project_dir/radio-player" play 12345678-1234-1234-1234-123456789abc results \
+  "$project_dir/radio-player" play 12345678-1234-1234-1234-123456789abc world \
   >/dev/null 2>&1; then
   echo "Player startup failure was reported as success" >&2
   exit 1

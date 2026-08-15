@@ -12,10 +12,11 @@ usual play, pause, previous, and next controls.
 ## Features
 
 - Precise drag rotation and deep wheel zoom on a theme-aware globe
-- Station and country selection directly on the map
+- Station and country selection directly on the map, with worldwide signals retained while browsing
 - Automatic country focus for the station that is actually playing
+- Current station identity, track metadata, and one-click favoriting in the player
 - Live search by station, country, or genre
-- Random tuning, favorites, and recent stations
+- Random tuning that avoids recent stations, plus favorites and listening history
 - Independent volume slider, mute, and bar-wheel volume control
 - Click-through desktop focus outside the atlas panel
 - Keyboard navigation

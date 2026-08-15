@@ -46,6 +46,7 @@ Item {
   property var playingStation: null
   property string playingStationUuid: ""
   property string recordedStationUuid: ""
+  property string lastRandomUuid: ""
   property bool playCancellationRequested: false
   property var pendingPlayStation: null
   property string pendingPlayScope: ""
@@ -69,7 +70,14 @@ Item {
   readonly property var displayStations: mode === "favorites"
     ? favorites
     : (mode === "recent" ? recent : results)
-  readonly property var currentGeoStations: RadioModel.mergeGeoStations([], displayStations)
+  readonly property var currentGeoStations: RadioModel.mergeGeoStations(worldStations, displayStations)
+  readonly property string playingStationName: playingStation
+    ? String(playingStation.name || "").trim() : ""
+  readonly property string playingTrackTitle: {
+    var title = String(playerTitle || "").trim()
+    var station = playingStationName.toLowerCase()
+    return title && station && title.toLowerCase() !== station ? title : ""
+  }
   readonly property bool remoteMode: mode !== "favorites" && mode !== "recent"
   readonly property bool lightTheme:
     0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b > 0.5
@@ -98,8 +106,10 @@ Item {
     opened = true
     fetchError = ""
     loadState()
-    if (payload.action === "random") tuneRandom()
-    else if (worldStations.length === 0) showWorld()
+    if (payload.action === "random") {
+      if (worldStations.length === 0) showWorld()
+      tuneRandom()
+    } else if (worldStations.length === 0) showWorld()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -201,7 +211,7 @@ Item {
     fetchProcess.running = true
   }
 
-  function showWorld() {
+  function showWorld(refresh) {
     searchDebounce.stop()
     cancelPendingFetch()
     searchField.text = ""
@@ -209,7 +219,7 @@ Item {
     fetchError = ""
     localError = ""
     setStationList("world", worldStations)
-    startFetch("world", "")
+    if (refresh !== false) startFetch("world", "")
   }
 
   function showFavorites() {
@@ -241,7 +251,7 @@ Item {
       return
     }
     restorePlayingCountry(false)
-    mode = "search"
+    setStationList("search", [])
     fetchError = ""
     startFetch("search", query)
   }
@@ -249,7 +259,7 @@ Item {
   function browseCountry(code, name) {
     searchDebounce.stop()
     cancelPendingFetch()
-    mode = "country"
+    setStationList("country", [])
     activeCountryCode = code
     activeCountryName = name
     fetchError = ""
@@ -262,20 +272,43 @@ Item {
     searchDebounce.stop()
     cancelPendingFetch()
     searchField.text = ""
-    mode = "random"
+    setStationList("random", [])
     restorePlayingCountry(false)
     fetchError = ""
-    startFetch("random", "")
+    startFetch("random", randomExclusions())
+  }
+
+  function randomExclusions() {
+    var output = []
+    var seen = ({})
+
+    function append(uuid) {
+      var value = String(uuid || "")
+      if (!/^[0-9A-Fa-f-]{20,64}$/.test(value) || seen["$" + value]) return
+      seen["$" + value] = true
+      output.push(value)
+    }
+
+    append(playingStationUuid)
+    append(lastRandomUuid)
+    for (var i = 0; i < recent.length && output.length < 32; i++)
+      append(recent[i] && recent[i].uuid)
+    return output.join(",")
   }
 
   function activateMapStation(station) {
     var index = RadioModel.indexByUuid(displayStations, station.uuid)
-    if (index < 0) return
+    if (index < 0) {
+      index = RadioModel.indexByUuid(worldStations, station.uuid)
+      if (index < 0) return
+      showWorld(false)
+    }
     setSelection(index)
     playSelected()
   }
 
   function playlistScope() {
+    if (mode === "world") return "world"
     if (mode === "favorites") return "favorites"
     if (mode === "recent") return "recent"
     return "results"
@@ -545,6 +578,18 @@ Item {
     onExited: function(exitCode) {
       var completedOutput = root.fetchOutput
       root.fetchOutput = ""
+      var stations = null
+      if (exitCode === 0) {
+        try {
+          var parsed = JSON.parse(completedOutput || "[]")
+          if (Array.isArray(parsed)) stations = parsed
+        } catch (error) {
+          stations = null
+        }
+      }
+      if (root.fetchAction === "world" && stations !== null)
+        root.worldStations = stations
+
       if (root.pendingFetchAction) {
         var nextAction = root.pendingFetchAction
         var nextValue = root.pendingFetchValue
@@ -552,7 +597,9 @@ Item {
         root.pendingFetchValue = ""
         root.fetching = false
         Qt.callLater(function() {
-          if (root.mode === nextAction) root.startFetch(nextAction, nextValue)
+          if (root.mode === nextAction)
+            root.startFetch(nextAction,
+              nextAction === "random" ? root.randomExclusions() : nextValue)
         })
         return
       }
@@ -565,17 +612,13 @@ Item {
         root.fetchError = "Could not load stations"
         return
       }
-
-      var stations = []
-      try { stations = JSON.parse(completedOutput || "[]") } catch (error) {
+      if (stations === null) {
         root.fetchError = "Station data was not valid"
         return
       }
-      if (!Array.isArray(stations)) stations = []
       root.fetchError = ""
 
       if (root.fetchAction === "world") {
-        root.worldStations = stations
         root.setStationList("world", stations)
       } else if (root.fetchAction === "country") {
         root.setStationList("country", stations)
@@ -583,7 +626,10 @@ Item {
         root.setStationList("search", stations)
       } else if (root.fetchAction === "random") {
         root.setStationList("random", stations)
-        if (stations.length > 0) root.playSelected()
+        if (stations.length > 0) {
+          root.lastRandomUuid = String(stations[0].uuid || "")
+          root.playSelected()
+        }
       }
 
     }
@@ -1238,11 +1284,13 @@ Item {
               id: nowPlaying
               anchors.left: parent.left
               anchors.leftMargin: Style.spacing.md
-              anchors.right: parent.right
-              anchors.rightMargin: Style.spacing.md
+              anchors.right: playingFavoriteButton.left
+              anchors.rightMargin: Style.spacing.xs
               anchors.top: parent.top
               anchors.topMargin: Style.spacing.md
-              text: root.playerRunning ? root.playerTitle : "Nothing playing"
+              text: root.playerRunning
+                ? (root.playingStationName || root.playerTitle || "Unknown station")
+                : "Nothing playing"
               textFormat: Text.PlainText
               color: root.foreground
               font.family: Style.font.menuFamily
@@ -1259,13 +1307,34 @@ Item {
               text: root.playerError
                 ? root.playerError
                 : (!root.playerRunning ? "Choose a signal to begin"
-                : (root.playerPaused ? "Paused" : "Live")
+                : (root.playingTrackTitle ? root.playingTrackTitle + "  ·  " : "")
+                  + (root.playerPaused ? "Paused" : "Live")
                   + (root.playlistCount > 1 ? "  ·  " + root.playlistCount + " stations queued" : ""))
               textFormat: Text.PlainText
               color: root.playerError ? root.urgent : root.dim
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideRight
+            }
+
+            Button {
+              id: playingFavoriteButton
+              anchors.right: parent.right
+              anchors.rightMargin: Style.spacing.sm
+              anchors.top: parent.top
+              anchors.topMargin: Style.spacing.sm
+              visible: root.playerRunning && root.playingStationUuid !== ""
+              iconText: root.isFavorite(root.playingStationUuid) ? "\uf005" : "\uf006"
+              tooltipText: root.isFavorite(root.playingStationUuid)
+                ? "Remove playing station from favorites"
+                : "Add playing station to favorites"
+              active: root.isFavorite(root.playingStationUuid)
+              focusable: true
+              foreground: root.foreground
+              accent: root.accent
+              Accessible.role: Accessible.Button
+              Accessible.name: tooltipText
+              onClicked: root.toggleFavorite(root.playingStationUuid)
             }
 
             Row {

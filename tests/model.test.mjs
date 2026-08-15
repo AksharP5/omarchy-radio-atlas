@@ -47,4 +47,30 @@ const stations = [
 assert.equal(model.stationAt(stations, 100, 100, 200, 200, 1, 0, 0, 12).uuid, "a")
 assert.equal(model.compactTags("jazz, soul, jazz", 2), "jazz · soul")
 
+const worldStations = [
+  { uuid: "world", name: "World", latitude: 1, longitude: 1 },
+  { uuid: "shared", name: "Old metadata", latitude: 2, longitude: 2 }
+]
+const filteredStations = [
+  { uuid: "shared", name: "Fresh metadata", latitude: 2, longitude: 2 },
+  { uuid: "country", name: "Country", latitude: 3, longitude: 3 }
+]
+const mergedStations = model.mergeGeoStations(worldStations, filteredStations)
+assert.deepEqual(Array.from(mergedStations, station => station.uuid), ["world", "shared", "country"])
+assert.equal(mergedStations[1].name, "Fresh metadata")
+
+const fullWorld = Array.from({ length: 500 }, (_, index) => ({
+  uuid: `world-${index}`,
+  latitude: 0,
+  longitude: index / 10
+}))
+const fullFilter = Array.from({ length: 300 }, (_, index) => ({
+  uuid: `filter-${index}`,
+  latitude: 1,
+  longitude: index / 10
+}))
+const cappedStations = model.mergeGeoStations(fullWorld, fullFilter)
+assert.equal(cappedStations.length, 700)
+assert.equal(cappedStations.filter(station => station.uuid.startsWith("world-")).length, 500)
+
 console.log("RadioModel tests passed")

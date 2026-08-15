@@ -280,6 +280,10 @@ adjust_volume() {
 source_stations() {
   local scope=$1
   case "$scope" in
+    world)
+      valid_runtime_array "$runtime_dir/world.json" \
+        && cat "$runtime_dir/world.json"
+      ;;
     favorites)
       "$state_path" get | jq -c '.favorites // []'
       ;;
