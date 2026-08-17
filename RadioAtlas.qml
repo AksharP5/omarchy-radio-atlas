@@ -638,6 +638,7 @@ Item {
   FileView {
     id: playSelectionFile
     path: root.playSelectionPath
+    preload: false
     watchChanges: false
     blockWrites: true
     atomicWrites: true
@@ -648,6 +649,7 @@ Item {
   FileView {
     id: favoriteSelectionFile
     path: root.favoriteSelectionPath
+    preload: false
     watchChanges: false
     blockWrites: true
     atomicWrites: true

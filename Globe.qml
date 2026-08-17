@@ -332,6 +332,7 @@ Item {
     var centreX = globeCanvas.width / 2
     var centreY = globeCanvas.height / 2
     var globeRadius = radius()
+    if (!isFinite(globeRadius) || globeRadius <= 0) return
 
     ctx.reset()
     ctx.fillStyle = backgroundColor
