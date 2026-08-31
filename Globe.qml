@@ -16,6 +16,13 @@ Item {
   property real maximumScale: 24
   property real longitudeSensitivity: 0.22
   property real latitudeSensitivity: 0.18
+  property bool kineticRotationEnabled: true
+
+  readonly property real kineticLaunchSpeed: 120
+  readonly property real kineticMaximumSpeed: 2400
+  readonly property real kineticDeceleration: 1800
+  readonly property real kineticMaximumFrameTime: 0.1
+  readonly property real kineticMaximumSampleAge: 100
 
   property color backgroundColor: "#090a0c"
   property color sphereColor: "#11151a"
@@ -30,6 +37,13 @@ Item {
   property var hoveredStation: null
   property real hoverX: 0
   property real hoverY: 0
+  property var highlightedStation: null
+  property real highlightX: 0
+  property real highlightY: 0
+  property real kineticVelocityX: 0
+  property real kineticVelocityY: 0
+  property int kineticLaunchGeneration: 0
+  property bool suppressNextTap: false
   property var preparedCountries: []
   property var preparedGrid: []
   property var preparedStations: []
@@ -40,7 +54,7 @@ Item {
   signal pointerMoved()
 
   Accessible.name: "Interactive world radio globe"
-  Accessible.description: "Drag to rotate, use the mouse wheel to zoom, and select a station signal or country"
+  Accessible.description: "Drag or flick to rotate, use the mouse wheel to zoom, and select a station signal or country"
   Accessible.role: Accessible.Pane
 
   function radius() {
@@ -51,11 +65,90 @@ Item {
     return Qt.rgba(color.r, color.g, color.b, alpha)
   }
 
+  function clearLandingHighlight() {
+    highlightedStation = null
+    highlightX = 0
+    highlightY = 0
+  }
+
+  function stopKineticRotation(clearLanding) {
+    kineticLaunchGeneration += 1
+    kineticAnimation.running = false
+    kineticVelocityX = 0
+    kineticVelocityY = 0
+    if (clearLanding === true) clearLandingHighlight()
+  }
+
+  function startKineticRotation(velocityX, velocityY) {
+    if (!kineticRotationEnabled) return false
+    var launch = RadioModel.kineticLaunchVelocity(
+      velocityX, velocityY, kineticLaunchSpeed, kineticMaximumSpeed)
+    if (!launch.active) return false
+
+    kineticLaunchGeneration += 1
+    clearLandingHighlight()
+    hoveredStation = null
+    kineticVelocityX = launch.x
+    kineticVelocityY = launch.y
+    kineticAnimation.running = true
+    return true
+  }
+
+  function finishKineticRotation() {
+    kineticAnimation.running = false
+    kineticVelocityX = 0
+    kineticVelocityY = 0
+    hoveredStation = null
+    var excludedUuid = selectedStation ? selectedStation.uuid : ""
+    highlightedStation = RadioModel.nearestVisibleStation(
+      stations, centreLatitude, centreLongitude, excludedUuid,
+      width, height, globeScale)
+  }
+
+  function rotateByPointerDelta(deltaX, deltaY) {
+    centreLongitude = RadioModel.wrapLongitude(
+      centreLongitude - deltaX * longitudeSensitivity / globeScale)
+    centreLatitude = RadioModel.clamp(
+      centreLatitude + deltaY * latitudeSensitivity / globeScale, -78, 78)
+  }
+
+  function stationByUuid(uuid) {
+    var wanted = String(uuid || "")
+    var rows = Array.isArray(stations) ? stations : []
+    for (var i = 0; i < rows.length; i++)
+      if (String(rows[i] && rows[i].uuid || "") === wanted) return rows[i]
+    return null
+  }
+
+  function refreshLandingHighlight() {
+    if (!highlightedStation) return
+    var replacement = stationByUuid(highlightedStation.uuid)
+    if (!replacement) {
+      clearLandingHighlight()
+      return
+    }
+    highlightedStation = replacement
+    updateHighlightPosition()
+  }
+
+  function updateHighlightPosition() {
+    if (!highlightedStation) return
+    var position = RadioModel.stationPosition(
+      highlightedStation, width, height, globeScale, centreLatitude, centreLongitude)
+    if (!position) {
+      clearLandingHighlight()
+      return
+    }
+    highlightX = position.x
+    highlightY = position.y
+  }
+
   function focusCoordinate(latitude, longitude) {
     var nextLatitude = Number(latitude)
     var nextLongitude = Number(longitude)
     if (!isFinite(nextLatitude) || !isFinite(nextLongitude)) return
 
+    stopKineticRotation(true)
     centreLatitude = RadioModel.clamp(nextLatitude, -78, 78)
     centreLongitude = RadioModel.wrapLongitude(nextLongitude)
   }
@@ -312,17 +405,20 @@ Item {
       row.depth = depth
 
       var selected = selectedStation && row.station.uuid === selectedStation.uuid
-      var markerRadius = selected ? 4.2 : 1.7 + depth * 1.25
+      var highlighted = highlightedStation
+        && row.station.uuid === highlightedStation.uuid && !selected
+      var markerRadius = selected ? 4.2 : (highlighted ? 3.7 : 1.7 + depth * 1.25)
       ctx.beginPath()
       ctx.arc(row.screenX, row.screenY, markerRadius, 0, Math.PI * 2)
-      ctx.fillStyle = selected ? accentColor : withAlpha(signalColor, 0.42 + depth * 0.48)
+      ctx.fillStyle = selected || highlighted
+        ? accentColor : withAlpha(signalColor, 0.42 + depth * 0.48)
       ctx.fill()
 
-      if (selected) {
+      if (selected || highlighted) {
         ctx.beginPath()
-        ctx.arc(row.screenX, row.screenY, 8.5, 0, Math.PI * 2)
-        ctx.strokeStyle = withAlpha(accentColor, 0.72)
-        ctx.lineWidth = 1.2
+        ctx.arc(row.screenX, row.screenY, selected ? 8.5 : 7.5, 0, Math.PI * 2)
+        ctx.strokeStyle = withAlpha(accentColor, selected ? 0.72 : 0.92)
+        ctx.lineWidth = selected ? 1.2 : 1.4
         ctx.stroke()
       }
     }
@@ -382,6 +478,7 @@ Item {
   }
 
   function activateAt(x, y) {
+    clearLandingHighlight()
     var station = stationUnderPointer(x, y)
     if (station) {
       stationActivated(station)
@@ -407,15 +504,44 @@ Item {
   }
   onStationsChanged: {
     preparedStations = prepareStationGeometry()
+    refreshLandingHighlight()
     globeCanvas.requestPaint()
   }
-  onSelectedStationChanged: globeCanvas.requestPaint()
+  onSelectedStationChanged: {
+    clearLandingHighlight()
+    globeCanvas.requestPaint()
+  }
   onActiveCountryCodeChanged: globeCanvas.requestPaint()
-  onCentreLatitudeChanged: globeCanvas.requestPaint()
-  onCentreLongitudeChanged: globeCanvas.requestPaint()
-  onGlobeScaleChanged: globeCanvas.requestPaint()
-  onWidthChanged: globeCanvas.requestPaint()
-  onHeightChanged: globeCanvas.requestPaint()
+  onCentreLatitudeChanged: {
+    updateHighlightPosition()
+    globeCanvas.requestPaint()
+  }
+  onCentreLongitudeChanged: {
+    updateHighlightPosition()
+    globeCanvas.requestPaint()
+  }
+  onGlobeScaleChanged: {
+    updateHighlightPosition()
+    globeCanvas.requestPaint()
+  }
+  onWidthChanged: {
+    updateHighlightPosition()
+    globeCanvas.requestPaint()
+  }
+  onHeightChanged: {
+    updateHighlightPosition()
+    globeCanvas.requestPaint()
+  }
+  onHighlightedStationChanged: {
+    updateHighlightPosition()
+    globeCanvas.requestPaint()
+  }
+  onKineticRotationEnabledChanged: {
+    if (!kineticRotationEnabled) stopKineticRotation(true)
+  }
+  onVisibleChanged: {
+    if (!visible) stopKineticRotation(true)
+  }
 
   Canvas {
     id: globeCanvas
@@ -434,91 +560,258 @@ Item {
     globeCanvas.requestPaint()
   }
 
-  MouseArea {
-    id: pointer
-    anchors.fill: parent
-    hoverEnabled: true
-    acceptedButtons: Qt.LeftButton
-    cursorShape: pressed
+  HoverHandler {
+    id: hoverHandler
+    cursorShape: dragHandler.active || tapHandler.pressed
       ? Qt.ClosedHandCursor
       : (root.hoveredStation ? Qt.PointingHandCursor : Qt.OpenHandCursor)
 
-    property real lastX: 0
-    property real lastY: 0
-    property real totalMovement: 0
+    onPointChanged: {
+      root.hoverX = point.position.x
+      root.hoverY = point.position.y
+      root.pointerMoved()
+      root.hoveredStation = kineticAnimation.running || dragHandler.active
+        ? null : root.stationUnderPointer(point.position.x, point.position.y)
+    }
 
-    onPressed: function(mouse) {
+    onHoveredChanged: {
+      if (!hovered) root.hoveredStation = null
+    }
+  }
+
+  TapHandler {
+    id: tapHandler
+    acceptedButtons: Qt.LeftButton
+    gesturePolicy: TapHandler.DragThreshold
+
+    onPressedChanged: {
+      if (!pressed) return
       root.interactionStarted()
-      lastX = mouse.x
-      lastY = mouse.y
-      totalMovement = 0
+      var caughtKineticRotation = kineticAnimation.running
+      root.stopKineticRotation(true)
+      root.suppressNextTap = caughtKineticRotation
       root.hoveredStation = null
     }
 
-    onPositionChanged: function(mouse) {
-      root.hoverX = mouse.x
-      root.hoverY = mouse.y
-      if (!(pressedButtons & Qt.LeftButton)) {
-        root.pointerMoved()
-        root.hoveredStation = root.stationUnderPointer(mouse.x, mouse.y)
+    onTapped: function(eventPoint) {
+      if (root.suppressNextTap) {
+        root.suppressNextTap = false
         return
       }
-
-      var deltaX = mouse.x - lastX
-      var deltaY = mouse.y - lastY
-      var longitudeDelta = -deltaX * root.longitudeSensitivity / root.globeScale
-      var latitudeDelta = deltaY * root.latitudeSensitivity / root.globeScale
-
-      root.centreLongitude = RadioModel.wrapLongitude(root.centreLongitude + longitudeDelta)
-      root.centreLatitude = RadioModel.clamp(root.centreLatitude + latitudeDelta, -78, 78)
-      totalMovement += Math.abs(deltaX) + Math.abs(deltaY)
-      lastX = mouse.x
-      lastY = mouse.y
+      root.activateAt(eventPoint.position.x, eventPoint.position.y)
+      root.hoveredStation = hoverHandler.hovered
+        ? root.stationUnderPointer(eventPoint.position.x, eventPoint.position.y) : null
     }
 
-    onReleased: function(mouse) {
-      if (totalMovement < 7) {
-        root.activateAt(mouse.x, mouse.y)
-        root.hoveredStation = root.stationUnderPointer(mouse.x, mouse.y)
+    onCanceled: root.suppressNextTap = false
+  }
+
+  DragHandler {
+    id: dragHandler
+    target: null
+    acceptedButtons: Qt.LeftButton
+
+    property bool wasActive: false
+    property bool launchCanceled: false
+    property bool launchPending: false
+    property int pendingLaunchGeneration: 0
+    property real pendingVelocityX: 0
+    property real pendingVelocityY: 0
+    property real recentVelocityX: 0
+    property real recentVelocityY: 0
+    property real recentVelocityAt: 0
+    property real samplePositionX: 0
+    property real samplePositionY: 0
+    property real sampleStartedAt: 0
+
+    function resetMotionSample() {
+      recentVelocityX = 0
+      recentVelocityY = 0
+      recentVelocityAt = 0
+      samplePositionX = centroid.position.x
+      samplePositionY = centroid.position.y
+      sampleStartedAt = Date.now()
+    }
+
+    function recordMotionSample() {
+      // Qt's filtered mouse velocity can fall below the launch floor before
+      // release. Keep a short, capped-by-launch recent sample for human-speed
+      // flicks; the coast itself still uses frame-time-independent physics.
+      var now = Date.now()
+      var elapsedMilliseconds = now - sampleStartedAt
+      if (elapsedMilliseconds <= 0) return
+
+      var deltaX = centroid.position.x - samplePositionX
+      var deltaY = centroid.position.y - samplePositionY
+      samplePositionX = centroid.position.x
+      samplePositionY = centroid.position.y
+      sampleStartedAt = now
+      if (elapsedMilliseconds > 250) return
+
+      var sampledVelocityX = deltaX * 1000 / elapsedMilliseconds
+      var sampledVelocityY = deltaY * 1000 / elapsedMilliseconds
+      if (!isFinite(sampledVelocityX) || !isFinite(sampledVelocityY)) return
+      if (recentVelocityAt > 0) {
+        recentVelocityX = recentVelocityX * 0.25 + sampledVelocityX * 0.75
+        recentVelocityY = recentVelocityY * 0.25 + sampledVelocityY * 0.75
+      } else {
+        recentVelocityX = sampledVelocityX
+        recentVelocityY = sampledVelocityY
       }
+      recentVelocityAt = now
     }
 
-    onExited: if (!(pressedButtons & Qt.LeftButton)) root.hoveredStation = null
+    onActiveChanged: {
+      if (active) {
+        root.stopKineticRotation(true)
+        wasActive = true
+        launchCanceled = false
+        launchPending = false
+        root.suppressNextTap = false
+        root.interactionStarted()
+        root.hoveredStation = null
+        resetMotionSample()
+        return
+      }
+      if (!wasActive) return
 
-    onWheel: function(wheel) {
+      wasActive = false
+      var releaseVelocity = RadioModel.kineticReleaseVelocity(
+        centroid.velocity.x, centroid.velocity.y,
+        recentVelocityX, recentVelocityY,
+        recentVelocityAt > 0 ? Date.now() - recentVelocityAt : Infinity,
+        root.kineticMaximumSampleAge)
+      pendingVelocityX = releaseVelocity.x
+      pendingVelocityY = releaseVelocity.y
+      pendingLaunchGeneration = root.kineticLaunchGeneration
+      launchPending = !launchCanceled
+      Qt.callLater(function() {
+        if (!dragHandler.launchPending || dragHandler.launchCanceled) return
+        if (dragHandler.pendingLaunchGeneration !== root.kineticLaunchGeneration) {
+          dragHandler.launchPending = false
+          return
+        }
+        dragHandler.launchPending = false
+        root.startKineticRotation(
+          dragHandler.pendingVelocityX, dragHandler.pendingVelocityY)
+      })
+    }
+
+    onTranslationChanged: function(delta) {
+      if (!active) return
+      recordMotionSample()
+      root.rotateByPointerDelta(delta.x, delta.y)
+    }
+
+    onCanceled: {
+      launchCanceled = true
+      launchPending = false
+      recentVelocityAt = 0
+      root.stopKineticRotation(false)
+    }
+  }
+
+  WheelHandler {
+    id: wheelHandler
+    target: null
+    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+    blocking: true
+
+    onWheel: function(event) {
       root.interactionStarted()
-      var factor = Math.exp(wheel.angleDelta.y / 720)
+      root.stopKineticRotation(true)
+      root.suppressNextTap = false
+      root.hoveredStation = null
+      var factor = Math.exp(event.angleDelta.y / 720)
       root.globeScale = RadioModel.clamp(
         root.globeScale * factor, root.minimumScale, root.maximumScale)
-      wheel.accepted = true
+      event.accepted = true
+    }
+  }
+
+  FrameAnimation {
+    id: kineticAnimation
+    running: false
+
+    onTriggered: {
+      if (!root.kineticRotationEnabled || frameTime > root.kineticMaximumFrameTime) {
+        root.stopKineticRotation(true)
+        return
+      }
+      if (frameTime <= 0) return
+
+      var step = RadioModel.advanceKineticRotation({
+        longitude: root.centreLongitude,
+        latitude: root.centreLatitude,
+        velocityX: root.kineticVelocityX,
+        velocityY: root.kineticVelocityY
+      }, frameTime, {
+        deceleration: root.kineticDeceleration,
+        scale: root.globeScale,
+        longitudeSensitivity: root.longitudeSensitivity,
+        latitudeSensitivity: root.latitudeSensitivity,
+        minimumLatitude: -78,
+        maximumLatitude: 78
+      })
+      root.kineticVelocityX = step.velocityX
+      root.kineticVelocityY = step.velocityY
+      root.centreLongitude = step.longitude
+      root.centreLatitude = step.latitude
+      if (!step.active) root.finishKineticRotation()
     }
   }
 
   Rectangle {
     id: tooltip
-    visible: !!root.hoveredStation && !pointer.pressed
-    x: Math.min(root.width - width - 8, Math.max(8, root.hoverX + 14))
-    y: Math.min(root.height - height - 8, Math.max(8, root.hoverY + 14))
-    width: Math.min(240, tooltipText.implicitWidth + 20)
-    height: tooltipText.implicitHeight + 14
+    property var station: root.hoveredStation || root.highlightedStation
+    property bool landing: !root.hoveredStation && !!root.highlightedStation
+    property real anchorX: root.hoveredStation ? root.hoverX : root.highlightX
+    property real anchorY: root.hoveredStation ? root.hoverY : root.highlightY
+
+    visible: !!station && !tapHandler.pressed && !dragHandler.active
+      && !kineticAnimation.running
+    x: Math.min(root.width - width - 8, Math.max(8, anchorX + 14))
+    y: Math.min(root.height - height - 8, Math.max(8, anchorY + 14))
+    width: landing
+      ? Math.min(280, Math.max(0, root.width - 16))
+      : Math.min(280, Math.max(0, root.width - 16), tooltipText.implicitWidth + 20)
+    height: tooltipContent.implicitHeight + 14
     color: Qt.rgba(root.backgroundColor.r, root.backgroundColor.g, root.backgroundColor.b, 0.94)
     border.color: root.withAlpha(root.outlineColor, 0.5)
     border.width: 1
     radius: 2
 
-    Text {
-      id: tooltipText
+    Column {
+      id: tooltipContent
       anchors.centerIn: parent
-      width: Math.min(220, implicitWidth)
-      text: root.hoveredStation
-        ? root.hoveredStation.name
-          + (root.hoveredStation.estimatedLocation === true ? " · approximate location" : "")
-        : ""
-      textFormat: Text.PlainText
-      color: root.textColor
-      font.family: root.fontFamily
-      font.pixelSize: 12
-      elide: Text.ElideRight
+      width: Math.max(0, parent.width - 20)
+      spacing: 2
+
+      Text {
+        id: tooltipText
+        width: parent.width
+        text: tooltip.station
+          ? (tooltip.landing ? "Landed near · " : "") + tooltip.station.name
+            + (!tooltip.landing && tooltip.station.estimatedLocation === true
+              ? " · approximate location" : "")
+          : ""
+        textFormat: Text.PlainText
+        color: root.textColor
+        font.family: root.fontFamily
+        font.pixelSize: 12
+        elide: Text.ElideRight
+      }
+
+      Text {
+        width: parent.width
+        visible: tooltip.landing && tooltip.station
+          && tooltip.station.estimatedLocation === true
+        text: "approximate location"
+        textFormat: Text.PlainText
+        color: root.withAlpha(root.textColor, 0.66)
+        font.family: root.fontFamily
+        font.pixelSize: 11
+      }
     }
   }
 }

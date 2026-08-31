@@ -11,7 +11,7 @@ usual play, pause, previous, and next controls.
 
 ## Features
 
-- Precise drag rotation and deep wheel zoom on a theme-aware globe
+- Kinetic drag rotation that highlights a nearby station when it settles, plus deep wheel zoom on a theme-aware globe
 - A fast cached world view that progressively adds thousands of stations and keeps the session catalog when closed
 - Country stations stay on the session globe and take priority over background signals
 - Country-level map estimates when a station has no published coordinates
@@ -55,7 +55,7 @@ Favorites, listening history, volume, and the selected audio output remain in
 
 | Input | Action |
 | --- | --- |
-| Drag globe | Rotate |
+| Drag or flick globe | Rotate; a flick coasts and highlights a nearby station |
 | Wheel over globe | Zoom |
 | Click signal | Play station |
 | Click country | Browse country |
