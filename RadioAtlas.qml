@@ -103,6 +103,9 @@ Item {
   property color mapSphere: lightTheme ? "#d2d0ca" : "#11151a"
   property color mapLand: lightTheme ? "#a9aaa6" : "#283039"
   property color mapGrid: lightTheme ? "#3f454a" : "#7d8791"
+  property color mapNight: lightTheme ? "#1b2028" : "#040608"
+  property color mapTwilight: accent
+
 
   readonly property int cardWidth: Math.min(Style.space(1180), panel.width - Style.gapsOut * 2)
   readonly property int cardHeight: Math.min(Style.space(760), panel.height - Style.gapsOut * 2)
@@ -1228,7 +1231,10 @@ Item {
             sphereColor: root.mapSphere
             landColor: root.mapLand
             gridColor: root.mapGrid
+            nightColor: root.mapNight
+            twilightColor: root.mapTwilight
             outlineColor: root.lightTheme ? "#3c4247" : "#9099a3"
+
             signalColor: root.lightTheme ? "#202428" : "#d9dee3"
             accentColor: root.accent
             textColor: root.foreground

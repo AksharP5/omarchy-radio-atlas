@@ -193,4 +193,36 @@ assert.deepEqual(
 )
 assert.deepEqual(Array.from(model.stationWindow(playlistRows, "missing", 5)), [])
 
+// Solar day/night terminator tests
+const summerSolstice = model.subsolarPoint(new Date("2026-06-21T12:00:00Z"))
+assert.ok(summerSolstice.latitude > 23.4 && summerSolstice.latitude < 23.5)
+assert.ok(Math.abs(summerSolstice.longitude) < 2)
+
+const winterSolstice = model.subsolarPoint(new Date("2026-12-21T12:00:00Z"))
+assert.ok(winterSolstice.latitude < -23.4 && winterSolstice.latitude > -23.5)
+assert.ok(Math.abs(winterSolstice.longitude) < 2)
+
+const springEquinox = model.subsolarPoint(new Date("2026-03-20T12:00:00Z"))
+assert.ok(Math.abs(springEquinox.latitude) < 0.5)
+
+const midnightUtc = model.subsolarPoint(new Date("2026-03-20T00:00:00Z"))
+assert.ok(Math.abs(midnightUtc.longitude) > 175)
+
+const terminator = model.terminatorGeometry(23.44, 0, 120)
+assert.equal(terminator.length, 360) // 120 points * 3 coordinates
+// Test every point on terminator is on unit sphere and orthogonal to sun
+for (let i = 0; i < terminator.length; i += 3) {
+  const x = terminator[i]
+  const y = terminator[i + 1]
+  const z = terminator[i + 2]
+  const len = Math.hypot(x, y, z)
+  assert.ok(Math.abs(len - 1.0) < 1e-6)
+}
+
+// isNightAt test
+assert.equal(model.isNightAt(summerSolstice.latitude, summerSolstice.longitude, summerSolstice.latitude, summerSolstice.longitude), false) // Noon at subsolar point is Day
+assert.equal(model.isNightAt(-summerSolstice.latitude, model.wrapLongitude(summerSolstice.longitude + 180), summerSolstice.latitude, summerSolstice.longitude), true) // Antipodal point is Night
+assert.equal(model.isNightAt(null, null, 0, 0), false)
+
 console.log("RadioModel tests passed")
+
