@@ -23,6 +23,16 @@ python3 "$project_dir/tests/proxy.test.py"
 ! rg -q 'inertia' "$project_dir/Globe.qml"
 rg -q 'maximumScale: 24' "$project_dir/Globe.qml"
 rg -q 'searchDebounce.restart()' "$project_dir/RadioAtlas.qml"
+rg -q 'property bool helpVisible: false' "$project_dir/RadioAtlas.qml"
+sed -n '/function toggleControls/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'helpVisible = !helpVisible'
+sed -n '/function close()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'helpVisible = false'
+rg -q 'id: controlsPane' "$project_dir/RadioAtlas.qml"
+rg -Fq '{ input: "?", action: "Show or hide controls" }' \
+  "$project_dir/RadioAtlas.qml"
+sed -n '/Keys.onPressed: function(event)/,/^        }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'root.isHelpKey(event)'
 rg -q 'worldStationLimit: 5000' "$project_dir/RadioAtlas.qml"
 rg -q 'id: worldExpandTimer' "$project_dir/RadioAtlas.qml"
 rg -q 'id: worldExpandProcess' "$project_dir/RadioAtlas.qml"

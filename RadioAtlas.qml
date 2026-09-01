@@ -24,6 +24,7 @@ Item {
   property string mode: "world"
   property string activeCountryCode: ""
   property string activeCountryName: ""
+  property bool helpVisible: false
   property int selectedIndex: -1
   property var selectedStation: null
   property bool keyboardSelectionVisible: false
@@ -107,6 +108,48 @@ Item {
   readonly property int cardHeight: Math.min(Style.space(760), panel.height - Style.gapsOut * 2)
   readonly property int headerHeight: Style.space(68)
   readonly property int sidebarWidth: Math.min(Style.space(390), cardWidth * 0.39)
+  readonly property var controlSections: [
+    {
+      title: "KEYBOARD",
+      inputWidth: 112,
+      controls: [
+        { input: "/", action: "Search" },
+        { input: "UP / DOWN", action: "Select station" },
+        { input: "ENTER", action: "Play selected station" },
+        { input: "SPACE", action: "Play or pause" },
+        { input: "R", action: "Tune randomly" },
+        { input: "F", action: "Favorite selected station" },
+        { input: "M", action: "Mute or unmute" },
+        { input: "+ / -", action: "Change volume" },
+        { input: "ESC", action: "Back, clear, or close" },
+        { input: "?", action: "Show or hide controls" }
+      ]
+    },
+    {
+      title: "MOUSE AND BAR",
+      inputWidth: 124,
+      controls: [
+        { input: "DRAG GLOBE", action: "Rotate" },
+        { input: "GLOBE WHEEL", action: "Zoom" },
+        { input: "CLICK SIGNAL", action: "Play station" },
+        { input: "CLICK COUNTRY", action: "Browse stations" },
+        { input: "BAR LEFT", action: "Open or close" },
+        { input: "BAR MIDDLE", action: "Tune randomly" },
+        { input: "BAR RIGHT", action: "Stop playback" },
+        { input: "BAR WHEEL", action: "Change volume" }
+      ]
+    }
+  ]
+
+  function isHelpKey(event) {
+    return event.key === Qt.Key_Question || event.text === "?"
+      || (event.key === Qt.Key_Slash && (event.modifiers & Qt.ShiftModifier))
+  }
+
+  function toggleControls() {
+    helpVisible = !helpVisible
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
 
   function open(payloadJson) {
     var payload = ({})
@@ -124,6 +167,7 @@ Item {
   }
 
   function close() {
+    helpVisible = false
     opened = false
     worldExpandTimer.stop()
     if (worldExpandProcess.running) worldExpandProcess.running = false
@@ -1014,8 +1058,19 @@ Item {
             return
           }
 
+          if (root.helpVisible) {
+            if (event.key === Qt.Key_Escape || root.isHelpKey(event)) {
+              root.toggleControls()
+              event.accepted = true
+            }
+            return
+          }
+
           if (event.key === Qt.Key_Escape) {
             root.dismiss()
+            event.accepted = true
+          } else if (root.isHelpKey(event)) {
+            root.toggleControls()
             event.accepted = true
           } else if (event.key === Qt.Key_Slash) {
             searchField.forceActiveFocus()
@@ -1096,7 +1151,7 @@ Item {
 
         Button {
           id: randomButton
-          anchors.right: closeButton.left
+          anchors.right: helpButton.left
           anchors.rightMargin: Style.spacing.xs
           anchors.verticalCenter: parent.verticalCenter
           iconText: "\uf074"
@@ -1105,6 +1160,22 @@ Item {
           foreground: root.foreground
           accent: root.accent
           onClicked: root.tuneRandom()
+        }
+
+        Button {
+          id: helpButton
+          anchors.right: closeButton.left
+          anchors.rightMargin: Style.spacing.xs
+          anchors.verticalCenter: parent.verticalCenter
+          text: "?"
+          tooltipText: root.helpVisible ? "Hide controls (?)" : "Show controls (?)"
+          selected: root.helpVisible
+          focusable: true
+          foreground: root.foreground
+          accent: root.accent
+          Accessible.role: Accessible.Button
+          Accessible.name: tooltipText
+          onClicked: root.toggleControls()
         }
 
         Button {
@@ -1135,6 +1206,7 @@ Item {
         anchors.right: parent.right
         anchors.top: header.bottom
         anchors.bottom: parent.bottom
+        visible: !root.helpVisible
         z: 2
 
         Item {
@@ -1587,6 +1659,117 @@ Item {
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.caption
                 horizontalAlignment: Text.AlignRight
+              }
+            }
+          }
+        }
+      }
+
+      Item {
+        id: controlsPane
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: header.bottom
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: card.borderLeft
+        anchors.rightMargin: card.borderRight
+        anchors.bottomMargin: card.borderBottom
+        visible: root.helpVisible
+        z: 2
+        Accessible.role: Accessible.Pane
+        Accessible.name: "Radio Atlas controls"
+
+        Rectangle {
+          anchors.fill: parent
+          color: root.background
+        }
+
+        Column {
+          id: controlsContent
+          anchors.centerIn: parent
+          width: Math.min(parent.width - Style.spacing.panelPadding * 2, Style.space(920))
+          height: implicitHeight
+          spacing: Style.space(24)
+
+          Text {
+            text: "CONTROLS"
+            textFormat: Text.PlainText
+            color: root.foreground
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.heading
+            font.bold: true
+          }
+
+          Row {
+            id: controlsColumns
+            width: parent.width
+            height: implicitHeight
+            spacing: Style.space(72)
+
+            Repeater {
+              model: root.controlSections
+
+              delegate: Column {
+                id: controlSection
+                required property var modelData
+                width: (controlsColumns.width - controlsColumns.spacing) / 2
+                height: implicitHeight
+
+                Text {
+                  width: parent.width
+                  height: Style.space(36)
+                  text: controlSection.modelData.title
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  verticalAlignment: Text.AlignVCenter
+                }
+
+                Repeater {
+                  model: controlSection.modelData.controls
+
+                  delegate: Item {
+                    required property var modelData
+                    width: controlSection.width
+                    height: Style.space(38)
+
+                    Text {
+                      id: controlInput
+                      anchors.left: parent.left
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: Style.space(controlSection.modelData.inputWidth)
+                      text: modelData.input
+                      textFormat: Text.PlainText
+                      color: root.foreground
+                      font.family: Style.font.menuFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                      elide: Text.ElideRight
+                    }
+
+                    Text {
+                      anchors.left: controlInput.right
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: modelData.action
+                      textFormat: Text.PlainText
+                      color: root.dim
+                      font.family: Style.font.menuFamily
+                      font.pixelSize: Style.font.body
+                      elide: Text.ElideRight
+                    }
+
+                    Rectangle {
+                      anchors.left: parent.left
+                      anchors.right: parent.right
+                      anchors.bottom: parent.bottom
+                      height: 1
+                      color: root.faint
+                    }
+                  }
+                }
               }
             }
           }

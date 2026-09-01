@@ -66,7 +66,8 @@ Favorites, listening history, and the saved volume remain in
 | `F` | Favorite selected station |
 | `+` / `-` | Raise or lower radio volume |
 | `M` | Mute or unmute |
-| Escape | Clear search or close |
+| `?` | Show or hide controls |
+| Escape | Hide controls, clear search, or close |
 
 On the bar, left click opens Radio Atlas, middle click tunes randomly, right
 click stops its player, and the mouse wheel adjusts radio volume.
