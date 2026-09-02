@@ -317,7 +317,7 @@ refresh_saved_stations() {
   local source_file=$1
   local uuids refreshed
   uuids=$(jq -r 'map(.uuid) | join(",")' "$source_file")
-  [[ -n $uuids ]] || return
+  [[ -n $uuids ]] || return 0
 
   refreshed=$(mktemp "$runtime_dir/refreshed.XXXXXX")
   if "$fetch_path" resolve "$uuids" > "$refreshed"; then
