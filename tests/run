@@ -6,7 +6,7 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
-  and .version == "0.1.4"
+  and .version == "0.1.5"
   and (.kinds | index("overlay"))
   and (.kinds | index("bar-widget"))
   and .keepLoaded == true
@@ -102,6 +102,12 @@ sed -n '/id: mapHint/,/^          }/p' "$project_dir/RadioAtlas.qml" \
 rg -q 'rowMouse.containsMouse' "$project_dir/RadioAtlas.qml"
 ! rg -q 'selectedIndex === index.*Style.selectedFillFor' "$project_dir/RadioAtlas.qml"
 ! rg -q 'send_command .*\|\| true' "$project_dir/radio-player"
+rg -q 'id: outputMenu' "$project_dir/RadioAtlas.qml"
+rg -q 'function selectOutput' "$project_dir/RadioAtlas.qml"
+rg -q 'function toggleOutputMenu' "$project_dir/RadioAtlas.qml"
+rg -Fq '"audio-device",$device' "$project_dir/radio-player"
+rg -Fq 'set_property","audio-device' "$project_dir/radio-player"
+rg -q 'audio-device' "$project_dir/radio-status.lua"
 rg -q 'maximumLength: 128' "$project_dir/RadioAtlas.qml"
 rg -Fq 'Math.min(1.5, Math.max(0.7, globeRadius / 500))' "$project_dir/Globe.qml"
 rg -Fq 'estimatedLocation === true' "$project_dir/Globe.qml"
@@ -449,6 +455,11 @@ if "$project_dir/radio-player" volume 42 >/dev/null 2>&1; then
   echo "Volume update overwrote invalid saved state" >&2
   exit 1
 fi
+if RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output raop_sink.Living-Room.local.192.168.1.49.7000 >/dev/null 2>&1; then
+  echo "Output update overwrote invalid saved state" >&2
+  exit 1
+fi
 cmp "$test_root/invalid-state.json" "$XDG_DATA_HOME/radio-atlas/state.json"
 rm "$XDG_DATA_HOME/radio-atlas/state.json"
 
@@ -519,6 +530,45 @@ done
   | jq -e '.running == false and .volume == 81' >/dev/null
 jq -e '.volume == 81' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 
+if RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" outputs > "$test_root/outputs.json"; then
+  jq -e '(.outputs | length == 2)
+    and .outputs[0].id == "alsa_output.pci-0000_00_1f.3.analog-stereo"
+    and .outputs[0].label == "Built-in Audio"
+    and .outputs[1].id == "raop_sink.Living-Room.local.192.168.1.49.7000"
+    and .outputs[1].label == "Living Room · 192.168.1.49"' \
+    "$test_root/outputs.json" >/dev/null
+else
+  echo "Audio output listing failed" >&2
+  exit 1
+fi
+if RADIO_ATLAS_TEST_PACTL_MODE=fail PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" outputs >/dev/null 2>&1; then
+  echo "Missing audio server was reported as success" >&2
+  exit 1
+fi
+
+RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output raop_sink.Living-Room.local.192.168.1.49.7000 \
+  | jq -e '.running == false and .output == "raop_sink.Living-Room.local.192.168.1.49.7000"' >/dev/null
+jq -e '.output == "raop_sink.Living-Room.local.192.168.1.49.7000"' \
+  "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
+if RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output missing_sink >/dev/null 2>&1; then
+  echo "Unknown audio output was accepted" >&2
+  exit 1
+fi
+jq -e '.output == "raop_sink.Living-Room.local.192.168.1.49.7000"' \
+  "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
+RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output default \
+  | jq -e '.running == false and .output == ""' >/dev/null
+jq -e '(.output // "") == ""' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
+if "$project_dir/radio-state" output 'bad sink!' >/dev/null 2>&1; then
+  echo "Invalid audio output name was saved" >&2
+  exit 1
+fi
+
 fetch_ready="$test_root/fetch-ready"
 fetch_release="$test_root/fetch-release"
 mpv_marker="$test_root/canceled-mpv-started"
@@ -554,6 +604,17 @@ for _ in $(seq 1 50); do
   sleep 0.02
 done
 [[ -S $runtime_dir/mpv.sock ]]
+
+RADIO_ATLAS_TEST_PACTL_MODE=json RADIO_ATLAS_TEST_SOCAT_MODE=success \
+  RADIO_ATLAS_TEST_SOCKET="$runtime_dir/mpv.sock" \
+  PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output raop_sink.Living-Room.local.192.168.1.49.7000 \
+  | jq -e '.running == true and .output == "raop_sink.Living-Room.local.192.168.1.49.7000"' >/dev/null
+RADIO_ATLAS_TEST_PACTL_MODE=json RADIO_ATLAS_TEST_SOCAT_MODE=success \
+  RADIO_ATLAS_TEST_SOCKET="$runtime_dir/mpv.sock" \
+  PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output default \
+  | jq -e '.running == true and .output == ""' >/dev/null
 
 if RADIO_ATLAS_TEST_SOCAT_MODE=error PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" toggle >/dev/null 2>&1; then

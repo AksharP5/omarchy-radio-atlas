@@ -46,7 +46,16 @@ Item {
   property int playerVolume: 70
   property int reportedVolume: 70
   property int pendingVolume: -1
-  property string playerTitle: ""
+  property string playerOutput: ""
+  property var audioOutputs: []
+  property string outputsError: ""
+  property bool outputMenuOpen: false
+  readonly property var outputChoices: {
+    var rows = [{ id: "", label: "System default" }]
+    for (var i = 0; i < audioOutputs.length; i++) rows.push(audioOutputs[i])
+    return rows
+  }
+
   property var playingStation: null
   property string playingStationUuid: ""
   property string recordedStationUuid: ""
@@ -136,7 +145,8 @@ Item {
         { input: "BAR LEFT", action: "Open or close" },
         { input: "BAR MIDDLE", action: "Tune randomly" },
         { input: "BAR RIGHT", action: "Stop playback" },
-        { input: "BAR WHEEL", action: "Change volume" }
+        { input: "BAR WHEEL", action: "Change volume" },
+        { input: "SPEAKER", action: "Choose audio output" }
       ]
     }
   ]
@@ -148,6 +158,7 @@ Item {
 
   function toggleControls() {
     helpVisible = !helpVisible
+    outputMenuOpen = false
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -168,6 +179,7 @@ Item {
 
   function close() {
     helpVisible = false
+    outputMenuOpen = false
     opened = false
     worldExpandTimer.stop()
     if (worldExpandProcess.running) worldExpandProcess.running = false
@@ -489,6 +501,8 @@ Item {
       playerRunning = state.running === true
       playerPaused = state.paused === true
       playerMuted = state.muted === true
+      playerOutput = /^[A-Za-z0-9._:+-]{0,160}$/.test(String(state.output || ""))
+        ? String(state.output) : ""
       var nextVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
       reportedVolume = isFinite(nextVolume) ? Math.max(0, Math.min(100, nextVolume)) : 70
       if (pendingVolume < 0) playerVolume = reportedVolume
@@ -550,6 +564,42 @@ Item {
     volumeProcess.errorOutput = ""
     volumeProcess.command = [root.playerPath, "volume", String(pendingVolume)]
     volumeProcess.running = true
+  }
+
+  function refreshOutputs() {
+    if (outputsProcess.running) return
+    outputsError = ""
+    outputsProcess.output = ""
+    outputsProcess.errorOutput = ""
+    outputsProcess.command = [playerPath, "outputs"]
+    outputsProcess.running = true
+  }
+
+  function selectOutput(value) {
+    var sink = String(value || "")
+    if (outputProcess.running) return
+    playerError = ""
+    outputProcess.submittedOutput = sink
+    outputProcess.output = ""
+    outputProcess.errorOutput = ""
+    outputProcess.command = [playerPath, "output", sink ? sink : "default"]
+    outputProcess.running = true
+  }
+
+  function toggleOutputMenu() {
+    if (outputMenuOpen) {
+      outputMenuOpen = false
+      return
+    }
+    outputMenuOpen = true
+    refreshOutputs()
+  }
+
+  function outputLabel(sink) {
+    for (var i = 0; i < audioOutputs.length; i++) {
+      if (audioOutputs[i].id === sink) return audioOutputs[i].label
+    }
+    return sink
   }
 
   function loadState() {
@@ -860,6 +910,74 @@ Item {
         return
       }
       Qt.callLater(root.flushPlayerVolume)
+    }
+  }
+
+  Process {
+    id: outputsProcess
+    property string output: ""
+    property string errorOutput: ""
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: outputsProcess.output = text
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: outputsProcess.errorOutput = text
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.outputsError = "Audio outputs are unavailable"
+        return
+      }
+      var parsed = null
+      try {
+        var document = JSON.parse(outputsProcess.output || "{}")
+        if (document && Array.isArray(document.outputs)) parsed = document.outputs
+      } catch (error) {
+        parsed = null
+      }
+      if (parsed === null) {
+        root.outputsError = "Audio outputs are unavailable"
+        return
+      }
+      root.audioOutputs = parsed.filter(function(row) {
+        return row && typeof row === "object"
+          && /^[A-Za-z0-9._:+-]{1,160}$/.test(String(row.id || ""))
+      }).map(function(row) {
+        return {
+          id: String(row.id),
+          label: String(row.label || row.id).replace(/[\r\n\t]+/g, " ").slice(0, 160)
+        }
+      }).slice(0, 16)
+      root.outputsError = ""
+    }
+  }
+
+  Process {
+    id: outputProcess
+    property string submittedOutput: ""
+    property string output: ""
+    property string errorOutput: ""
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: outputProcess.output = text
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: outputProcess.errorOutput = text
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.statusReady = true
+        root.playerError = ""
+        root.playerOutput = outputProcess.submittedOutput
+        root.outputMenuOpen = false
+        return
+      }
+      root.playerError = "Could not change audio output"
     }
   }
 
@@ -1620,6 +1738,19 @@ Item {
 
               Button {
                 anchors.verticalCenter: parent.verticalCenter
+                iconText: "\uf0a1"
+                tooltipText: root.playerOutput
+                  ? "Audio output: " + root.outputLabel(root.playerOutput)
+                  : "Choose audio output"
+                active: root.playerOutput !== ""
+                enabled: !stopProcess.running && !outputProcess.running
+                foreground: root.foreground
+                accent: root.accent
+                onClicked: root.toggleOutputMenu()
+              }
+
+              Button {
+                anchors.verticalCenter: parent.verticalCenter
                 iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
                 tooltipText: root.playerMuted ? "Unmute" : "Mute (M)"
                 active: root.playerMuted
@@ -1659,6 +1790,83 @@ Item {
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.caption
                 horizontalAlignment: Text.AlignRight
+              }
+            }
+          }
+
+          MouseArea {
+            visible: root.outputMenuOpen
+            anchors.fill: parent
+            z: 2
+            onClicked: root.outputMenuOpen = false
+          }
+
+          Rectangle {
+            id: outputMenu
+            visible: root.outputMenuOpen
+            anchors.right: parent.right
+            anchors.rightMargin: Style.spacing.sm
+            anchors.bottom: playerPanel.top
+            anchors.bottomMargin: Style.spacing.xs
+            z: 3
+            width: Math.min(Style.space(300), parent.width - Style.spacing.md * 2)
+            height: outputMenuColumn.implicitHeight + Style.spacing.md * 2
+            radius: Style.cornerRadius
+            color: root.background
+            border.color: root.faint
+            border.width: 1
+
+            Accessible.role: Accessible.Pane
+            Accessible.name: "Audio output"
+
+            Column {
+              id: outputMenuColumn
+              anchors.top: parent.top
+              anchors.topMargin: Style.spacing.md
+              anchors.left: parent.left
+              anchors.right: parent.right
+              spacing: Style.spacing.xs
+
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.spacing.xs
+                text: "AUDIO OUTPUT"
+                textFormat: Text.PlainText
+                color: root.dim
+                font.family: Style.font.menuFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              Repeater {
+                model: root.outputChoices
+
+                delegate: Button {
+                  id: outputOption
+                  required property var modelData
+                  width: parent.width
+                  leftAlign: true
+                  text: outputOption.modelData.label
+                  selected: outputOption.modelData.id === root.playerOutput
+                  foreground: root.foreground
+                  accent: root.accent
+                  Accessible.role: Accessible.Button
+                  Accessible.name: outputOption.modelData.label
+                  onClicked: root.selectOutput(outputOption.modelData.id)
+                }
+              }
+
+              Text {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Style.spacing.xs
+                visible: root.audioOutputs.length === 0 && !outputsProcess.running
+                text: root.outputsError || "No other audio outputs found"
+                textFormat: Text.PlainText
+                color: root.outputsError ? root.urgent : root.dim
+                font.family: Style.font.menuFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.Wrap
               }
             }
           }

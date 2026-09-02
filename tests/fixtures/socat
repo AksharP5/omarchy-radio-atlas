@@ -8,7 +8,19 @@ input=$(cat)
 if [[ $mode == success-unlink ]]; then
   rm -f "${RADIO_ATLAS_TEST_SOCKET:?}"
 fi
+device_file="${RADIO_ATLAS_TEST_SOCKET:-}.device"
+if [[ -n ${RADIO_ATLAS_TEST_SOCKET:-} ]]; then
+  requested=$(jq -r 'select(.command != null and .command[0] == "set_property"
+      and .command[1] == "audio-device") | .command[2] // empty' <<< "$input" 2>/dev/null || true)
+  if [[ -n $requested ]]; then
+    printf '%s' "$requested" > "$device_file"
+  fi
+fi
 if [[ $input == *'"request_id":1'* ]]; then
+  current_device="pipewire/raop_sink.Living-Room.local.192.168.1.49.7000"
+  if [[ -s $device_file ]]; then
+    current_device=$(<"$device_file")
+  fi
   printf '%s\n' \
     '{"data":false,"request_id":1,"error":"success"}' \
     '{"data":"Test Radio","request_id":2,"error":"success"}' \
@@ -16,6 +28,7 @@ if [[ $input == *'"request_id":1'* ]]; then
     '{"data":1,"request_id":4,"error":"success"}' \
     '{"data":70,"request_id":5,"error":"success"}' \
     '{"data":false,"request_id":6,"error":"success"}'
+  printf '{"data":"%s","request_id":7,"error":"success"}\n' "$current_device"
   exit 0
 fi
 
