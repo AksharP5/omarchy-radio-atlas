@@ -456,6 +456,9 @@ case "$action" in
     play_station "${2:-}" "${3:-results}"
     ;;
   toggle)
+    # Mark this as a deliberate pause so radio-status.lua does not mistake it
+    # for an audio device disappearing and auto-resume it.
+    send_command '{"command":["script-message","radio-atlas-user-pause"]}' || true
     player_command '{"command":["cycle","pause"]}'
     ;;
   next)
