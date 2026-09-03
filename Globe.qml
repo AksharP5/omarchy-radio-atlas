@@ -27,7 +27,15 @@ Item {
   property color textColor: "#f3f4f5"
   property string fontFamily: "monospace"
 
+  property bool showTerminator: true
+  property var subsolarPoint: RadioModel.subsolarPoint(new Date())
+  property color nightColor: "#040608"
+  property real nightOpacity: 0.44
+  property color twilightColor: accentColor
+  property real twilightOpacity: 0.45
+
   property var hoveredStation: null
+
   property real hoverX: 0
   property real hoverY: 0
   property var preparedCountries: []
@@ -328,6 +336,90 @@ Item {
     }
   }
 
+  function paintSolarTerminator(ctx, centreX, centreY, globeRadius) {
+    if (!subsolarPoint) return
+    var sLat = Number(subsolarPoint.latitude) * Math.PI / 180
+    var sLon = Number(subsolarPoint.longitude) * Math.PI / 180
+    var cosSLat = Math.cos(sLat)
+    var sx = cosSLat * Math.cos(sLon)
+    var sy = cosSLat * Math.sin(sLon)
+    var sz = Math.sin(sLat)
+
+    var latitude = centreLatitude * Math.PI / 180
+    var longitude = centreLongitude * Math.PI / 180
+    var sinLatitude = Math.sin(latitude)
+    var cosLatitude = Math.cos(latitude)
+    var sinLongitude = Math.sin(longitude)
+    var cosLongitude = Math.cos(longitude)
+
+    var horizontal = sx * cosLongitude + sy * sinLongitude
+    var sCamX = sy * cosLongitude - sx * sinLongitude
+    var sCamY = cosLatitude * sz - sinLatitude * horizontal
+    var sCamZ = sinLatitude * sz + cosLatitude * horizontal
+
+    var inPlaneLen = Math.hypot(sCamX, sCamY)
+
+    if (inPlaneLen < 1e-4) {
+      if (sCamZ < 0) {
+        ctx.beginPath()
+        ctx.arc(centreX, centreY, globeRadius, 0, Math.PI * 2)
+        ctx.fillStyle = withAlpha(nightColor, nightOpacity)
+        ctx.fill()
+      }
+      return
+    }
+
+    var sunAngleMath = Math.atan2(sCamY, sCamX)
+    var sunAngleScreen = Math.atan2(-sCamY, sCamX)
+    var cosSun = Math.cos(sunAngleMath)
+    var sinSun = Math.sin(sunAngleMath)
+
+    var steps = 64
+    var ellipsePoints = []
+    for (var i = 0; i <= steps; i++) {
+      var t = -Math.PI / 2 + (i / steps) * Math.PI
+      var v = Math.sin(t)
+      var u = -sCamZ * Math.cos(t)
+
+      var x = u * cosSun - v * sinSun
+      var y = u * sinSun + v * cosSun
+
+      var sxScreen = centreX + x * globeRadius
+      var syScreen = centreY - y * globeRadius
+      ellipsePoints.push({ x: sxScreen, y: syScreen })
+    }
+
+    var angleStartScreen = Math.atan2(ellipsePoints[0].y - centreY, ellipsePoints[0].x - centreX)
+    var angleEndScreen = Math.atan2(ellipsePoints[steps].y - centreY, ellipsePoints[steps].x - centreX)
+
+    var awayFromSun = (sunAngleScreen + Math.PI * 3) % (Math.PI * 2)
+    var angleEndWrapped = (angleEndScreen + Math.PI * 2) % (Math.PI * 2)
+    var angleStartWrapped = (angleStartScreen + Math.PI * 2) % (Math.PI * 2)
+
+    var diff = (angleStartWrapped - angleEndWrapped + Math.PI * 2) % (Math.PI * 2)
+    var diffSun = (awayFromSun - angleEndWrapped + Math.PI * 2) % (Math.PI * 2)
+    var anticlockwise = !(diffSun < diff)
+
+    ctx.beginPath()
+    ctx.moveTo(ellipsePoints[0].x, ellipsePoints[0].y)
+    for (var j = 1; j <= steps; j++) {
+      ctx.lineTo(ellipsePoints[j].x, ellipsePoints[j].y)
+    }
+    ctx.arc(centreX, centreY, globeRadius, angleEndScreen, angleStartScreen, anticlockwise)
+    ctx.closePath()
+    ctx.fillStyle = withAlpha(nightColor, nightOpacity)
+    ctx.fill()
+
+    ctx.beginPath()
+    ctx.moveTo(ellipsePoints[0].x, ellipsePoints[0].y)
+    for (var k = 1; k <= steps; k++) {
+      ctx.lineTo(ellipsePoints[k].x, ellipsePoints[k].y)
+    }
+    ctx.strokeStyle = withAlpha(twilightColor, twilightOpacity)
+    ctx.lineWidth = Math.min(2.0, Math.max(1.0, globeRadius / 400))
+    ctx.stroke()
+  }
+
   function paintGlobe(ctx) {
     var centreX = globeCanvas.width / 2
     var centreY = globeCanvas.height / 2
@@ -355,6 +447,7 @@ Item {
     ctx.clip()
     paintGrid(ctx, centreX, centreY, globeRadius)
     paintCountries(ctx, centreX, centreY, globeRadius)
+    if (showTerminator) paintSolarTerminator(ctx, centreX, centreY, globeRadius)
     paintSignals(ctx)
     ctx.restore()
 
@@ -416,6 +509,20 @@ Item {
   onGlobeScaleChanged: globeCanvas.requestPaint()
   onWidthChanged: globeCanvas.requestPaint()
   onHeightChanged: globeCanvas.requestPaint()
+  onSubsolarPointChanged: globeCanvas.requestPaint()
+  onShowTerminatorChanged: globeCanvas.requestPaint()
+  onNightColorChanged: globeCanvas.requestPaint()
+  onTwilightColorChanged: globeCanvas.requestPaint()
+
+  Timer {
+    id: solarTimer
+    interval: 60000
+    running: true
+    repeat: true
+    onTriggered: {
+      root.subsolarPoint = RadioModel.subsolarPoint(new Date())
+    }
+  }
 
   Canvas {
     id: globeCanvas

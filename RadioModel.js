@@ -404,3 +404,103 @@ function indexByUuid(stations, uuid) {
   for (var i = 0; i < rows.length; i++) if (rows[i].uuid === uuid) return i
   return -1
 }
+
+function subsolarPoint(date) {
+  var d = date || new Date()
+  var ms = d.getTime()
+  var julianDate = ms / 86400000 + 2440587.5
+  var t = (julianDate - 2451545.0) / 36525.0
+
+  var L0 = (280.46646 + t * (36000.76983 + t * 0.0003032)) % 360
+  if (L0 < 0) L0 += 360
+  var M = (357.52911 + t * (35999.05029 - t * 0.0001537)) % 360
+  if (M < 0) M += 360
+  var e = 0.016708634 - t * (0.000042037 + 0.0000001267 * t)
+
+  var C = Math.sin(M * radians) * (1.914602 - t * (0.004817 + 0.000014 * t))
+        + Math.sin(2 * M * radians) * (0.019993 - 0.000101 * t)
+        + Math.sin(3 * M * radians) * 0.000289
+  var sunTrueLong = L0 + C
+
+  var eps0 = 23.439291 - t * (0.013004167 + t * (0.00000016667 - t * 0.000000502778))
+  var omega = 125.04 - 1934.136 * t
+  var eps = eps0 + 0.00256 * Math.cos(omega * radians)
+  var lambdaApparent = sunTrueLong - 0.00569 - 0.00478 * Math.sin(omega * radians)
+
+  var sinDec = Math.sin(eps * radians) * Math.sin(lambdaApparent * radians)
+  var declination = Math.asin(sinDec) * degrees
+
+  var y = Math.pow(Math.tan((eps / 2) * radians), 2)
+  var eot = 4 * degrees * (
+    y * Math.sin(2 * L0 * radians)
+    - 2 * e * Math.sin(M * radians)
+    + 4 * e * y * Math.sin(M * radians) * Math.cos(2 * L0 * radians)
+    - 0.5 * y * y * Math.sin(4 * L0 * radians)
+    - 1.25 * e * e * Math.sin(2 * M * radians)
+  )
+
+  var utcSeconds = d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds() + d.getUTCMilliseconds() / 1000
+  var subsolarLong = wrapLongitude(-((utcSeconds / 3600 - 12) * 15 + eot / 4))
+
+  return { latitude: declination, longitude: subsolarLong }
+}
+
+function terminatorGeometry(subsolarLatitude, subsolarLongitude, steps) {
+  var resolution = Math.max(24, Math.min(360, Number(steps || 120)))
+  var sLat = Number(subsolarLatitude) * radians
+  var sLon = Number(subsolarLongitude) * radians
+  var cosLat = Math.cos(sLat)
+  var sx = cosLat * Math.cos(sLon)
+  var sy = cosLat * Math.sin(sLon)
+  var sz = Math.sin(sLat)
+
+  var ux, uy, uz
+  if (Math.abs(sz) < 0.9999) {
+    var uLen = Math.hypot(-sy, sx) || 1
+    ux = -sy / uLen
+    uy = sx / uLen
+    uz = 0
+  } else {
+    ux = 1
+    uy = 0
+    uz = 0
+  }
+
+  var vx = sy * uz - sz * uy
+  var vy = sz * ux - sx * uz
+  var vz = sx * uy - sy * ux
+
+  var output = []
+  for (var i = 0; i < resolution; i++) {
+    var alpha = (i / resolution) * Math.PI * 2
+    var cosA = Math.cos(alpha)
+    var sinA = Math.sin(alpha)
+    output.push(
+      ux * cosA + vx * sinA,
+      uy * cosA + vy * sinA,
+      uz * cosA + vz * sinA
+    )
+  }
+  return output
+}
+
+function isNightAt(latitude, longitude, subsolarLatitude, subsolarLongitude) {
+  if (latitude === null || longitude === null || !isFinite(Number(latitude)) || !isFinite(Number(longitude)))
+    return false
+  var pLat = Number(latitude) * radians
+  var pLon = Number(longitude) * radians
+  var sLat = Number(subsolarLatitude) * radians
+  var sLon = Number(subsolarLongitude) * radians
+
+  var px = Math.cos(pLat) * Math.cos(pLon)
+  var py = Math.cos(pLat) * Math.sin(pLon)
+  var pz = Math.sin(pLat)
+
+  var sx = Math.cos(sLat) * Math.cos(sLon)
+  var sy = Math.cos(sLat) * Math.sin(sLon)
+  var sz = Math.sin(sLat)
+
+  var dot = px * sx + py * sy + pz * sz
+  return dot < 0
+}
+
