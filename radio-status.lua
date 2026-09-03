@@ -6,6 +6,7 @@ local queue_path = os.getenv("RADIO_ATLAS_QUEUE_FILE")
 local queue = nil
 local update_timer = nil
 local last_volume = 70
+local last_output = ""
 local station_loaded = false
 local max_queue_bytes = 4194304
 
@@ -20,6 +21,13 @@ local function clean_text(value, limit)
     last = last - 1
   end
   return value:sub(1, last)
+end
+
+local function clean_output(value)
+  if type(value) ~= "string" then return "" end
+  if value == "auto" then return "" end
+  value = value:gsub("^pipewire/", "")
+  return value:sub(1, 160)
 end
 
 local function empty_station()
@@ -73,6 +81,7 @@ local function current_status()
   local position = mp.get_property_number("playlist-pos", -1)
   local volume = mp.get_property_number("volume", last_volume)
   last_volume = math.floor(volume + 0.5)
+  last_output = clean_output(mp.get_property("audio-device", ""))
   return {
     running = true,
     paused = mp.get_property_bool("pause", false),
@@ -81,6 +90,7 @@ local function current_status()
     playlistPosition = position,
     playlistCount = mp.get_property_number("playlist-count", 0),
     volume = last_volume,
+    output = last_output,
     loaded = station_loaded,
     station = status_station(read_queue()[position + 1])
   }
@@ -97,7 +107,7 @@ local function schedule_update()
 end
 
 for _, property in ipairs({
-  "pause", "mute", "media-title", "playlist-pos", "playlist-count", "volume"
+  "pause", "mute", "media-title", "playlist-pos", "playlist-count", "volume", "audio-device"
 }) do
   mp.observe_property(property, "native", schedule_update)
 end
@@ -132,6 +142,7 @@ mp.register_event("shutdown", function()
     playlistPosition = -1,
     playlistCount = 0,
     volume = last_volume,
+    output = last_output,
     loaded = false,
     station = empty_station()
   })

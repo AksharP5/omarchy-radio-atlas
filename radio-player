@@ -111,6 +111,13 @@ persist_volume() {
   local volume=$1
   "$state_path" volume "$volume" >/dev/null
 }
+configured_output() {
+  local output
+  output=$("$state_path" get 2>/dev/null \
+    | jq -r '(.output // "") | if (type == "string" and test("^([A-Za-z0-9._:+-]{0,160})$")) then . else "" end') \
+    || output=""
+  printf '%s\n' "$output"
+}
 
 write_status() {
   local state=$1
@@ -143,7 +150,7 @@ send_command() {
 status() {
   if [[ ! -S $socket ]]; then
     cleanup_dead_player
-    write_status "$(jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,loaded:false,station:{}}')"
+    write_status "$(jq -cn --argjson volume "$(configured_volume)" --arg output "$(configured_output)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,output:$output,loaded:false,station:{}}')"
     return
   fi
 
@@ -156,6 +163,7 @@ status() {
       '{"command":["get_property","playlist-count"],"request_id":4}' \
       '{"command":["get_property","volume"],"request_id":5}' \
       '{"command":["get_property","mute"],"request_id":6}' \
+      '{"command":["get_property","audio-device"],"request_id":7}' \
       | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
       | head -c "$((max_ipc_bytes + 1))" || true
   )
@@ -165,7 +173,7 @@ status() {
 
   if ! jq -e 'select(.request_id == 1)' <<< "$response" >/dev/null 2>&1; then
     cleanup_dead_player
-    write_status "$(jq -cn --argjson volume "$(configured_volume)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,loaded:false,station:{}}')"
+    write_status "$(jq -cn --argjson volume "$(configured_volume)" --arg output "$(configured_output)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,output:$output,loaded:false,station:{}}')"
     return
   fi
 
@@ -202,6 +210,8 @@ status() {
     playlistPosition: ([.[] | select(.request_id == 3) | .data][0] // -1),
     playlistCount: ([.[] | select(.request_id == 4) | .data][0] // 0),
     volume: ([.[] | select(.request_id == 5) | .data][0] // 70),
+    output: (([.[] | select(.request_id == 7) | .data][0] // "")
+      | if type == "string" then (if . == "auto" then "" else sub("^pipewire/"; "") end) else "" end),
     loaded: $loaded,
     station: $station
   }' <<< "$response")"
@@ -278,6 +288,66 @@ adjust_volume() {
   set_volume "$next"
 }
 
+list_outputs() {
+  local sinks
+  sinks=$(pactl -f json list sinks 2>/dev/null) || {
+    echo 'Audio outputs are unavailable' >&2
+    exit 3
+  }
+  if (( $(printf '%s' "$sinks" | wc -c) > max_json_bytes )) \
+    || ! jq -e 'type == "array"' <<< "$sinks" >/dev/null 2>&1; then
+    echo 'Audio outputs are unavailable' >&2
+    exit 3
+  fi
+  printf '%s' "$sinks" | jq -c '[
+    .[] | select(type == "object" and (.name | type == "string"))
+    | .name as $id
+    | select($id | test("^([A-Za-z0-9._:+-]{1,160})$"))
+    | {
+        id: $id,
+        label: (if ($id | startswith("raop_sink."))
+          then (((.description // $id) | tostring)
+            + " · " + ($id | split(".") | .[-5:-1] | join(".")))
+          else ((.description // $id) | tostring) end
+          | gsub("[\\r\\n\\t]"; " ") | .[:160])
+      }
+  ] | {outputs: .}'
+}
+
+set_output() {
+  local requested=${1-}
+  if [[ -n $requested ]]; then
+    [[ $requested =~ ^[A-Za-z0-9._:+-]{1,160}$ ]] || {
+      echo 'Unknown audio output' >&2
+      exit 2
+    }
+    local available
+    available=$(list_outputs)
+    jq -e --arg requested "$requested" 'any(.outputs[]; .id == $requested)' \
+      <<< "$available" >/dev/null || {
+      echo 'Unknown audio output' >&2
+      exit 3
+    }
+  fi
+
+  "$state_path" get >/dev/null
+  if [[ -S $socket ]]; then
+    local device command
+    device=auto
+    [[ -z $requested ]] || device="pipewire/$requested"
+    command=$(jq -cn --arg device "$device" '{command:["set_property","audio-device",$device]}')
+    if ! send_command "$command"; then
+      status >/dev/null
+      if [[ -S $socket ]]; then
+        echo 'Audio output could not be changed' >&2
+        exit 4
+      fi
+    fi
+  fi
+  "$state_path" output "$requested" >/dev/null
+  status
+}
+
 source_stations() {
   local scope=$1
   case "$scope" in
@@ -317,7 +387,7 @@ refresh_saved_stations() {
   local source_file=$1
   local uuids refreshed
   uuids=$(jq -r 'map(.uuid) | join(",")' "$source_file")
-  [[ -n $uuids ]] || return
+  [[ -n $uuids ]] || return 0
 
   refreshed=$(mktemp "$runtime_dir/refreshed.XXXXXX")
   if "$fetch_path" resolve "$uuids" > "$refreshed"; then
@@ -392,26 +462,34 @@ play_station() {
     fi
     mv "$temporary_queue" "$queue_file"
     mv "$temporary_playlist" "$playlist"
+    local -a player_arguments=(
+      mpv
+      --no-video
+      --force-window=no
+      --audio-display=no
+      --idle=yes
+      --loop-playlist=inf
+      --cache-secs=20
+      --demuxer-max-bytes=8MiB
+      --demuxer-max-back-bytes=2MiB
+      --network-timeout=30
+      --load-unsafe-playlists=no
+      --volume="$(configured_volume)"
+      --volume-max=100
+      --input-ipc-server="$socket"
+      --script="$status_script"
+      --playlist="$playlist"
+      --no-terminal
+      --really-quiet
+    )
+    local selected_output
+    selected_output=$(configured_output)
+    if [[ -n $selected_output ]]; then
+      player_arguments+=(--audio-device="pipewire/$selected_output")
+    fi
     RADIO_ATLAS_STATUS_FILE="$status_file" \
     RADIO_ATLAS_QUEUE_FILE="$queue_file" \
-    setsid "$script_dir/radio-session" mpv \
-      --no-video \
-      --force-window=no \
-      --audio-display=no \
-      --idle=yes \
-      --loop-playlist=inf \
-      --cache-secs=20 \
-      --demuxer-max-bytes=8MiB \
-      --demuxer-max-back-bytes=2MiB \
-      --network-timeout=30 \
-      --load-unsafe-playlists=no \
-      --volume="$(configured_volume)" \
-      --volume-max=100 \
-      --input-ipc-server="$socket" \
-      --script="$status_script" \
-      --playlist="$playlist" \
-      --no-terminal \
-      --really-quiet \
+    setsid "$script_dir/radio-session" "${player_arguments[@]}" \
       > "$log_file" 2>&1 8>&- &
     local player_pid=$!
     if ! write_player_pid "$player_pid"; then
@@ -450,7 +528,7 @@ play_station() {
 }
 
 action=${1:-status}
-[[ $action == play ]] || flock -x 8
+[[ $action == play || $action == outputs ]] || flock -x 8
 case "$action" in
   play)
     play_station "${2:-}" "${3:-results}"
@@ -475,6 +553,12 @@ case "$action" in
     ;;
   volume-down)
     adjust_volume -5
+    ;;
+  outputs)
+    list_outputs
+    ;;
+  output)
+    set_output "${2-}"
     ;;
   stop)
     stop_player

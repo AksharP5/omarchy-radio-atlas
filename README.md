@@ -20,6 +20,7 @@ usual play, pause, previous, and next controls.
 - Instant cached results while full-directory search and country browsing refresh from Radio Browser
 - Random tuning that avoids recent stations, plus favorites and listening history
 - Independent volume slider, mute, and bar-wheel volume control
+- Audio output picker that routes radio to any PipeWire sink, including AirPlay speakers exposed as RAOP sinks
 - Click-through desktop focus outside the atlas panel
 - Automatic dismissal when Omarchy starts its screensaver
 - Keyboard navigation
@@ -66,11 +67,51 @@ Favorites, listening history, and the saved volume remain in
 | `F` | Favorite selected station |
 | `+` / `-` | Raise or lower radio volume |
 | `M` | Mute or unmute |
+| Speaker icon | Choose the audio output |
 | `?` | Show or hide controls |
 | Escape | Hide controls, clear search, or close |
 
 On the bar, left click opens Radio Atlas, middle click tunes randomly, right
 click stops its player, and the mouse wheel adjusts radio volume.
+
+## Audio outputs and AirPlay
+
+The speaker button next to the volume slider chooses where radio plays. It lists
+every PipeWire output device through `pactl`, which ships with Omarchy's
+PipeWire setup. "System default" follows the desktop's current output, the
+choice is saved alongside the volume in `~/.local/share/radio-atlas/state.json`,
+and switching while playing takes effect immediately. If the chosen device
+disappears, for example an AirPlay speaker that is turned off, mpv falls back to
+the default output and radio keeps playing.
+
+AirPlay speakers appear in this list once PipeWire exposes them as RAOP sinks.
+On Arch Linux, the RAOP modules ship in the optional `pipewire-zeroconf`
+package. Install it, enable discovery, and restart the user services:
+
+```bash
+sudo pacman -S pipewire-zeroconf
+mkdir -p ~/.config/pipewire/pipewire.conf.d
+cp /usr/share/pipewire/pipewire.conf.avail/50-raop.conf \
+  ~/.config/pipewire/pipewire.conf.d/
+systemctl --user restart pipewire wireplumber
+```
+
+If you run a firewall such as ufw, allow the timing feedback AirPlay speakers
+send back to the sender on UDP ports 6001-6002; without it the session connects
+but the speaker stays silent:
+
+```bash
+sudo ufw allow in from 192.168.0.0/16 to any port 6001:6002 proto udp
+```
+
+PipeWire's RAOP discovery occasionally drops a sink when a device briefly
+stops announcing itself over mDNS. If an AirPlay speaker disappears from the
+output list, re-discover it with `systemctl --user restart pipewire wireplumber`.
+
+PipeWire's RAOP sink streams classic AirPlay audio as uncompressed PCM.
+AirPort Express, Apple TV, many AV receivers, and HomePods accept it; AirPlay 2
+only features such as HomePod stereo pairs are not supported. A device that
+refuses the stream simply stays silent; pick another output to recover.
 
 ## Data and privacy
 
