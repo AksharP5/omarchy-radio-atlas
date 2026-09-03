@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+width=${1:-}
+height=${2:-}
+
+[[ $width =~ ^[0-9]+$ && $height =~ ^[0-9]+$ ]] || {
+  echo "usage: radio-window WIDTH HEIGHT" >&2
+  exit 2
+}
+
+[[ $(hyprctl -j status | jq -r '.configProvider // ""') == lua ]] || exit 2
+
+read -r -d '' setup <<LUA || true
+if _G.omarchy_radio_atlas_window_handler then
+  _G.omarchy_radio_atlas_window_handler:remove()
+end
+
+_G.omarchy_radio_atlas_window_handler = hl.on("window.open", function(window)
+  if window == nil
+      or window.initial_class ~= "org.quickshell"
+      or window.initial_title ~= "Radio Atlas" then return end
+
+  hl.dispatch(hl.dsp.window.set_prop({ prop = "no_anim", value = "1", window = window }))
+  hl.dispatch(hl.dsp.window.float({ action = "set", window = window }))
+  hl.dispatch(hl.dsp.window.resize({ relative = false, window = window, x = $width, y = $height }))
+  hl.dispatch(hl.dsp.window.center({ window = window }))
+end)
+LUA
+
+response=$(hyprctl eval "$setup")
+[[ $response == ok ]] || {
+  echo "$response" >&2
+  exit 1
+}

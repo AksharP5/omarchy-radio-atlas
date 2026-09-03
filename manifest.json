@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "akshar.radio-atlas",
   "name": "Radio Atlas",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "author": "Akshar Patel",
   "license": "MIT",
   "description": "Explore live radio on a rotatable globe and play stations through Omarchy's media controls.",

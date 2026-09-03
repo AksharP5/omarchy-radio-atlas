@@ -21,7 +21,7 @@ usual play, pause, previous, and next controls.
 - Random tuning that avoids recent stations, plus favorites and listening history
 - Independent volume slider, mute, and bar-wheel volume control
 - Audio output picker that routes radio to any PipeWire sink, including AirPlay speakers exposed as RAOP sinks
-- Standard Omarchy window behavior, including workspace moves and `Super + W` close
+- Centered, floating window with normal Omarchy window-manager behavior
 - Automatic dismissal when Omarchy starts its screensaver
 - Keyboard navigation
 - Persistent world and country caches with background refresh and transient retries
@@ -37,17 +37,6 @@ Radio Atlas uses `bubblewrap`, `curl`, `iproute2`, `jq`, `mpv`, `python`,
 `socat`, `coreutils`, and `util-linux`. These packages ship with Omarchy.
 `mpv-mpris` connects playback to `omarchy.media` and is also part of the
 standard Omarchy installation.
-
-Radio Atlas is a regular Hyprland window. To open it centered and floating,
-add this optional rule to `~/.config/hypr/hyprland.lua`:
-
-```lua
-o.window({ class = "^org\\.quickshell$", title = "^Radio Atlas$" }, {
-  float = true,
-  center = true,
-  size = { 1180, 760 },
-})
-```
 
 ## Remove
 
@@ -79,8 +68,6 @@ Favorites, listening history, volume, and the selected audio output remain in
 | `+` / `-` | Raise or lower radio volume |
 | `M` | Mute or unmute |
 | Speaker icon | Choose the audio output |
-| `Super + W` | Close Radio Atlas |
-| `Super + Shift + 1-9` | Move Radio Atlas to a workspace |
 | `?` | Show or hide controls |
 | Escape | Hide controls, clear search, or close |
 

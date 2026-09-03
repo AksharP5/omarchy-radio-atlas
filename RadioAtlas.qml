@@ -113,6 +113,13 @@ Item {
   property color mapLand: lightTheme ? "#a9aaa6" : "#283039"
   property color mapGrid: lightTheme ? "#3f454a" : "#7d8791"
 
+  property bool windowSetupReady: false
+  property bool usePostMapWindowSetup: true
+  property string pendingOpenPayload: ""
+  readonly property int preferredWidth: Style.space(1180)
+  readonly property int preferredHeight: Style.space(760)
+  readonly property string windowPath:
+    Qt.resolvedUrl("radio-window").toString().replace(/^file:\/\//, "")
   readonly property int cardWidth: panel.width
   readonly property int cardHeight: panel.height
   readonly property int headerHeight: Style.space(68)
@@ -130,7 +137,6 @@ Item {
         { input: "F", action: "Favorite selected station" },
         { input: "M", action: "Mute or unmute" },
         { input: "+ / -", action: "Change volume" },
-        { input: "SUPER + W", action: "Close" },
         { input: "ESC", action: "Back, clear, or close" },
         { input: "?", action: "Show or hide controls" }
       ]
@@ -163,7 +169,21 @@ Item {
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
+  function registerWindowSetup() {
+    windowSetupReady = false
+    usePostMapWindowSetup = true
+    if (!windowSetupProcess.running) windowSetupProcess.running = true
+  }
+
   function open(payloadJson) {
+    if (!windowSetupReady) {
+      pendingOpenPayload = payloadJson || "{}"
+      return
+    }
+    openWindow(payloadJson)
+  }
+
+  function openWindow(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (error) { payload = ({}) }
 
@@ -196,14 +216,45 @@ Item {
   }
 
   function handleHyprlandEvent(event) {
-    if (!opened || String(event && event.name || "") !== "openwindow") return
+    var eventName = String(event && event.name || "")
+    if (eventName === "configreloaded") {
+      registerWindowSetup()
+      return
+    }
+    if (!opened || eventName !== "openwindow") return
     var parts = []
     try {
       parts = event.parse(4)
     } catch (error) {
       parts = String(event && event.data || "").split(",")
     }
-    if (String(parts[2] || "") === "org.omarchy.screensaver") dismiss()
+    var windowClass = String(parts[2] || "")
+    if (windowClass === "org.omarchy.screensaver") {
+      dismiss()
+      return
+    }
+
+    if (!usePostMapWindowSetup) return
+    if (windowClass !== "org.quickshell" || String(parts[3] || "") !== "Radio Atlas") return
+    var address = String(parts[0] || "")
+    if (!address) return
+    if (address.indexOf("0x") !== 0) address = "0x" + address
+    var selector = "address:" + address
+
+    if (Hyprland.usingLua) {
+      Hyprland.dispatch('hl.dsp.window.set_prop({ prop = "no_anim", value = "1", window = "'
+        + selector + '" })')
+      Hyprland.dispatch('hl.dsp.window.float({ action = "set", window = "' + selector + '" })')
+      Hyprland.dispatch('hl.dsp.window.resize({ relative = false, window = "' + selector
+        + '", x = ' + preferredWidth + ', y = ' + preferredHeight + ' })')
+      Hyprland.dispatch('hl.dsp.window.center({ window = "' + selector + '" })')
+      return
+    }
+    Hyprland.dispatch("setprop " + selector + " noanim 1")
+    Hyprland.dispatch("setfloating " + selector)
+    Hyprland.dispatch("resizewindowpixel exact " + preferredWidth + " " + preferredHeight
+      + "," + selector)
+    Hyprland.dispatch("centerwindow " + selector)
   }
 
   function highlightStationCountry(station, focusGlobe) {
@@ -758,6 +809,19 @@ Item {
   }
 
   Process {
+    id: windowSetupProcess
+    command: [root.windowPath, String(root.preferredWidth), String(root.preferredHeight)]
+    onExited: function(exitCode) {
+      root.usePostMapWindowSetup = exitCode !== 0
+      root.windowSetupReady = true
+      if (!root.pendingOpenPayload) return
+      var payload = root.pendingOpenPayload
+      root.pendingOpenPayload = ""
+      root.openWindow(payload)
+    }
+  }
+
+  Process {
     id: statusInitProcess
     command: []
     onExited: function(exitCode) {
@@ -1123,6 +1187,7 @@ Item {
   }
 
   Component.onCompleted: {
+    registerWindowSetup()
     statusInitProcess.command = [playerPath, "status"]
     statusInitProcess.running = true
   }
@@ -1137,8 +1202,8 @@ Item {
     visible: false
     title: "Radio Atlas"
     color: root.background
-    implicitWidth: Style.space(1180)
-    implicitHeight: Style.space(760)
+    implicitWidth: root.preferredWidth
+    implicitHeight: root.preferredHeight
     minimumSize: Qt.size(Style.space(800), Style.space(560))
 
     onVisibleChanged: {

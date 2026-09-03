@@ -6,7 +6,7 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
-  and .version == "0.1.7"
+  and .version == "0.1.8"
   and (.kinds | index("panel"))
   and (.kinds | index("bar-widget"))
   and .keepLoaded == true
@@ -14,6 +14,7 @@ jq -e '
 
 bash -n "$project_dir/radio-fetch" "$project_dir/radio-player" \
   "$project_dir/radio-sandbox" "$project_dir/radio-session" "$project_dir/radio-state" \
+  "$project_dir/radio-window" \
   "$project_dir/tests/fixtures/"*
 luac -p "$project_dir/radio-status.lua"
 node "$project_dir/tests/model.test.mjs"
@@ -50,9 +51,9 @@ sed -n '/function browseCountry/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'RadioModel.prioritizeStations('
 sed -n '/function tuneRandom/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'startFetch("random", randomExclusions())'
-sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+sed -n '/function openWindow(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -q 'showWorld\(\).*tuneRandom\(\)' -U --multiline-dotall
-sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+sed -n '/function openWindow(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'scheduleWorldExpansion(800)'
 sed -n '/function randomExclusions/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'append(playingStationUuid)'
@@ -128,16 +129,36 @@ sed -n '/function paintGlobe/,/^  }/p' "$project_dir/Globe.qml" \
 rg -Fq '  FloatingWindow {' "$project_dir/RadioAtlas.qml"
 ! rg -q 'WlrLayershell|PanelWindow' "$project_dir/RadioAtlas.qml"
 sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'openWindow(payloadJson)'
+sed -n '/function openWindow(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'panel.visible = true'
 sed -n '/function close()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'panel.visible = false'
 rg -q '^import Quickshell.Hyprland$' "$project_dir/RadioAtlas.qml"
+sed -n '/function registerWindowSetup/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'windowSetupProcess.running = true'
 sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'event.parse(4)'
+sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'eventName === "configreloaded"'
 sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'org.omarchy.screensaver'
 sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'dismiss()'
+sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'hl.dsp.window.float({ action = "set"'
+sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'hl.dsp.window.set_prop({ prop = "no_anim", value = "1"'
+sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'hl.dsp.window.resize({ relative = false'
+sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'hl.dsp.window.center('
+rg -Fq 'hl.on("window.open"' "$project_dir/radio-window"
+rg -Fq 'hl.dsp.window.set_prop({ prop = "no_anim"' "$project_dir/radio-window"
+rg -Fq 'hl.dsp.window.float({ action = "set"' "$project_dir/radio-window"
+rg -Fq 'hl.dsp.window.resize({ relative = false' "$project_dir/radio-window"
+rg -Fq 'hl.dsp.window.center({ window = window })' "$project_dir/radio-window"
+! rg -q 'Super \+ W|Super \+ Shift' "$project_dir/README.md" "$project_dir/RadioAtlas.qml"
 rg -q 'keyboardSelectionVisible' "$project_dir/RadioAtlas.qml"
 rg -q 'reportedVolume' "$project_dir/RadioAtlas.qml"
 rg -q 'submittedVolume' "$project_dir/RadioAtlas.qml"
