@@ -109,6 +109,10 @@ rg -Fq '"audio-device",$device' "$project_dir/radio-player"
 rg -Fq 'set_property","audio-device' "$project_dir/radio-player"
 rg -q 'id: outputList' "$project_dir/RadioAtlas.qml"
 ! rg -Fq '.slice(0, 16)' "$project_dir/RadioAtlas.qml"
+sed -n '/tooltipText: root.playerOutput/,/^              }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -q 'focusable: true'
+sed -n '/id: outputOption/,/^                }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -q 'focusable: true'
 rg -q 'property string playerTitle: ""' "$project_dir/RadioAtlas.qml"
 sed -n '/function applyPlayerState/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'playerTitle = String(state.title'
@@ -539,11 +543,12 @@ jq -e '.volume == 81' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 
 if RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" outputs > "$test_root/outputs.json"; then
-  jq -e '(.outputs | length == 2)
+  jq -e '(.outputs | length == 3)
     and .outputs[0].id == "alsa_output.pci-0000_00_1f.3.analog-stereo"
     and .outputs[0].label == "Built-in Audio"
     and .outputs[1].id == "raop_sink.Living-Room.local.192.168.1.49.7000"
-    and .outputs[1].label == "Living Room · 192.168.1.49"' \
+    and .outputs[1].label == "Living Room · 192.168.1.49"
+    and .outputs[2].id == "default"' \
     "$test_root/outputs.json" >/dev/null
 else
   echo "Audio output listing failed" >&2
@@ -556,6 +561,9 @@ jq -e '(.outputs | length == 18) and .outputs[17].id == "test_sink_18"' \
 RADIO_ATLAS_TEST_PACTL_MODE=many PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" output test_sink_18 \
   | jq -e '.running == false and .output == "test_sink_18"' >/dev/null
+RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output default \
+  | jq -e '.running == false and .output == "default"' >/dev/null
 if RADIO_ATLAS_TEST_PACTL_MODE=fail PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" outputs >/dev/null 2>&1; then
   echo "Missing audio server was reported as success" >&2
@@ -575,7 +583,7 @@ fi
 jq -e '.output == "raop_sink.Living-Room.local.192.168.1.49.7000"' \
   "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
-  "$project_dir/radio-player" output default \
+  "$project_dir/radio-player" output \
   | jq -e '.running == false and .output == ""' >/dev/null
 jq -e '(.output // "") == ""' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 if "$project_dir/radio-state" output 'bad sink!' >/dev/null 2>&1; then
@@ -636,7 +644,7 @@ jq -e '.output == "raop_sink.Living-Room.local.192.168.1.49.7000"' \
 RADIO_ATLAS_TEST_PACTL_MODE=json RADIO_ATLAS_TEST_SOCAT_MODE=success \
   RADIO_ATLAS_TEST_SOCKET="$runtime_dir/mpv.sock" \
   PATH="$project_dir/tests/fixtures:$PATH" \
-  "$project_dir/radio-player" output default \
+  "$project_dir/radio-player" output \
   | jq -e '.running == true and .output == ""' >/dev/null
 
 if RADIO_ATLAS_TEST_SOCAT_MODE=error PATH="$project_dir/tests/fixtures:$PATH" \

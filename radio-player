@@ -315,8 +315,7 @@ list_outputs() {
 }
 
 set_output() {
-  local requested=${1:-default}
-  [[ $requested == default ]] && requested=""
+  local requested=${1-}
   if [[ -n $requested ]]; then
     [[ $requested =~ ^[A-Za-z0-9._:+-]{1,160}$ ]] || {
       echo 'Unknown audio output' >&2
@@ -559,7 +558,7 @@ case "$action" in
     list_outputs
     ;;
   output)
-    set_output "${2:-default}"
+    set_output "${2-}"
     ;;
   stop)
     stop_player

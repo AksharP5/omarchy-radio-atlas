@@ -583,7 +583,9 @@ Item {
     outputProcess.submittedOutput = sink
     outputProcess.output = ""
     outputProcess.errorOutput = ""
-    outputProcess.command = [playerPath, "output", sink ? sink : "default"]
+    outputProcess.command = sink
+      ? [playerPath, "output", sink]
+      : [playerPath, "output"]
     outputProcess.running = true
   }
 
@@ -1747,6 +1749,7 @@ Item {
                   : "Choose audio output"
                 active: root.playerOutput !== ""
                 enabled: !stopProcess.running && !outputProcess.running
+                focusable: true
                 foreground: root.foreground
                 accent: root.accent
                 onClicked: root.toggleOutputMenu()
@@ -1861,6 +1864,7 @@ Item {
                   leftAlign: true
                   text: outputOption.modelData.label
                   selected: outputOption.modelData.id === root.playerOutput
+                  focusable: true
                   foreground: root.foreground
                   accent: root.accent
                   Accessible.role: Accessible.Button
