@@ -953,7 +953,7 @@ Item {
           id: String(row.id),
           label: String(row.label || row.id).replace(/[\r\n\t]+/g, " ").slice(0, 160)
         }
-      }).slice(0, 16)
+      })
       root.outputsError = ""
     }
   }
@@ -1841,13 +1841,23 @@ Item {
                 font.bold: true
               }
 
-              Repeater {
+              ListView {
+                id: outputList
+                width: parent.width
+                height: Math.min(contentHeight, Style.space(320))
                 model: root.outputChoices
+                spacing: Style.spacing.xs
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                QQC.ScrollBar.vertical: QQC.ScrollBar {
+                  policy: QQC.ScrollBar.AsNeeded
+                }
 
                 delegate: Button {
                   id: outputOption
                   required property var modelData
-                  width: parent.width
+                  width: ListView.view.width
                   leftAlign: true
                   text: outputOption.modelData.label
                   selected: outputOption.modelData.id === root.playerOutput

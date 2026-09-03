@@ -300,17 +300,18 @@ list_outputs() {
     exit 3
   fi
   printf '%s' "$sinks" | jq -c '[
-    .[] | select(type == "object")
+    .[] | select(type == "object" and (.name | type == "string"))
+    | .name as $id
+    | select($id | test("^([A-Za-z0-9._:+-]{1,160})$"))
     | {
-        id: (.name | tostring | select(test("^([A-Za-z0-9._:+-]{1,160})$"))),
-        label: (if (.name | tostring | startswith("raop_sink."))
-          then ((.description // .name | tostring)
-            + " · " + (.name | tostring | split(".") | .[-5:-1] | join(".")))
-          else (.description // .name | tostring) end
+        id: $id,
+        label: (if ($id | startswith("raop_sink."))
+          then (((.description // $id) | tostring)
+            + " · " + ($id | split(".") | .[-5:-1] | join(".")))
+          else ((.description // $id) | tostring) end
           | gsub("[\\r\\n\\t]"; " ") | .[:160])
       }
-    | select(.id != null)
-  ][0:16] | {outputs: .}'
+  ] | {outputs: .}'
 }
 
 set_output() {
@@ -528,7 +529,7 @@ play_station() {
 }
 
 action=${1:-status}
-[[ $action == play ]] || flock -x 8
+[[ $action == play || $action == outputs ]] || flock -x 8
 case "$action" in
   play)
     play_station "${2:-}" "${3:-results}"

@@ -107,6 +107,8 @@ rg -q 'function selectOutput' "$project_dir/RadioAtlas.qml"
 rg -q 'function toggleOutputMenu' "$project_dir/RadioAtlas.qml"
 rg -Fq '"audio-device",$device' "$project_dir/radio-player"
 rg -Fq 'set_property","audio-device' "$project_dir/radio-player"
+rg -q 'id: outputList' "$project_dir/RadioAtlas.qml"
+! rg -Fq '.slice(0, 16)' "$project_dir/RadioAtlas.qml"
 rg -q 'property string playerTitle: ""' "$project_dir/RadioAtlas.qml"
 sed -n '/function applyPlayerState/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'playerTitle = String(state.title'
@@ -547,6 +549,13 @@ else
   echo "Audio output listing failed" >&2
   exit 1
 fi
+RADIO_ATLAS_TEST_PACTL_MODE=many PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" outputs > "$test_root/many-outputs.json"
+jq -e '(.outputs | length == 18) and .outputs[17].id == "test_sink_18"' \
+  "$test_root/many-outputs.json" >/dev/null
+RADIO_ATLAS_TEST_PACTL_MODE=many PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output test_sink_18 \
+  | jq -e '.running == false and .output == "test_sink_18"' >/dev/null
 if RADIO_ATLAS_TEST_PACTL_MODE=fail PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" outputs >/dev/null 2>&1; then
   echo "Missing audio server was reported as success" >&2
