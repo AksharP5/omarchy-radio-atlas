@@ -28,9 +28,9 @@ const acceptedKineticVelocity = model.kineticLaunchVelocity(120, 0, 120, 2400)
 assert.equal(acceptedKineticVelocity.active, true)
 const cappedKineticVelocity = model.kineticLaunchVelocity(3000, 4000, 120, 2400)
 assert.equal(cappedKineticVelocity.active, true)
-approximatelyEqual(cappedKineticVelocity.speed, 2400)
 approximatelyEqual(cappedKineticVelocity.x, 1440)
 approximatelyEqual(cappedKineticVelocity.y, 1920)
+approximatelyEqual(Math.hypot(cappedKineticVelocity.x, cappedKineticVelocity.y), 2400)
 
 const sampledReleaseVelocity = model.kineticReleaseVelocity(60, 20, 300, -40, 20, 100)
 approximatelyEqual(sampledReleaseVelocity.x, 300)
@@ -44,6 +44,12 @@ approximatelyEqual(fasterNativeReleaseVelocity.y, 0)
 const invalidReleaseVelocity = model.kineticReleaseVelocity(60, 20, 300, -40, Number.NaN, 100)
 approximatelyEqual(invalidReleaseVelocity.x, 60)
 approximatelyEqual(invalidReleaseVelocity.y, 20)
+const reversedReleaseVelocity = model.kineticReleaseVelocity(60, 20, -300, -40, 20, 100)
+approximatelyEqual(reversedReleaseVelocity.x, 60)
+approximatelyEqual(reversedReleaseVelocity.y, 20)
+const zeroNativeReleaseVelocity = model.kineticReleaseVelocity(0, 0, -300, -40, 20, 100)
+approximatelyEqual(zeroNativeReleaseVelocity.x, -300)
+approximatelyEqual(zeroNativeReleaseVelocity.y, -40)
 
 const kineticOptions = {
   deceleration: 1800,
@@ -68,7 +74,6 @@ const exactKineticStop = model.advanceKineticRotation({
   velocityY: 0
 }, 1, kineticOptions)
 assert.equal(exactKineticStop.active, false)
-approximatelyEqual(exactKineticStop.deltaX, 100)
 approximatelyEqual(exactKineticStop.longitude, -22)
 
 const kineticAt30 = simulateKineticRotation(30, {

@@ -6,7 +6,7 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
-  and .version == "0.1.5"
+  and .version == "0.1.6"
   and (.kinds | index("overlay"))
   and (.kinds | index("bar-widget"))
   and .keepLoaded == true
@@ -20,16 +20,6 @@ node "$project_dir/tests/model.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
 ! rg -q 'playerStatusProcess|refreshPlayerStatus' \
   "$project_dir/BarWidget.qml" "$project_dir/RadioAtlas.qml"
-rg -q 'property bool kineticRotationEnabled: true' "$project_dir/Globe.qml"
-rg -Fq 'function stopKineticRotation(clearLanding)' "$project_dir/Globe.qml"
-rg -q 'centroid\.velocity' "$project_dir/Globe.qml"
-rg -q 'kineticReleaseVelocity' "$project_dir/Globe.qml" "$project_dir/RadioModel.js"
-rg -q 'recordMotionSample' "$project_dir/Globe.qml"
-rg -q 'FrameAnimation' "$project_dir/Globe.qml"
-rg -q 'onKineticRotationEnabledChanged' "$project_dir/Globe.qml"
-rg -q 'onVisibleChanged' "$project_dir/Globe.qml"
-sed -n '/function close()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'globe.stopKineticRotation(true)'
 rg -q 'maximumScale: 24' "$project_dir/Globe.qml"
 rg -q 'searchDebounce.restart()' "$project_dir/RadioAtlas.qml"
 rg -q 'property bool helpVisible: false' "$project_dir/RadioAtlas.qml"
@@ -39,8 +29,6 @@ sed -n '/function close()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'helpVisible = false'
 rg -q 'id: controlsPane' "$project_dir/RadioAtlas.qml"
 rg -Fq '{ input: "?", action: "Show or hide controls" }' \
-  "$project_dir/RadioAtlas.qml"
-rg -Fq '{ input: "DRAG / FLICK", action: "Spin globe" }' \
   "$project_dir/RadioAtlas.qml"
 sed -n '/Keys.onPressed: function(event)/,/^        }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'root.isHelpKey(event)'

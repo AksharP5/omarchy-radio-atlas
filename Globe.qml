@@ -16,8 +16,6 @@ Item {
   property real maximumScale: 24
   property real longitudeSensitivity: 0.22
   property real latitudeSensitivity: 0.18
-  property bool kineticRotationEnabled: true
-
   readonly property real kineticLaunchSpeed: 120
   readonly property real kineticMaximumSpeed: 2400
   readonly property real kineticDeceleration: 1800
@@ -80,7 +78,6 @@ Item {
   }
 
   function startKineticRotation(velocityX, velocityY) {
-    if (!kineticRotationEnabled) return false
     var launch = RadioModel.kineticLaunchVelocity(
       velocityX, velocityY, kineticLaunchSpeed, kineticMaximumSpeed)
     if (!launch.active) return false
@@ -536,9 +533,6 @@ Item {
     updateHighlightPosition()
     globeCanvas.requestPaint()
   }
-  onKineticRotationEnabledChanged: {
-    if (!kineticRotationEnabled) stopKineticRotation(true)
-  }
   onVisibleChanged: {
     if (!visible) stopKineticRotation(true)
   }
@@ -734,7 +728,7 @@ Item {
     running: false
 
     onTriggered: {
-      if (!root.kineticRotationEnabled || frameTime > root.kineticMaximumFrameTime) {
+      if (frameTime > root.kineticMaximumFrameTime) {
         root.stopKineticRotation(true)
         return
       }

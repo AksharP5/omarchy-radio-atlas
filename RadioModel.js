@@ -33,7 +33,6 @@ function kineticLaunchVelocity(x, y, minimumSpeed, maximumSpeed) {
   return {
     x: limited.speed >= threshold ? limited.x : 0,
     y: limited.speed >= threshold ? limited.y : 0,
-    speed: limited.speed,
     active: limited.speed >= threshold
   }
 }
@@ -57,10 +56,12 @@ function kineticReleaseVelocity(nativeX, nativeY, sampledX, sampledY,
   var maximumSampleAge = Math.max(0, Number(maximumSampleAgeMilliseconds) || 0)
   var sampleIsFresh = isFinite(sampleAge) && sampleAge >= 0
     && sampleAge <= maximumSampleAge
-  if (sampleIsFresh && sampledSpeed > nativeSpeed) {
-    return { x: sampledVelocityX, y: sampledVelocityY, speed: sampledSpeed }
+  var sampleIsAligned = nativeSpeed === 0
+    || nativeVelocityX * sampledVelocityX + nativeVelocityY * sampledVelocityY > 0
+  if (sampleIsFresh && sampledSpeed > nativeSpeed && sampleIsAligned) {
+    return { x: sampledVelocityX, y: sampledVelocityY }
   }
-  return { x: nativeVelocityX, y: nativeVelocityY, speed: nativeSpeed }
+  return { x: nativeVelocityX, y: nativeVelocityY }
 }
 
 function advanceKineticRotation(state, elapsedSeconds, options) {
@@ -83,8 +84,6 @@ function advanceKineticRotation(state, elapsedSeconds, options) {
       latitude: latitude,
       velocityX: velocityX,
       velocityY: velocityY,
-      deltaX: 0,
-      deltaY: 0,
       active: speed > 0
     }
   }
@@ -127,8 +126,6 @@ function advanceKineticRotation(state, elapsedSeconds, options) {
     latitude: nextLatitude,
     velocityX: nextVelocityX,
     velocityY: nextVelocityY,
-    deltaX: deltaX,
-    deltaY: deltaY,
     active: remainingSpeed > 1e-9
   }
 }
