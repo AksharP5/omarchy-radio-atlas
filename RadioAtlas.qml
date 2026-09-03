@@ -3,7 +3,6 @@ import QtQuick.Controls as QQC
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
-import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "RadioModel.js" as RadioModel
@@ -114,8 +113,8 @@ Item {
   property color mapLand: lightTheme ? "#a9aaa6" : "#283039"
   property color mapGrid: lightTheme ? "#3f454a" : "#7d8791"
 
-  readonly property int cardWidth: Math.min(Style.space(1180), panel.width - Style.gapsOut * 2)
-  readonly property int cardHeight: Math.min(Style.space(760), panel.height - Style.gapsOut * 2)
+  readonly property int cardWidth: panel.width
+  readonly property int cardHeight: panel.height
   readonly property int headerHeight: Style.space(68)
   readonly property int sidebarWidth: Math.min(Style.space(390), cardWidth * 0.39)
   readonly property var controlSections: [
@@ -131,6 +130,7 @@ Item {
         { input: "F", action: "Favorite selected station" },
         { input: "M", action: "Mute or unmute" },
         { input: "+ / -", action: "Change volume" },
+        { input: "SUPER + W", action: "Close" },
         { input: "ESC", action: "Back, clear, or close" },
         { input: "?", action: "Show or hide controls" }
       ]
@@ -168,6 +168,7 @@ Item {
     try { payload = JSON.parse(payloadJson || "{}") } catch (error) { payload = ({}) }
 
     opened = true
+    panel.visible = true
     fetchError = ""
     loadState()
     if (payload.action === "random") {
@@ -183,6 +184,7 @@ Item {
     outputMenuOpen = false
     globe.stopKineticRotation(true)
     opened = false
+    panel.visible = false
     worldExpandTimer.stop()
     if (worldExpandProcess.running) worldExpandProcess.running = false
   }
@@ -1130,23 +1132,22 @@ Item {
     function onRawEvent(event) { root.handleHyprlandEvent(event) }
   }
 
-  PanelWindow {
+  FloatingWindow {
     id: panel
-    visible: root.opened
-    anchors { top: true; bottom: true; left: true; right: true }
-    mask: Region { item: card }
-    color: "transparent"
-    WlrLayershell.namespace: "omarchy-radio-atlas"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: root.opened && cardHover.hovered
-      ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
-    exclusionMode: ExclusionMode.Ignore
+    visible: false
+    title: "Radio Atlas"
+    color: root.background
+    implicitWidth: Style.space(1180)
+    implicitHeight: Style.space(760)
+    minimumSize: Qt.size(Style.space(800), Style.space(560))
+
+    onVisibleChanged: {
+      if (!visible && root.opened) root.dismiss()
+    }
 
     BorderSurface {
       id: card
-      width: root.cardWidth
-      height: root.cardHeight
-      anchors.centerIn: parent
+      anchors.fill: parent
       color: root.background
       borderSpec: Border.surfaceSpec("menu", "border", root.border, Math.max(1, Style.normalBorderWidth))
       radius: Style.cornerRadius
@@ -1155,11 +1156,6 @@ Item {
         id: cardMouse
         anchors.fill: parent
         onClicked: keyCatcher.forceActiveFocus()
-      }
-
-      HoverHandler {
-        id: cardHover
-        onHoveredChanged: if (hovered) keyCatcher.forceActiveFocus()
       }
 
       Item {
@@ -1474,6 +1470,7 @@ Item {
             currentIndex: root.selectedIndex
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: 500
+            interactive: !root.outputMenuOpen
 
             QQC.ScrollBar.vertical: QQC.ScrollBar {}
 
@@ -1735,6 +1732,7 @@ Item {
             }
 
             Row {
+              id: outputControls
               anchors.right: parent.right
               anchors.rightMargin: Style.spacing.md
               anchors.leftMargin: Style.spacing.sm
@@ -1743,6 +1741,7 @@ Item {
               spacing: Style.spacing.xs
 
               Button {
+                id: outputButton
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "\uf0a1"
                 tooltipText: root.playerOutput
@@ -1811,10 +1810,18 @@ Item {
           Rectangle {
             id: outputMenu
             visible: root.outputMenuOpen
-            anchors.right: parent.right
-            anchors.rightMargin: Style.spacing.sm
-            anchors.bottom: playerPanel.top
-            anchors.bottomMargin: Style.spacing.xs
+            readonly property point buttonPosition: {
+              sidebar.width
+              sidebar.height
+              outputControls.x
+              outputControls.y
+              return outputButton.mapToItem(
+                sidebar, outputButton.width / 2, 0)
+            }
+            x: Math.max(Style.spacing.sm, Math.min(
+              parent.width - width - Style.spacing.sm,
+              buttonPosition.x - width / 2))
+            y: buttonPosition.y - height - Style.spacing.xs
             z: 3
             width: Math.min(Style.space(300), parent.width - Style.spacing.md * 2)
             height: outputMenuColumn.implicitHeight + Style.spacing.md * 2

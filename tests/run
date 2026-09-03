@@ -6,8 +6,8 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
-  and .version == "0.1.6"
-  and (.kinds | index("overlay"))
+  and .version == "0.1.7"
+  and (.kinds | index("panel"))
   and (.kinds | index("bar-widget"))
   and .keepLoaded == true
 ' "$project_dir/manifest.json" >/dev/null
@@ -107,6 +107,8 @@ rg -q 'function toggleOutputMenu' "$project_dir/RadioAtlas.qml"
 rg -Fq '"audio-device",$device' "$project_dir/radio-player"
 rg -Fq 'set_property","audio-device' "$project_dir/radio-player"
 rg -q 'id: outputList' "$project_dir/RadioAtlas.qml"
+sed -n '/id: stationList/,/^          }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'interactive: !root.outputMenuOpen'
 ! rg -Fq '.slice(0, 16)' "$project_dir/RadioAtlas.qml"
 sed -n '/tooltipText: root.playerOutput/,/^              }/p' "$project_dir/RadioAtlas.qml" \
   | rg -q 'focusable: true'

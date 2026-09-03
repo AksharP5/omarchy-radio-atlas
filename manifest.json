@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "akshar.radio-atlas",
   "name": "Radio Atlas",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "author": "Akshar Patel",
   "license": "MIT",
   "description": "Explore live radio on a rotatable globe and play stations through Omarchy's media controls.",
@@ -16,12 +16,12 @@
     "mpris"
   ],
   "kinds": [
-    "overlay",
+    "panel",
     "bar-widget"
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "overlay": "RadioAtlas.qml",
+    "panel": "RadioAtlas.qml",
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
