@@ -46,6 +46,7 @@ Item {
   property int playerVolume: 70
   property int reportedVolume: 70
   property int pendingVolume: -1
+  property string playerTitle: ""
   property string playerOutput: ""
   property var audioOutputs: []
   property string outputsError: ""
@@ -929,6 +930,7 @@ Item {
     onExited: function(exitCode) {
       if (exitCode !== 0) {
         root.outputsError = "Audio outputs are unavailable"
+        root.audioOutputs = []
         return
       }
       var parsed = null
@@ -940,6 +942,7 @@ Item {
       }
       if (parsed === null) {
         root.outputsError = "Audio outputs are unavailable"
+        root.audioOutputs = []
         return
       }
       root.audioOutputs = parsed.filter(function(row) {

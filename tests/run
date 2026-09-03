@@ -107,6 +107,11 @@ rg -q 'function selectOutput' "$project_dir/RadioAtlas.qml"
 rg -q 'function toggleOutputMenu' "$project_dir/RadioAtlas.qml"
 rg -Fq '"audio-device",$device' "$project_dir/radio-player"
 rg -Fq 'set_property","audio-device' "$project_dir/radio-player"
+rg -q 'property string playerTitle: ""' "$project_dir/RadioAtlas.qml"
+sed -n '/function applyPlayerState/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'playerTitle = String(state.title'
+[[ $(sed -n '/id: outputsProcess/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -c -F 'root.audioOutputs = []') == 2 ]]
 rg -q 'audio-device' "$project_dir/radio-status.lua"
 rg -q 'maximumLength: 128' "$project_dir/RadioAtlas.qml"
 rg -Fq 'Math.min(1.5, Math.max(0.7, globeRadius / 500))' "$project_dir/Globe.qml"
@@ -610,6 +615,15 @@ RADIO_ATLAS_TEST_PACTL_MODE=json RADIO_ATLAS_TEST_SOCAT_MODE=success \
   PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" output raop_sink.Living-Room.local.192.168.1.49.7000 \
   | jq -e '.running == true and .output == "raop_sink.Living-Room.local.192.168.1.49.7000"' >/dev/null
+if RADIO_ATLAS_TEST_PACTL_MODE=json RADIO_ATLAS_TEST_SOCAT_MODE=error \
+  PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output alsa_output.pci-0000_00_1f.3.analog-stereo \
+  >/dev/null 2>&1; then
+  echo "Rejected audio output change was reported as success" >&2
+  exit 1
+fi
+jq -e '.output == "raop_sink.Living-Room.local.192.168.1.49.7000"' \
+  "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 RADIO_ATLAS_TEST_PACTL_MODE=json RADIO_ATLAS_TEST_SOCAT_MODE=success \
   RADIO_ATLAS_TEST_SOCKET="$runtime_dir/mpv.sock" \
   PATH="$project_dir/tests/fixtures:$PATH" \

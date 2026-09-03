@@ -331,7 +331,6 @@ set_output() {
   fi
 
   "$state_path" get >/dev/null
-  "$state_path" output "$requested" >/dev/null
   if [[ -S $socket ]]; then
     local device command
     device=auto
@@ -345,6 +344,7 @@ set_output() {
       fi
     fi
   fi
+  "$state_path" output "$requested" >/dev/null
   status
 }
 
