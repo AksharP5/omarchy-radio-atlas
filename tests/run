@@ -125,7 +125,12 @@ rg -Fq 'Math.min(1.5, Math.max(0.7, globeRadius / 500))' "$project_dir/Globe.qml
 rg -Fq 'estimatedLocation === true' "$project_dir/Globe.qml"
 sed -n '/function paintGlobe/,/^  }/p' "$project_dir/Globe.qml" \
   | rg -Fq 'if (!isFinite(globeRadius) || globeRadius <= 0) return'
-rg -q 'WlrLayershell.keyboardFocus: root.opened' "$project_dir/RadioAtlas.qml"
+rg -Fq '  FloatingWindow {' "$project_dir/RadioAtlas.qml"
+! rg -q 'WlrLayershell|PanelWindow' "$project_dir/RadioAtlas.qml"
+sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'panel.visible = true'
+sed -n '/function close()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'panel.visible = false'
 rg -q '^import Quickshell.Hyprland$' "$project_dir/RadioAtlas.qml"
 sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'event.parse(4)'
