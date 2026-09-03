@@ -47,7 +47,7 @@ Stop the independent radio player before removing the plugin:
 omarchy plugin remove akshar.radio-atlas
 ```
 
-Favorites, listening history, and the saved volume remain in
+Favorites, listening history, volume, and the selected audio output remain in
 `~/.local/share/radio-atlas/state.json` so reinstalling restores them. Remove
 `~/.local/share/radio-atlas/` manually if you also want to delete that data.
 
@@ -81,8 +81,8 @@ every PipeWire output device through `pactl`, which ships with Omarchy's
 PipeWire setup. "System default" follows the desktop's current output, the
 choice is saved alongside the volume in `~/.local/share/radio-atlas/state.json`,
 and switching while playing takes effect immediately. If the chosen device
-disappears, for example an AirPlay speaker that is turned off, mpv falls back to
-the default output and radio keeps playing.
+disappears, mpv may pause and will not always resume when it returns. Choose
+"System default" or another available output, then resume playback.
 
 AirPlay speakers appear in this list once PipeWire exposes them as RAOP sinks.
 On Arch Linux, the RAOP modules ship in the optional `pipewire-zeroconf`
