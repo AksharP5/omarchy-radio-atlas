@@ -114,7 +114,7 @@ Item {
   property color mapGrid: lightTheme ? "#3f454a" : "#7d8791"
 
   property bool windowSetupReady: false
-  property bool usePostMapWindowSetup: true
+  property bool windowFrameReady: false
   property string pendingOpenPayload: ""
   readonly property int preferredWidth: Style.space(1180)
   readonly property int preferredHeight: Style.space(760)
@@ -171,7 +171,6 @@ Item {
 
   function registerWindowSetup() {
     windowSetupReady = false
-    usePostMapWindowSetup = true
     if (!windowSetupProcess.running) windowSetupProcess.running = true
   }
 
@@ -188,6 +187,8 @@ Item {
     try { payload = JSON.parse(payloadJson || "{}") } catch (error) { payload = ({}) }
 
     opened = true
+    windowFrameReady = false
+    windowRevealTimer.stop()
     panel.visible = true
     fetchError = ""
     loadState()
@@ -204,6 +205,8 @@ Item {
     outputMenuOpen = false
     globe.stopKineticRotation(true)
     opened = false
+    windowFrameReady = false
+    windowRevealTimer.stop()
     panel.visible = false
     worldExpandTimer.stop()
     if (worldExpandProcess.running) worldExpandProcess.running = false
@@ -215,10 +218,15 @@ Item {
       shell.hide((manifest && manifest.id) || "akshar.radio-atlas")
   }
 
+  function scheduleWindowReveal() {
+    if (windowFrameReady || !panel.visible || !panel.backingWindowVisible) return
+    windowRevealTimer.restart()
+  }
+
   function handleHyprlandEvent(event) {
     var eventName = String(event && event.name || "")
     if (eventName === "configreloaded") {
-      registerWindowSetup()
+      windowSetupReloadTimer.restart()
       return
     }
     if (!opened || eventName !== "openwindow") return
@@ -231,30 +239,7 @@ Item {
     var windowClass = String(parts[2] || "")
     if (windowClass === "org.omarchy.screensaver") {
       dismiss()
-      return
     }
-
-    if (!usePostMapWindowSetup) return
-    if (windowClass !== "org.quickshell" || String(parts[3] || "") !== "Radio Atlas") return
-    var address = String(parts[0] || "")
-    if (!address) return
-    if (address.indexOf("0x") !== 0) address = "0x" + address
-    var selector = "address:" + address
-
-    if (Hyprland.usingLua) {
-      Hyprland.dispatch('hl.dsp.window.set_prop({ prop = "no_anim", value = "1", window = "'
-        + selector + '" })')
-      Hyprland.dispatch('hl.dsp.window.float({ action = "set", window = "' + selector + '" })')
-      Hyprland.dispatch('hl.dsp.window.resize({ relative = false, window = "' + selector
-        + '", x = ' + preferredWidth + ', y = ' + preferredHeight + ' })')
-      Hyprland.dispatch('hl.dsp.window.center({ window = "' + selector + '" })')
-      return
-    }
-    Hyprland.dispatch("setprop " + selector + " noanim 1")
-    Hyprland.dispatch("setfloating " + selector)
-    Hyprland.dispatch("resizewindowpixel exact " + preferredWidth + " " + preferredHeight
-      + "," + selector)
-    Hyprland.dispatch("centerwindow " + selector)
   }
 
   function highlightStationCountry(station, focusGlobe) {
@@ -812,7 +797,6 @@ Item {
     id: windowSetupProcess
     command: [root.windowPath, String(root.preferredWidth), String(root.preferredHeight)]
     onExited: function(exitCode) {
-      root.usePostMapWindowSetup = exitCode !== 0
       root.windowSetupReady = true
       if (!root.pendingOpenPayload) return
       var payload = root.pendingOpenPayload
@@ -1180,6 +1164,22 @@ Item {
   }
 
   Timer {
+    id: windowSetupReloadTimer
+    interval: 100
+    repeat: false
+    onTriggered: root.registerWindowSetup()
+  }
+
+  Timer {
+    id: windowRevealTimer
+    interval: 50
+    repeat: false
+    onTriggered: {
+      if (panel.visible && panel.backingWindowVisible) root.windowFrameReady = true
+    }
+  }
+
+  Timer {
     id: volumeTimer
     interval: 90
     repeat: false
@@ -1205,10 +1205,15 @@ Item {
     implicitWidth: root.preferredWidth
     implicitHeight: root.preferredHeight
     minimumSize: Qt.size(Style.space(800), Style.space(560))
+    HyprlandWindow.opacity: root.windowFrameReady ? 1 : 0
 
     onVisibleChanged: {
+      if (visible) root.scheduleWindowReveal()
       if (!visible && root.opened) root.dismiss()
     }
+    onBackingWindowVisibleChanged: root.scheduleWindowReveal()
+    onWidthChanged: root.scheduleWindowReveal()
+    onHeightChanged: root.scheduleWindowReveal()
 
     BorderSurface {
       id: card

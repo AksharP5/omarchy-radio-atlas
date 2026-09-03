@@ -14,18 +14,25 @@ height=${2:-}
 read -r -d '' setup <<LUA || true
 if _G.omarchy_radio_atlas_window_handler then
   _G.omarchy_radio_atlas_window_handler:remove()
+  _G.omarchy_radio_atlas_window_handler = nil
 end
 
-_G.omarchy_radio_atlas_window_handler = hl.on("window.open", function(window)
-  if window == nil
-      or window.initial_class ~= "org.quickshell"
-      or window.initial_title ~= "Radio Atlas" then return end
+if _G.omarchy_radio_atlas_window_rule then
+  _G.omarchy_radio_atlas_window_rule:set_enabled(false)
+end
 
-  hl.dispatch(hl.dsp.window.set_prop({ prop = "no_anim", value = "1", window = window }))
-  hl.dispatch(hl.dsp.window.float({ action = "set", window = window }))
-  hl.dispatch(hl.dsp.window.resize({ relative = false, window = window, x = $width, y = $height }))
-  hl.dispatch(hl.dsp.window.center({ window = window }))
-end)
+_G.omarchy_radio_atlas_window_rule = hl.window_rule({
+  name = "radio-atlas-plugin",
+  match = {
+    initial_class = "^org[.]quickshell$",
+    initial_title = "^Radio Atlas$",
+  },
+  float = true,
+  center = true,
+  size = { $width, $height },
+  no_anim = true,
+  border_size = 0,
+})
 LUA
 
 response=$(hyprctl eval "$setup")

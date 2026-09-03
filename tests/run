@@ -6,7 +6,7 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
-  and .version == "0.1.8"
+  and .version == "0.1.9"
   and (.kinds | index("panel"))
   and (.kinds | index("bar-widget"))
   and .keepLoaded == true
@@ -131,7 +131,7 @@ rg -Fq '  FloatingWindow {' "$project_dir/RadioAtlas.qml"
 sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'openWindow(payloadJson)'
 sed -n '/function openWindow(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'panel.visible = true'
+  | rg -q 'windowFrameReady = false.*panel\.visible = true' -U --multiline-dotall
 sed -n '/function close()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'panel.visible = false'
 rg -q '^import Quickshell.Hyprland$' "$project_dir/RadioAtlas.qml"
@@ -142,22 +142,26 @@ sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
 sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'eventName === "configreloaded"'
 sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'windowSetupReloadTimer.restart()'
+sed -n '/id: windowSetupReloadTimer/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'onTriggered: root.registerWindowSetup()'
+sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'org.omarchy.screensaver'
 sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'dismiss()'
-sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'hl.dsp.window.float({ action = "set"'
-sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'hl.dsp.window.set_prop({ prop = "no_anim", value = "1"'
-sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'hl.dsp.window.resize({ relative = false'
-sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'hl.dsp.window.center('
-rg -Fq 'hl.on("window.open"' "$project_dir/radio-window"
-rg -Fq 'hl.dsp.window.set_prop({ prop = "no_anim"' "$project_dir/radio-window"
-rg -Fq 'hl.dsp.window.float({ action = "set"' "$project_dir/radio-window"
-rg -Fq 'hl.dsp.window.resize({ relative = false' "$project_dir/radio-window"
-rg -Fq 'hl.dsp.window.center({ window = window })' "$project_dir/radio-window"
+! rg -q 'resizewindowpixel|centerwindow|hl\.dsp\.window\.(float|resize|center|set_prop)' \
+  "$project_dir/RadioAtlas.qml"
+rg -Fq 'hl.window_rule({' "$project_dir/radio-window"
+rg -Fq 'initial_class = "^org[.]quickshell$"' "$project_dir/radio-window"
+rg -Fq 'initial_title = "^Radio Atlas$"' "$project_dir/radio-window"
+rg -Fq 'float = true' "$project_dir/radio-window"
+rg -Fq 'center = true' "$project_dir/radio-window"
+rg -Fq 'size = { $width, $height }' "$project_dir/radio-window"
+rg -Fq 'no_anim = true' "$project_dir/radio-window"
+rg -Fq 'border_size = 0' "$project_dir/radio-window"
+rg -Fq 'HyprlandWindow.opacity: root.windowFrameReady ? 1 : 0' "$project_dir/RadioAtlas.qml"
+sed -n '/function scheduleWindowReveal/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'windowRevealTimer.restart()'
 ! rg -q 'Super \+ W|Super \+ Shift' "$project_dir/README.md" "$project_dir/RadioAtlas.qml"
 rg -q 'keyboardSelectionVisible' "$project_dir/RadioAtlas.qml"
 rg -q 'reportedVolume' "$project_dir/RadioAtlas.qml"
