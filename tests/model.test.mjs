@@ -10,9 +10,124 @@ const model = { Math, Number, Array, String, isFinite }
 vm.createContext(model)
 vm.runInContext(source, model)
 
+function approximatelyEqual(actual, expected, tolerance = 1e-9) {
+  assert.ok(
+    Math.abs(actual - expected) <= tolerance,
+    `expected ${actual} to be within ${tolerance} of ${expected}`
+  )
+}
+
 assert.equal(model.clamp(12, 0, 10), 10)
 assert.equal(model.wrapLongitude(190), -170)
 assert.equal(model.wrapLongitude(-190), 170)
+
+const rejectedKineticVelocity = model.kineticLaunchVelocity(119, 0, 120, 2400)
+assert.equal(rejectedKineticVelocity.active, false)
+assert.equal(rejectedKineticVelocity.x, 0)
+const acceptedKineticVelocity = model.kineticLaunchVelocity(120, 0, 120, 2400)
+assert.equal(acceptedKineticVelocity.active, true)
+const cappedKineticVelocity = model.kineticLaunchVelocity(3000, 4000, 120, 2400)
+assert.equal(cappedKineticVelocity.active, true)
+approximatelyEqual(cappedKineticVelocity.x, 1440)
+approximatelyEqual(cappedKineticVelocity.y, 1920)
+approximatelyEqual(Math.hypot(cappedKineticVelocity.x, cappedKineticVelocity.y), 2400)
+
+const sampledReleaseVelocity = model.kineticReleaseVelocity(60, 20, 300, -40, 20, 100)
+approximatelyEqual(sampledReleaseVelocity.x, 300)
+approximatelyEqual(sampledReleaseVelocity.y, -40)
+const staleReleaseVelocity = model.kineticReleaseVelocity(60, 20, 300, -40, 101, 100)
+approximatelyEqual(staleReleaseVelocity.x, 60)
+approximatelyEqual(staleReleaseVelocity.y, 20)
+const fasterNativeReleaseVelocity = model.kineticReleaseVelocity(400, 0, 300, -40, 20, 100)
+approximatelyEqual(fasterNativeReleaseVelocity.x, 400)
+approximatelyEqual(fasterNativeReleaseVelocity.y, 0)
+const invalidReleaseVelocity = model.kineticReleaseVelocity(60, 20, 300, -40, Number.NaN, 100)
+approximatelyEqual(invalidReleaseVelocity.x, 60)
+approximatelyEqual(invalidReleaseVelocity.y, 20)
+const reversedReleaseVelocity = model.kineticReleaseVelocity(60, 20, -300, -40, 20, 100)
+approximatelyEqual(reversedReleaseVelocity.x, 60)
+approximatelyEqual(reversedReleaseVelocity.y, 20)
+const zeroNativeReleaseVelocity = model.kineticReleaseVelocity(0, 0, -300, -40, 20, 100)
+approximatelyEqual(zeroNativeReleaseVelocity.x, -300)
+approximatelyEqual(zeroNativeReleaseVelocity.y, -40)
+
+const kineticOptions = {
+  deceleration: 1800,
+  scale: 1,
+  longitudeSensitivity: 0.22,
+  latitudeSensitivity: 0.18,
+  minimumLatitude: -78,
+  maximumLatitude: 78
+}
+
+function simulateKineticRotation(framesPerSecond, initialState) {
+  var state = initialState
+  for (var frame = 0; frame < framesPerSecond * 3 && state.active !== false; frame++)
+    state = model.advanceKineticRotation(state, 1 / framesPerSecond, kineticOptions)
+  return state
+}
+
+const exactKineticStop = model.advanceKineticRotation({
+  longitude: 0,
+  latitude: 0,
+  velocityX: 600,
+  velocityY: 0
+}, 1, kineticOptions)
+assert.equal(exactKineticStop.active, false)
+approximatelyEqual(exactKineticStop.longitude, -22)
+
+const kineticAt30 = simulateKineticRotation(30, {
+  longitude: 0,
+  latitude: 0,
+  velocityX: 1200,
+  velocityY: 0,
+  active: true
+})
+const kineticAt60 = simulateKineticRotation(60, {
+  longitude: 0,
+  latitude: 0,
+  velocityX: 1200,
+  velocityY: 0,
+  active: true
+})
+const kineticAt120 = simulateKineticRotation(120, {
+  longitude: 0,
+  latitude: 0,
+  velocityX: 1200,
+  velocityY: 0,
+  active: true
+})
+approximatelyEqual(kineticAt30.longitude, -88)
+approximatelyEqual(kineticAt60.longitude, kineticAt30.longitude)
+approximatelyEqual(kineticAt120.longitude, kineticAt30.longitude)
+assert.equal(kineticAt120.active, false)
+
+const wrappedKineticStop = model.advanceKineticRotation({
+  longitude: 179,
+  latitude: 0,
+  velocityX: -600,
+  velocityY: 0
+}, 1, kineticOptions)
+approximatelyEqual(wrappedKineticStop.longitude, -159)
+
+const poleKineticStep = model.advanceKineticRotation({
+  longitude: 0,
+  latitude: 77,
+  velocityX: 600,
+  velocityY: 600
+}, 0.05, kineticOptions)
+assert.equal(poleKineticStep.latitude, 78)
+assert.equal(poleKineticStep.velocityY, 0)
+assert.ok(poleKineticStep.velocityX > 0)
+assert.equal(poleKineticStep.active, true)
+
+const invalidKineticStep = model.advanceKineticRotation({
+  longitude: 0,
+  latitude: 0,
+  velocityX: Number.NaN,
+  velocityY: Number.POSITIVE_INFINITY
+}, 0.016, kineticOptions)
+assert.equal(invalidKineticStep.active, false)
 
 const centre = model.project(0, 0, 0, 0)
 assert.ok(Math.abs(centre.x) < 1e-9)
@@ -46,6 +161,32 @@ const stations = [
 ]
 assert.equal(model.stationAt(stations, 100, 100, 200, 200, 1, 0, 0, 12).uuid, "a")
 assert.equal(model.compactTags("jazz, soul, jazz", 2), "jazz · soul")
+
+const landingStations = [
+  { uuid: "playing", name: "Playing", latitude: 0, longitude: 0 },
+  { uuid: "nearby", name: "Nearby", latitude: 0, longitude: 10 },
+  { uuid: "horizon", name: "Horizon", latitude: 0, longitude: 90 },
+  { uuid: "hidden", name: "Hidden", latitude: 0, longitude: 180 }
+]
+const landingSnapshot = JSON.stringify(landingStations)
+assert.equal(model.nearestVisibleStation(landingStations, 0, 0, "").uuid, "playing")
+assert.equal(model.nearestVisibleStation(landingStations, 0, 0, "playing").uuid, "nearby")
+assert.equal(model.nearestVisibleStation([landingStations[0]], 0, 0, "playing").uuid, "playing")
+assert.equal(model.nearestVisibleStation([landingStations[3]], 0, 0, ""), null)
+assert.equal(JSON.stringify(landingStations), landingSnapshot)
+
+const zoomedLandingStations = [
+  { uuid: "offscreen", name: "Off-screen", latitude: 0, longitude: 10 },
+  { uuid: "onscreen", name: "On-screen", latitude: 0, longitude: 1 }
+]
+assert.equal(
+  model.nearestVisibleStation(zoomedLandingStations, 0, 0, "", 600, 600, 24).uuid,
+  "onscreen"
+)
+assert.equal(
+  model.nearestVisibleStation([zoomedLandingStations[0]], 0, 0, "", 600, 600, 24),
+  null
+)
 
 const worldStations = [
   { uuid: "world", name: "World", latitude: 1, longitude: 1 },

@@ -6,7 +6,7 @@ project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
-  and .version == "0.1.5"
+  and .version == "0.1.6"
   and (.kinds | index("overlay"))
   and (.kinds | index("bar-widget"))
   and .keepLoaded == true
@@ -20,7 +20,6 @@ node "$project_dir/tests/model.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
 ! rg -q 'playerStatusProcess|refreshPlayerStatus' \
   "$project_dir/BarWidget.qml" "$project_dir/RadioAtlas.qml"
-! rg -q 'inertia' "$project_dir/Globe.qml"
 rg -q 'maximumScale: 24' "$project_dir/Globe.qml"
 rg -q 'searchDebounce.restart()' "$project_dir/RadioAtlas.qml"
 rg -q 'property bool helpVisible: false' "$project_dir/RadioAtlas.qml"

@@ -12,6 +12,124 @@ function wrapLongitude(value) {
   return wrapped - 180
 }
 
+function limitKineticVelocity(x, y, maximumSpeed) {
+  var velocityX = Number(x)
+  var velocityY = Number(y)
+  var limit = Number(maximumSpeed)
+  if (!isFinite(velocityX) || !isFinite(velocityY) || !isFinite(limit) || limit <= 0)
+    return { x: 0, y: 0, speed: 0 }
+
+  var speed = Math.sqrt(velocityX * velocityX + velocityY * velocityY)
+  if (!isFinite(speed) || speed <= 0) return { x: 0, y: 0, speed: 0 }
+  if (speed <= limit) return { x: velocityX, y: velocityY, speed: speed }
+
+  var ratio = limit / speed
+  return { x: velocityX * ratio, y: velocityY * ratio, speed: limit }
+}
+
+function kineticLaunchVelocity(x, y, minimumSpeed, maximumSpeed) {
+  var limited = limitKineticVelocity(x, y, maximumSpeed)
+  var threshold = Math.max(0, Number(minimumSpeed) || 0)
+  return {
+    x: limited.speed >= threshold ? limited.x : 0,
+    y: limited.speed >= threshold ? limited.y : 0,
+    active: limited.speed >= threshold
+  }
+}
+
+function kineticReleaseVelocity(nativeX, nativeY, sampledX, sampledY,
+                                sampleAgeMilliseconds, maximumSampleAgeMilliseconds) {
+  var nativeVelocityX = Number(nativeX)
+  var nativeVelocityY = Number(nativeY)
+  var sampledVelocityX = Number(sampledX)
+  var sampledVelocityY = Number(sampledY)
+  if (!isFinite(nativeVelocityX)) nativeVelocityX = 0
+  if (!isFinite(nativeVelocityY)) nativeVelocityY = 0
+  if (!isFinite(sampledVelocityX)) sampledVelocityX = 0
+  if (!isFinite(sampledVelocityY)) sampledVelocityY = 0
+
+  var nativeSpeed = Math.sqrt(
+    nativeVelocityX * nativeVelocityX + nativeVelocityY * nativeVelocityY)
+  var sampledSpeed = Math.sqrt(
+    sampledVelocityX * sampledVelocityX + sampledVelocityY * sampledVelocityY)
+  var sampleAge = Number(sampleAgeMilliseconds)
+  var maximumSampleAge = Math.max(0, Number(maximumSampleAgeMilliseconds) || 0)
+  var sampleIsFresh = isFinite(sampleAge) && sampleAge >= 0
+    && sampleAge <= maximumSampleAge
+  var sampleIsAligned = nativeSpeed === 0
+    || nativeVelocityX * sampledVelocityX + nativeVelocityY * sampledVelocityY > 0
+  if (sampleIsFresh && sampledSpeed > nativeSpeed && sampleIsAligned) {
+    return { x: sampledVelocityX, y: sampledVelocityY }
+  }
+  return { x: nativeVelocityX, y: nativeVelocityY }
+}
+
+function advanceKineticRotation(state, elapsedSeconds, options) {
+  var current = state || ({})
+  var config = options || ({})
+  var longitude = Number(current.longitude)
+  var latitude = Number(current.latitude)
+  var velocityX = Number(current.velocityX)
+  var velocityY = Number(current.velocityY)
+  var elapsed = Number(elapsedSeconds)
+  if (!isFinite(longitude)) longitude = 0
+  if (!isFinite(latitude)) latitude = 0
+  if (!isFinite(velocityX)) velocityX = 0
+  if (!isFinite(velocityY)) velocityY = 0
+
+  var speed = Math.sqrt(velocityX * velocityX + velocityY * velocityY)
+  if (!isFinite(speed) || speed <= 0 || !isFinite(elapsed) || elapsed <= 0) {
+    return {
+      longitude: wrapLongitude(longitude),
+      latitude: latitude,
+      velocityX: velocityX,
+      velocityY: velocityY,
+      active: speed > 0
+    }
+  }
+
+  var deceleration = Number(config.deceleration)
+  if (!isFinite(deceleration) || deceleration < 0) deceleration = 0
+  var activeTime = deceleration > 0 ? Math.min(elapsed, speed / deceleration) : elapsed
+  var nextSpeed = Math.max(0, speed - deceleration * activeTime)
+  var distance = (speed + nextSpeed) * activeTime / 2
+  var directionX = velocityX / speed
+  var directionY = velocityY / speed
+  var deltaX = directionX * distance
+  var deltaY = directionY * distance
+
+  var scale = Number(config.scale)
+  if (!isFinite(scale) || scale <= 0) scale = 1
+  var longitudeSensitivity = Number(config.longitudeSensitivity)
+  var latitudeSensitivity = Number(config.latitudeSensitivity)
+  if (!isFinite(longitudeSensitivity)) longitudeSensitivity = 0
+  if (!isFinite(latitudeSensitivity)) latitudeSensitivity = 0
+  var minimumLatitude = Number(config.minimumLatitude)
+  var maximumLatitude = Number(config.maximumLatitude)
+  if (!isFinite(minimumLatitude)) minimumLatitude = -78
+  if (!isFinite(maximumLatitude)) maximumLatitude = 78
+
+  var nextLongitude = wrapLongitude(longitude - deltaX * longitudeSensitivity / scale)
+  var nextLatitude = clamp(
+    latitude + deltaY * latitudeSensitivity / scale,
+    minimumLatitude, maximumLatitude)
+  var nextVelocityX = directionX * nextSpeed
+  var nextVelocityY = directionY * nextSpeed
+  if ((nextLatitude >= maximumLatitude && nextVelocityY > 0)
+      || (nextLatitude <= minimumLatitude && nextVelocityY < 0))
+    nextVelocityY = 0
+
+  var remainingSpeed = Math.sqrt(
+    nextVelocityX * nextVelocityX + nextVelocityY * nextVelocityY)
+  return {
+    longitude: nextLongitude,
+    latitude: nextLatitude,
+    velocityX: nextVelocityX,
+    velocityY: nextVelocityY,
+    active: remainingSpeed > 1e-9
+  }
+}
+
 function project(latitude, longitude, centreLatitude, centreLongitude) {
   var phi = Number(latitude) * radians
   var lambda = wrapLongitude(Number(longitude) - Number(centreLongitude)) * radians
@@ -250,6 +368,51 @@ function stationPosition(station, width, height, scale, centreLatitude, centreLo
     y: height / 2 - point.y * radius,
     z: point.z
   }
+}
+
+function nearestVisibleStation(stations, centreLatitude, centreLongitude, excludedUuid,
+                               width, height, scale) {
+  var rows = Array.isArray(stations) ? stations : []
+  var excluded = String(excludedUuid || "")
+  var viewportWidth = Number(width)
+  var viewportHeight = Number(height)
+  var viewportScale = Number(scale)
+  var constrainToViewport = isFinite(viewportWidth) && viewportWidth > 0
+    && isFinite(viewportHeight) && viewportHeight > 0
+    && isFinite(viewportScale) && viewportScale > 0
+  var viewportRadius = constrainToViewport
+    ? Math.min(viewportWidth, viewportHeight) * 0.44 * viewportScale : 0
+  var nearest = null
+  var nearestDepth = -Infinity
+  var preferred = null
+  var preferredDepth = -Infinity
+
+  for (var i = 0; i < rows.length; i++) {
+    var station = rows[i]
+    if (!station || station.latitude === null || station.longitude === null) continue
+    var latitude = Number(station.latitude)
+    var longitude = Number(station.longitude)
+    if (!isFinite(latitude) || !isFinite(longitude)) continue
+    var point = project(latitude, longitude, centreLatitude, centreLongitude)
+    if (!isFinite(point.z) || point.z < 0) continue
+    if (constrainToViewport) {
+      var screenX = viewportWidth / 2 + point.x * viewportRadius
+      var screenY = viewportHeight / 2 - point.y * viewportRadius
+      if (screenX < 0 || screenX > viewportWidth
+          || screenY < 0 || screenY > viewportHeight)
+        continue
+    }
+    if (point.z > nearestDepth) {
+      nearest = station
+      nearestDepth = point.z
+    }
+    if (String(station.uuid || "") !== excluded && point.z > preferredDepth) {
+      preferred = station
+      preferredDepth = point.z
+    }
+  }
+
+  return preferred || nearest
 }
 
 function stationAt(stations, x, y, width, height, scale, centreLatitude, centreLongitude, hitRadius) {

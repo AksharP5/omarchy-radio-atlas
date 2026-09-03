@@ -139,7 +139,7 @@ Item {
       title: "MOUSE AND BAR",
       inputWidth: 124,
       controls: [
-        { input: "DRAG GLOBE", action: "Rotate" },
+        { input: "DRAG / FLICK", action: "Spin globe" },
         { input: "GLOBE WHEEL", action: "Zoom" },
         { input: "CLICK SIGNAL", action: "Play station" },
         { input: "CLICK COUNTRY", action: "Browse stations" },
@@ -181,6 +181,7 @@ Item {
   function close() {
     helpVisible = false
     outputMenuOpen = false
+    globe.stopKineticRotation(true)
     opened = false
     worldExpandTimer.stop()
     if (worldExpandProcess.running) worldExpandProcess.running = false
@@ -1377,7 +1378,7 @@ Item {
               ? root.fetchError || root.localError
               : (root.activeCountryName
                 ? root.activeCountryName + "  ·  click another country to browse"
-                : "Drag to rotate  ·  wheel to zoom  ·  click a signal or country")
+                : "Drag or flick to spin  ·  wheel to zoom  ·  click a signal or country")
             textFormat: Text.PlainText
             color: root.fetchError || root.localError ? root.urgent : root.dim
             font.family: Style.font.menuFamily
