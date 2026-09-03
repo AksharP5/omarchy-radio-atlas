@@ -211,7 +211,7 @@ status() {
     playlistCount: ([.[] | select(.request_id == 4) | .data][0] // 0),
     volume: ([.[] | select(.request_id == 5) | .data][0] // 70),
     output: (([.[] | select(.request_id == 7) | .data][0] // "")
-      | if type == "string" then (sub("^pipewire/"; "") | if . == "auto" then "" else . end) else "" end),
+      | if type == "string" then (if . == "auto" then "" else sub("^pipewire/"; "") end) else "" end),
     loaded: $loaded,
     station: $station
   }' <<< "$response")"

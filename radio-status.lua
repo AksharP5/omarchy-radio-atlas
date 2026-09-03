@@ -25,8 +25,8 @@ end
 
 local function clean_output(value)
   if type(value) ~= "string" then return "" end
-  value = value:gsub("^pipewire/", "")
   if value == "auto" then return "" end
+  value = value:gsub("^pipewire/", "")
   return value:sub(1, 160)
 end
 

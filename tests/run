@@ -241,6 +241,14 @@ runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
 cache_dir="$XDG_CACHE_HOME/omarchy-radio-atlas"
 mkdir -p "$runtime_dir"
 
+for device_and_output in "auto:" "pipewire/auto:auto"; do
+  RADIO_ATLAS_STATUS_FILE="$test_root/status.json" \
+  RADIO_ATLAS_QUEUE_FILE="$test_root/missing-queue.json" \
+  RADIO_ATLAS_TEST_AUDIO_DEVICE=${device_and_output%%:*} \
+  RADIO_ATLAS_TEST_EXPECTED_OUTPUT=${device_and_output#*:} \
+    lua "$project_dir/tests/status.test.lua" "$project_dir/radio-status.lua"
+done
+
 track_player_pid() {
   local pid=$1
   printf '%s %s\n' "$pid" "$(awk '{ print $22 }' "/proc/$pid/stat")" \
@@ -543,12 +551,13 @@ jq -e '.volume == 81' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 
 if RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" outputs > "$test_root/outputs.json"; then
-  jq -e '(.outputs | length == 3)
+  jq -e '(.outputs | length == 4)
     and .outputs[0].id == "alsa_output.pci-0000_00_1f.3.analog-stereo"
     and .outputs[0].label == "Built-in Audio"
     and .outputs[1].id == "raop_sink.Living-Room.local.192.168.1.49.7000"
     and .outputs[1].label == "Living Room · 192.168.1.49"
-    and .outputs[2].id == "default"' \
+    and .outputs[2].id == "default"
+    and .outputs[3].id == "auto"' \
     "$test_root/outputs.json" >/dev/null
 else
   echo "Audio output listing failed" >&2
@@ -641,6 +650,11 @@ if RADIO_ATLAS_TEST_PACTL_MODE=json RADIO_ATLAS_TEST_SOCAT_MODE=error \
 fi
 jq -e '.output == "raop_sink.Living-Room.local.192.168.1.49.7000"' \
   "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
+RADIO_ATLAS_TEST_PACTL_MODE=json RADIO_ATLAS_TEST_SOCAT_MODE=success \
+  RADIO_ATLAS_TEST_SOCKET="$runtime_dir/mpv.sock" \
+  PATH="$project_dir/tests/fixtures:$PATH" \
+  "$project_dir/radio-player" output auto \
+  | jq -e '.running == true and .output == "auto"' >/dev/null
 RADIO_ATLAS_TEST_PACTL_MODE=json RADIO_ATLAS_TEST_SOCAT_MODE=success \
   RADIO_ATLAS_TEST_SOCKET="$runtime_dir/mpv.sock" \
   PATH="$project_dir/tests/fixtures:$PATH" \
