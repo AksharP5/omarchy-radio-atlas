@@ -14,6 +14,7 @@ package.preload["mp"] = function()
       return { kill = function() end }
     end,
     observe_property = function() end,
+    add_hook = function() end,
     register_event = function() end,
     register_script_message = function() end
   }

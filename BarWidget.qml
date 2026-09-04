@@ -11,6 +11,7 @@ BarWidget {
 
   property bool playerRunning: false
   property bool playerPaused: false
+  property string streamError: ""
   property bool playerMuted: false
   property int playerVolume: 70
   property int reportedVolume: 70
@@ -34,6 +35,7 @@ BarWidget {
       var state = JSON.parse(raw || "{}")
       root.playerRunning = state.running === true
       root.playerPaused = state.paused === true
+      root.streamError = root.singleLineText(state.error || "", 200)
       root.playerMuted = state.muted === true
       var nextVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
       root.reportedVolume = isFinite(nextVolume)
@@ -132,7 +134,8 @@ BarWidget {
     text: "\uf0ac"
     active: root.playerRunning && !root.playerPaused
     tooltipText: root.playerRunning
-      ? (root.playerPaused ? "Radio paused: " : "Playing: ") + root.safeTooltipText(root.playerTitle)
+      ? (root.streamError ? root.streamError + ": " : root.playerPaused ? "Radio paused: " : "Playing: ")
+        + root.safeTooltipText(root.playerTitle)
         + "  ·  " + (root.playerMuted ? "muted" : root.playerVolume + "%")
       : "Open Radio Atlas"
 

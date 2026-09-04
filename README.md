@@ -25,7 +25,7 @@ usual play, pause, previous, and next controls.
 - Automatic dismissal when Omarchy starts its screensaver
 - Keyboard navigation
 - Persistent world and country caches with background refresh and transient retries
-- Automatic skip to the next playlist entry when a stream fails
+- Keeps your chosen station selected if its stream fails, with explicit retry or next controls
 
 ## Install
 
@@ -73,6 +73,13 @@ Favorites, listening history, volume, and the selected audio output remain in
 
 On the bar, left click opens Radio Atlas, middle click tunes randomly, right
 click stops its player, and the mouse wheel adjusts radio volume.
+
+If a station disconnects or cannot be played, Radio Atlas keeps it selected and
+shows the failure. Click the play button to retry that station, or Next/Previous
+to choose another queued station. It does not automatically reconnect or switch
+stations. A repeated opening clip can come from the station's stream server;
+retrying may play that same clip again. Radio Browser supplies station listings,
+not the audio streams.
 
 ## Audio outputs and AirPlay
 

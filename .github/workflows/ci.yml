@@ -23,7 +23,7 @@ jobs:
       - name: Install runtime tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes bubblewrap iproute2 jq lua5.4 python3 ripgrep socat
+          sudo apt-get install --yes bubblewrap iproute2 jq lua5.4 mpv python3 ripgrep socat
 
       - name: Allow Bubblewrap user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
