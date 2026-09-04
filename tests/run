@@ -19,6 +19,7 @@ bash -n "$project_dir/radio-fetch" "$project_dir/radio-player" \
 luac -p "$project_dir/radio-status.lua"
 node "$project_dir/tests/model.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
+python3 "$project_dir/tests/playback.test.py"
 ! rg -q 'playerStatusProcess|refreshPlayerStatus' \
   "$project_dir/BarWidget.qml" "$project_dir/RadioAtlas.qml"
 rg -q 'maximumScale: 24' "$project_dir/Globe.qml"

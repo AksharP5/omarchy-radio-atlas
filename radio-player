@@ -164,6 +164,7 @@ status() {
       '{"command":["get_property","volume"],"request_id":5}' \
       '{"command":["get_property","mute"],"request_id":6}' \
       '{"command":["get_property","audio-device"],"request_id":7}' \
+      '{"command":["get_property","user-data/radio-atlas-failure"],"request_id":8}' \
       | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
       | head -c "$((max_ipc_bytes + 1))" || true
   )
@@ -177,8 +178,14 @@ status() {
     return
   fi
 
-  local position station loaded station_uuid loaded_uuid
+  local position station loaded station_uuid loaded_uuid failure
+  failure=$(jq -sc '[.[] | select(.request_id == 8 and .error == "success") | .data
+    | select(type == "object" and (.position | type == "number")
+      and (.message | type == "string") and (.detail | type == "string"))][0] // null' <<< "$response")
   position=$(jq -r 'select(.request_id == 3) | .data' <<< "$response" | head -n 1)
+  if [[ $failure != null ]]; then
+    position=$(jq -r '.position' <<< "$failure")
+  fi
   station='{}'
   if [[ $position =~ ^[0-9]+$ ]] && valid_runtime_array "$queue_file"; then
     station=$(jq -c --argjson position "$position" '
@@ -201,18 +208,22 @@ status() {
     [[ $loaded_uuid == "$station_uuid" ]] && loaded=true
   fi
 
-  write_status "$(jq -sc --argjson station "$station" --argjson loaded "$loaded" '{
+  [[ $failure == null ]] || loaded=false
+  write_status "$(jq -sc --argjson station "$station" --argjson loaded "$loaded" \
+    --argjson failure "$failure" '{
     running: true,
-    paused: ([.[] | select(.request_id == 1) | .data][0] // false),
+    paused: ($failure != null or ([.[] | select(.request_id == 1) | .data][0] // false)),
     muted: ([.[] | select(.request_id == 6) | .data][0] // false),
     title: (([.[] | select(.request_id == 2) | .data][0] // "")
       | if type == "string" then gsub("[\\r\\n\\t]"; " ")[:512] else "" end),
-    playlistPosition: ([.[] | select(.request_id == 3) | .data][0] // -1),
+    playlistPosition: ($failure.position // [.[] | select(.request_id == 3) | .data][0] // -1),
     playlistCount: ([.[] | select(.request_id == 4) | .data][0] // 0),
     volume: ([.[] | select(.request_id == 5) | .data][0] // 70),
     output: (([.[] | select(.request_id == 7) | .data][0] // "")
       | if type == "string" then (if . == "auto" then "" else sub("^pipewire/"; "") end) else "" end),
     loaded: $loaded,
+    error: ($failure.message // ""),
+    errorDetail: ($failure.detail // ""),
     station: $station
   }' <<< "$response")"
 }
@@ -534,7 +545,7 @@ case "$action" in
     play_station "${2:-}" "${3:-results}"
     ;;
   toggle)
-    player_command '{"command":["cycle","pause"]}'
+    player_command '{"command":["script-message","radio-atlas-toggle"]}'
     ;;
   next)
     player_command '{"command":["playlist-next","force"]}'
