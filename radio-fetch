@@ -22,6 +22,7 @@ country_cache_minutes=1440
 search_dir=""
 world_more_response=""
 world_more_result=""
+bases=()
 
 cleanup() {
   [[ -z $search_dir ]] || rm -rf "$search_dir"
@@ -42,10 +43,13 @@ discover_bases() {
 
 }
 
-mapfile -t bases < <(discover_bases | awk '!seen[$0]++' | shuf)
-if (( ${#bases[@]} == 0 )); then
-  bases=('https://all.api.radio-browser.info')
-fi
+load_bases() {
+  (( ${#bases[@]} > 0 )) && return
+  mapfile -t bases < <(discover_bases | awk '!seen[$0]++' | shuf)
+  if (( ${#bases[@]} == 0 )); then
+    bases=('https://all.api.radio-browser.info')
+  fi
+}
 
 normalize='def number_or_null: try tonumber catch null;
   def clean($limit):
@@ -91,6 +95,7 @@ request() {
   local max_records=$1
   local path=$2
   shift 2
+  load_bases
   local base error_file max_time response_file
   max_time=12
   (( max_records >= 500 )) && max_time=45
@@ -309,6 +314,7 @@ fetch_world() {
 
 fetch_search() {
   local query=$1
+  load_bases
   search_dir=$(mktemp -d "$runtime_dir/search.XXXXXX")
 
   request 80 '/json/stations/search' \
