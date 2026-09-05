@@ -7,6 +7,8 @@ Item {
   property var countries: []
   property var stations: []
   property var selectedStation: null
+  readonly property string selectedStationUuid: selectedStation ? String(selectedStation.uuid || "") : ""
+  readonly property real stationHitRadius: 12
   property string activeCountryCode: ""
 
   property real centreLatitude: 18
@@ -400,6 +402,11 @@ Item {
       row.screenX = globeCanvas.width / 2 + xProjection * globeRadius
       row.screenY = globeCanvas.height / 2 - yProjection * globeRadius
       row.depth = depth
+      row.visible = row.screenX >= -stationHitRadius
+        && row.screenX <= globeCanvas.width + stationHitRadius
+        && row.screenY >= -stationHitRadius
+        && row.screenY <= globeCanvas.height + stationHitRadius
+      if (!row.visible) continue
 
       var selected = selectedStation && row.station.uuid === selectedStation.uuid
       var highlighted = highlightedStation
@@ -460,7 +467,7 @@ Item {
 
   function stationUnderPointer(x, y) {
     var nearest = null
-    var nearestDistance = 144
+    var nearestDistance = stationHitRadius * stationHitRadius
     for (var i = 0; i < preparedStations.length; i++) {
       var row = preparedStations[i]
       if (!row.visible) continue
@@ -504,7 +511,7 @@ Item {
     refreshLandingHighlight()
     globeCanvas.requestPaint()
   }
-  onSelectedStationChanged: {
+  onSelectedStationUuidChanged: {
     clearLandingHighlight()
     globeCanvas.requestPaint()
   }

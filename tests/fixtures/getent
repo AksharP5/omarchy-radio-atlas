@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+[[ -z ${RADIO_ATLAS_TEST_DNS_LOG:-} ]] || printf '%s\n' "$*" >> "$RADIO_ATLAS_TEST_DNS_LOG"
 
 case ${1:-} in
   ahostsv4)

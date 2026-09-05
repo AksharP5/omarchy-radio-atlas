@@ -24,6 +24,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes bubblewrap iproute2 jq lua5.4 mpv python3 ripgrep socat
+          sudo apt-get install --yes qt6-declarative-dev-tools qml6-module-qttest \
+            qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript \
+            qml6-module-qtqml-models
 
       - name: Allow Bubblewrap user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0

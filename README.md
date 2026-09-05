@@ -81,6 +81,10 @@ stations. A repeated opening clip can come from the station's stream server;
 retrying may play that same clip again. Radio Browser supplies station listings,
 not the audio streams.
 
+Fresh world and country caches load without DNS lookups. The globe skips
+off-screen station markers when zoomed in, and player-status updates for the
+same station preserve the landing highlight without repainting the globe.
+
 ## Audio outputs and AirPlay
 
 The speaker button next to the volume slider chooses where radio plays. It lists
