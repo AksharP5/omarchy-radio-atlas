@@ -151,7 +151,9 @@ overwrite it and reports
 `~/.local/share/radio-atlas/state.json`; back up that file before repairing or
 removing it.
 
-[![Greptile: The War on Bugs](https://www.greptile.com/badge.svg)](https://www.greptile.com/?utm_source=oss_badge&utm_medium=readme&utm_campaign=greptile_for_open_source)
+<a href="https://www.greptile.com/?utm_source=oss_badge&amp;utm_medium=readme&amp;utm_campaign=greptile_for_open_source">
+  <img src="https://www.greptile.com/badge.svg" alt="Greptile: The War on Bugs" width="100%">
+</a>
 
 ## Development
 
