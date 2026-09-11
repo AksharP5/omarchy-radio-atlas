@@ -438,26 +438,12 @@ Item {
 
   function paintSolarTerminator(ctx, centreX, centreY, globeRadius) {
     if (!subsolarPoint) return
-    var sLat = Number(subsolarPoint.latitude) * Math.PI / 180
-    var sLon = Number(subsolarPoint.longitude) * Math.PI / 180
-    var cosSLat = Math.cos(sLat)
-    var sx = cosSLat * Math.cos(sLon)
-    var sy = cosSLat * Math.sin(sLon)
-    var sz = Math.sin(sLat)
-
-    var latitude = centreLatitude * Math.PI / 180
-    var longitude = centreLongitude * Math.PI / 180
-    var sinLatitude = Math.sin(latitude)
-    var cosLatitude = Math.cos(latitude)
-    var sinLongitude = Math.sin(longitude)
-    var cosLongitude = Math.cos(longitude)
-
-    var horizontal = sx * cosLongitude + sy * sinLongitude
-    var sCamX = sy * cosLongitude - sx * sinLongitude
-    var sCamY = cosLatitude * sz - sinLatitude * horizontal
-    var sCamZ = sinLatitude * sz + cosLatitude * horizontal
-
-    var inPlaneLen = Math.hypot(sCamX, sCamY)
+    var geometry = RadioModel.terminatorGeometry(subsolarPoint, centreLatitude, centreLongitude, 64)
+    if (!geometry) return
+    var sCamX = geometry.sunX
+    var sCamY = geometry.sunY
+    var sCamZ = geometry.sunZ
+    var inPlaneLen = geometry.inPlaneLength
 
     if (inPlaneLen < 1e-4) {
       if (sCamZ < 0) {
@@ -469,25 +455,15 @@ Item {
       return
     }
 
-    var sunAngleMath = Math.atan2(sCamY, sCamX)
     var sunAngleScreen = Math.atan2(-sCamY, sCamX)
-    var cosSun = Math.cos(sunAngleMath)
-    var sinSun = Math.sin(sunAngleMath)
 
-    var steps = 64
-    var ellipsePoints = []
-    for (var i = 0; i <= steps; i++) {
-      var t = -Math.PI / 2 + (i / steps) * Math.PI
-      var v = Math.sin(t)
-      var u = -sCamZ * Math.cos(t)
-
-      var x = u * cosSun - v * sinSun
-      var y = u * sinSun + v * cosSun
-
-      var sxScreen = centreX + x * globeRadius
-      var syScreen = centreY - y * globeRadius
-      ellipsePoints.push({ x: sxScreen, y: syScreen })
-    }
+    var steps = geometry.steps
+    var ellipsePoints = geometry.points.map(function(point) {
+      return {
+        x: centreX + point.x * globeRadius,
+        y: centreY - point.y * globeRadius
+      }
+    })
 
     var angleStartScreen = Math.atan2(ellipsePoints[0].y - centreY, ellipsePoints[0].x - centreX)
     var angleEndScreen = Math.atan2(ellipsePoints[steps].y - centreY, ellipsePoints[steps].x - centreX)

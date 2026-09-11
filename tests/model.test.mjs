@@ -349,5 +349,26 @@ assert.ok(Math.abs(springEquinox.latitude) < 0.5)
 const midnightUtc = model.subsolarPoint(new Date("2026-03-20T00:00:00Z"))
 assert.ok(Math.abs(midnightUtc.longitude) > 175)
 
-console.log("RadioModel tests passed")
+function assertTerminatorIsOrthogonal(point, centreLatitude, centreLongitude) {
+  const geometry = model.terminatorGeometry(point, centreLatitude, centreLongitude, 32)
+  assert.equal(geometry.points.length, 33)
+  for (const terminatorPoint of geometry.points) {
+    assert.ok(Math.abs(terminatorPoint.x * terminatorPoint.x + terminatorPoint.y * terminatorPoint.y + terminatorPoint.z * terminatorPoint.z - 1) < 1e-12)
+    assert.ok(Math.abs(geometry.sunX * terminatorPoint.x + geometry.sunY * terminatorPoint.y + geometry.sunZ * terminatorPoint.z) < 1e-12)
+  }
+  return geometry
+}
 
+const frontLit = model.terminatorGeometry({ latitude: 0, longitude: 0 }, 0, 0, 32)
+assert.equal(frontLit.points.length, 0)
+assert.ok(frontLit.sunZ > 0.99)
+
+const backLit = model.terminatorGeometry({ latitude: 0, longitude: 180 }, 0, 0, 32)
+assert.equal(backLit.points.length, 0)
+assert.ok(backLit.sunZ < -0.99)
+
+const sideLit = assertTerminatorIsOrthogonal({ latitude: 0, longitude: 90 }, 0, 0)
+assert.ok(Math.abs(sideLit.sunZ) < 1e-12)
+assert.ok(Math.abs(sideLit.points[16].x) < 1e-12)
+
+console.log("RadioModel tests passed")

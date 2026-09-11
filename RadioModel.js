@@ -608,3 +608,55 @@ function subsolarPoint(date) {
   return { latitude: declination, longitude: subsolarLong }
 }
 
+// Returns the camera-space sun vector and unit-radius points on the visible
+// terminator ellipse. Keeping this projection here makes the renderer and its
+// tests use the same geometry and coordinate conventions.
+function terminatorGeometry(point, centreLatitude, centreLongitude, steps) {
+  if (!point) return null
+  var sLat = Number(point.latitude) * radians
+  var sLon = Number(point.longitude) * radians
+  var cosSLat = Math.cos(sLat)
+  var sx = cosSLat * Math.cos(sLon)
+  var sy = cosSLat * Math.sin(sLon)
+  var sz = Math.sin(sLat)
+
+  var latitude = Number(centreLatitude) * radians
+  var longitude = Number(centreLongitude) * radians
+  var sinLatitude = Math.sin(latitude)
+  var cosLatitude = Math.cos(latitude)
+  var sinLongitude = Math.sin(longitude)
+  var cosLongitude = Math.cos(longitude)
+
+  var horizontal = sx * cosLongitude + sy * sinLongitude
+  var cameraX = sy * cosLongitude - sx * sinLongitude
+  var cameraY = cosLatitude * sz - sinLatitude * horizontal
+  var cameraZ = sinLatitude * sz + cosLatitude * horizontal
+  var inPlaneLength = Math.hypot(cameraX, cameraY)
+  var count = Math.max(4, Math.floor(Number(steps) || 64))
+  var points = []
+
+  if (inPlaneLength >= 1e-4) {
+    var angle = Math.atan2(cameraY, cameraX)
+    var cosAngle = Math.cos(angle)
+    var sinAngle = Math.sin(angle)
+    for (var i = 0; i <= count; i++) {
+      var t = -Math.PI / 2 + (i / count) * Math.PI
+      var v = Math.sin(t)
+      var u = -cameraZ * Math.cos(t)
+      points.push({
+        x: u * cosAngle - v * sinAngle,
+        y: u * sinAngle + v * cosAngle,
+        z: inPlaneLength * Math.cos(t)
+      })
+    }
+  }
+
+  return {
+    sunX: cameraX,
+    sunY: cameraY,
+    sunZ: cameraZ,
+    inPlaneLength: inPlaneLength,
+    steps: count,
+    points: points
+  }
+}
