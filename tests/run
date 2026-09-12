@@ -19,6 +19,7 @@ bash -n "$project_dir/radio-fetch" "$project_dir/radio-player" \
 luac -p "$project_dir/radio-status.lua"
 node "$project_dir/tests/model.test.mjs"
 node "$project_dir/tests/expansion.test.mjs"
+node "$project_dir/tests/selection.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
 python3 "$project_dir/tests/playback.test.py"
 QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner \

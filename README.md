@@ -84,6 +84,7 @@ not the audio streams.
 Fresh world and country caches load without DNS lookups. The globe skips
 off-screen station markers when zoomed in, and player-status updates for the
 same station preserve the landing highlight without repainting the globe.
+Track-title, volume, and pause updates also preserve your station-list selection.
 Theme colors update the globe immediately. Background station expansion stops
 after three consecutive attempts add no stations, including failed requests;
 reopening Radio Atlas allows expansion to try again.

@@ -568,10 +568,7 @@ Item {
           if (displayStations[i].name === playerTitle) { matchingIndex = i; break }
         }
       }
-      if (matchingIndex >= 0) {
-        selectedIndex = matchingIndex
-        selectedStation = displayStations[matchingIndex]
-      }
+      if (playingChanged && matchingIndex >= 0) setSelection(matchingIndex)
 
       var countryStation = nextPlayingStation || (matchingIndex >= 0 ? selectedStation : null)
       if (playerRunning && playingChanged && countryStation)
