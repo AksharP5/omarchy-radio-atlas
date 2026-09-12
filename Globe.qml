@@ -34,7 +34,15 @@ Item {
   property color textColor: "#f3f4f5"
   property string fontFamily: "monospace"
 
+  property bool showTerminator: true
+  property var subsolarPoint: RadioModel.subsolarPoint(new Date())
+  property color nightColor: "#040608"
+  property real nightOpacity: 0.44
+  property color terminatorColor: accentColor
+  property real terminatorOpacity: 0.45
+
   property var hoveredStation: null
+
   property real hoverX: 0
   property real hoverY: 0
   property var highlightedStation: null
@@ -428,6 +436,66 @@ Item {
     }
   }
 
+  function paintSolarTerminator(ctx, centreX, centreY, globeRadius) {
+    if (!subsolarPoint) return
+    var geometry = RadioModel.terminatorGeometry(subsolarPoint, centreLatitude, centreLongitude, 64)
+    if (!geometry) return
+    var sCamX = geometry.sunX
+    var sCamY = geometry.sunY
+    var sCamZ = geometry.sunZ
+    var inPlaneLen = geometry.inPlaneLength
+
+    if (inPlaneLen < 1e-4) {
+      if (sCamZ < 0) {
+        ctx.beginPath()
+        ctx.arc(centreX, centreY, globeRadius, 0, Math.PI * 2)
+        ctx.fillStyle = withAlpha(nightColor, nightOpacity)
+        ctx.fill()
+      }
+      return
+    }
+
+    var sunAngleScreen = Math.atan2(-sCamY, sCamX)
+
+    var steps = geometry.steps
+    var ellipsePoints = geometry.points.map(function(point) {
+      return {
+        x: centreX + point.x * globeRadius,
+        y: centreY - point.y * globeRadius
+      }
+    })
+
+    var angleStartScreen = Math.atan2(ellipsePoints[0].y - centreY, ellipsePoints[0].x - centreX)
+    var angleEndScreen = Math.atan2(ellipsePoints[steps].y - centreY, ellipsePoints[steps].x - centreX)
+
+    var awayFromSun = (sunAngleScreen + Math.PI * 3) % (Math.PI * 2)
+    var angleEndWrapped = (angleEndScreen + Math.PI * 2) % (Math.PI * 2)
+    var angleStartWrapped = (angleStartScreen + Math.PI * 2) % (Math.PI * 2)
+
+    var diff = (angleStartWrapped - angleEndWrapped + Math.PI * 2) % (Math.PI * 2)
+    var diffSun = (awayFromSun - angleEndWrapped + Math.PI * 2) % (Math.PI * 2)
+    var anticlockwise = !(diffSun < diff)
+
+    ctx.beginPath()
+    ctx.moveTo(ellipsePoints[0].x, ellipsePoints[0].y)
+    for (var j = 1; j <= steps; j++) {
+      ctx.lineTo(ellipsePoints[j].x, ellipsePoints[j].y)
+    }
+    ctx.arc(centreX, centreY, globeRadius, angleEndScreen, angleStartScreen, anticlockwise)
+    ctx.closePath()
+    ctx.fillStyle = withAlpha(nightColor, nightOpacity)
+    ctx.fill()
+
+    ctx.beginPath()
+    ctx.moveTo(ellipsePoints[0].x, ellipsePoints[0].y)
+    for (var k = 1; k <= steps; k++) {
+      ctx.lineTo(ellipsePoints[k].x, ellipsePoints[k].y)
+    }
+    ctx.strokeStyle = withAlpha(terminatorColor, terminatorOpacity)
+    ctx.lineWidth = Math.min(2.0, Math.max(1.0, globeRadius / 400))
+    ctx.stroke()
+  }
+
   function paintGlobe(ctx) {
     var centreX = globeCanvas.width / 2
     var centreY = globeCanvas.height / 2
@@ -455,6 +523,7 @@ Item {
     ctx.clip()
     paintGrid(ctx, centreX, centreY, globeRadius)
     paintCountries(ctx, centreX, centreY, globeRadius)
+    if (showTerminator) paintSolarTerminator(ctx, centreX, centreY, globeRadius)
     paintSignals(ctx)
     ctx.restore()
 
@@ -549,6 +618,30 @@ Item {
   }
   onVisibleChanged: {
     if (!visible) stopKineticRotation(true)
+  }
+  onSubsolarPointChanged: globeCanvas.requestPaint()
+  onShowTerminatorChanged: {
+    if (showTerminator && visible) refreshSolarPosition()
+    globeCanvas.requestPaint()
+  }
+  onNightColorChanged: globeCanvas.requestPaint()
+  onNightOpacityChanged: globeCanvas.requestPaint()
+  onTerminatorColorChanged: globeCanvas.requestPaint()
+  onTerminatorOpacityChanged: globeCanvas.requestPaint()
+
+  function refreshSolarPosition() {
+    root.subsolarPoint = RadioModel.subsolarPoint(new Date())
+  }
+
+  Timer {
+    id: solarTimer
+    interval: 60000
+    running: root.visible && root.showTerminator
+    repeat: true
+    onRunningChanged: {
+      if (running) root.refreshSolarPosition()
+    }
+    onTriggered: root.refreshSolarPosition()
   }
 
   Canvas {

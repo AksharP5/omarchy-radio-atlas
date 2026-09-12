@@ -567,3 +567,96 @@ function indexByUuid(stations, uuid) {
   for (var i = 0; i < rows.length; i++) if (rows[i].uuid === uuid) return i
   return -1
 }
+
+function subsolarPoint(date) {
+  var d = date || new Date()
+  var ms = d.getTime()
+  var julianDate = ms / 86400000 + 2440587.5
+  var t = (julianDate - 2451545.0) / 36525.0
+
+  var L0 = (280.46646 + t * (36000.76983 + t * 0.0003032)) % 360
+  if (L0 < 0) L0 += 360
+  var M = (357.52911 + t * (35999.05029 - t * 0.0001537)) % 360
+  if (M < 0) M += 360
+  var e = 0.016708634 - t * (0.000042037 + 0.0000001267 * t)
+
+  var C = Math.sin(M * radians) * (1.914602 - t * (0.004817 + 0.000014 * t))
+        + Math.sin(2 * M * radians) * (0.019993 - 0.000101 * t)
+        + Math.sin(3 * M * radians) * 0.000289
+  var sunTrueLong = L0 + C
+
+  var eps0 = 23.439291 - t * (0.013004167 + t * (0.00000016667 - t * 0.000000502778))
+  var omega = 125.04 - 1934.136 * t
+  var eps = eps0 + 0.00256 * Math.cos(omega * radians)
+  var lambdaApparent = sunTrueLong - 0.00569 - 0.00478 * Math.sin(omega * radians)
+
+  var sinDec = Math.sin(eps * radians) * Math.sin(lambdaApparent * radians)
+  var declination = Math.asin(sinDec) * degrees
+
+  var y = Math.pow(Math.tan((eps / 2) * radians), 2)
+  var eot = 4 * degrees * (
+    y * Math.sin(2 * L0 * radians)
+    - 2 * e * Math.sin(M * radians)
+    + 4 * e * y * Math.sin(M * radians) * Math.cos(2 * L0 * radians)
+    - 0.5 * y * y * Math.sin(4 * L0 * radians)
+    - 1.25 * e * e * Math.sin(2 * M * radians)
+  )
+
+  var utcSeconds = d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds() + d.getUTCMilliseconds() / 1000
+  var subsolarLong = wrapLongitude(-((utcSeconds / 3600 - 12) * 15 + eot / 4))
+
+  return { latitude: declination, longitude: subsolarLong }
+}
+
+// Returns the camera-space sun vector and unit-radius points on the visible
+// terminator ellipse. Keeping this projection here makes the renderer and its
+// tests use the same geometry and coordinate conventions.
+function terminatorGeometry(point, centreLatitude, centreLongitude, steps) {
+  if (!point) return null
+  var sLat = Number(point.latitude) * radians
+  var sLon = Number(point.longitude) * radians
+  var cosSLat = Math.cos(sLat)
+  var sx = cosSLat * Math.cos(sLon)
+  var sy = cosSLat * Math.sin(sLon)
+  var sz = Math.sin(sLat)
+
+  var latitude = Number(centreLatitude) * radians
+  var longitude = Number(centreLongitude) * radians
+  var sinLatitude = Math.sin(latitude)
+  var cosLatitude = Math.cos(latitude)
+  var sinLongitude = Math.sin(longitude)
+  var cosLongitude = Math.cos(longitude)
+
+  var horizontal = sx * cosLongitude + sy * sinLongitude
+  var cameraX = sy * cosLongitude - sx * sinLongitude
+  var cameraY = cosLatitude * sz - sinLatitude * horizontal
+  var cameraZ = sinLatitude * sz + cosLatitude * horizontal
+  var inPlaneLength = Math.hypot(cameraX, cameraY)
+  var count = Math.max(4, Math.floor(Number(steps) || 64))
+  var points = []
+
+  if (inPlaneLength >= 1e-4) {
+    var angle = Math.atan2(cameraY, cameraX)
+    var cosAngle = Math.cos(angle)
+    var sinAngle = Math.sin(angle)
+    for (var i = 0; i <= count; i++) {
+      var t = -Math.PI / 2 + (i / count) * Math.PI
+      var v = Math.sin(t)
+      var u = -cameraZ * Math.cos(t)
+      points.push({
+        x: u * cosAngle - v * sinAngle,
+        y: u * sinAngle + v * cosAngle,
+        z: inPlaneLength * Math.cos(t)
+      })
+    }
+  }
+
+  return {
+    sunX: cameraX,
+    sunY: cameraY,
+    sunZ: cameraZ,
+    inPlaneLength: inPlaneLength,
+    steps: count,
+    points: points
+  }
+}

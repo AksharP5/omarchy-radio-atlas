@@ -12,6 +12,7 @@ usual play, pause, previous, and next controls.
 ## Features
 
 - Kinetic drag rotation that highlights a nearby station when it settles, plus deep wheel zoom on a theme-aware globe
+- Real-time solar day/night terminator with night-side shading across the globe
 - A fast cached world view that progressively adds thousands of stations and keeps the session catalog when closed
 - Country stations stay on the session globe and take priority over background signals
 - Country-level map estimates when a station has no published coordinates
