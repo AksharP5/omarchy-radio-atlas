@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 MAX_HEADER_BYTES = 65_536
 MAX_ACTIVE_CONNECTIONS = 32
 MAX_RESOLVED_ENDPOINTS = 16
+MAX_DIAGNOSTICS = 200
+diagnostic_count = 0
+diagnostic_lock = threading.Lock()
 NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
 IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
 
@@ -23,6 +26,28 @@ IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
 class ProxyError(Exception):
     def __init__(self, status: bytes):
         self.status = status
+
+
+def log_connection(stage, outcome, error=None):
+    global diagnostic_count
+    with diagnostic_lock:
+        if diagnostic_count >= MAX_DIAGNOSTICS:
+            return
+        diagnostic_count += 1
+        if diagnostic_count == MAX_DIAGNOSTICS:
+            print("radio-proxy: diagnostic limit reached for this session", file=sys.stderr, flush=True)
+            return
+        details = f"stage={stage} outcome={outcome}"
+        if error is not None:
+            details += f" error={type(error).__name__}"
+            if isinstance(error, ProxyError):
+                details += f" status={error.status[:3].decode('ascii')}"
+            cause = error.__cause__ or error
+            if cause is not error:
+                details += f" cause={type(cause).__name__}"
+            if isinstance(cause, OSError) and cause.errno is not None:
+                details += f" errno={cause.errno}"
+        print(f"radio-proxy: {details}", file=sys.stderr, flush=True)
 
 
 def embeds_non_public_ipv4(ip: ipaddress.IPv4Address | ipaddress.IPv6Address):
@@ -202,35 +227,39 @@ def relay(left: socket.socket, right: socket.socket):
     while True:
         readable, _, _ = select.select((left, right), (), (), 60)
         if not readable:
-            return
+            return "idle_timeout"
         for source in readable:
             data = source.recv(65_536)
             if not data:
-                return
+                return "client_closed" if source is left else "upstream_closed"
             (right if source is left else left).sendall(data)
 
 
 class ProxyHandler(socketserver.BaseRequestHandler):
     def handle(self):
         self.request.settimeout(12)
+        stage = "request"
         try:
             header, pending = read_header(self.request)
             method, host, port, forwarded = parse_request(header)
+            stage = "connect"
             with connect_public(host, port) as upstream:
+                stage = "relay"
                 if method == "CONNECT":
                     self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 else:
                     upstream.sendall(forwarded)
                 if pending:
                     upstream.sendall(pending)
-                relay(self.request, upstream)
+                log_connection(stage, relay(self.request, upstream))
         except ProxyError as error:
+            log_connection(stage, "rejected", error)
             try:
                 self.request.sendall(b"HTTP/1.1 " + error.status + b"\r\nConnection: close\r\n\r\n")
             except OSError:
                 return
-        except (BrokenPipeError, ConnectionError, OSError, TimeoutError):
-            return
+        except OSError as error:
+            log_connection(stage, "failed", error)
 
 
 class ProxyServer(socketserver.ThreadingUnixStreamServer):

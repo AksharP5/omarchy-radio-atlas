@@ -516,6 +516,13 @@ Item {
     globeCanvas.requestPaint()
   }
   onActiveCountryCodeChanged: globeCanvas.requestPaint()
+  onBackgroundColorChanged: globeCanvas.requestPaint()
+  onSphereColorChanged: globeCanvas.requestPaint()
+  onLandColorChanged: globeCanvas.requestPaint()
+  onGridColorChanged: globeCanvas.requestPaint()
+  onOutlineColorChanged: globeCanvas.requestPaint()
+  onSignalColorChanged: globeCanvas.requestPaint()
+  onAccentColorChanged: globeCanvas.requestPaint()
   onCentreLatitudeChanged: {
     updateHighlightPosition()
     globeCanvas.requestPaint()

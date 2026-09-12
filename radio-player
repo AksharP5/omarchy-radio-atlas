@@ -209,7 +209,7 @@ status() {
   fi
 
   [[ $failure == null ]] || loaded=false
-  write_status "$(jq -sc --argjson station "$station" --argjson loaded "$loaded" \
+  printf '%s\n' "$(jq -sc --argjson station "$station" --argjson loaded "$loaded" \
     --argjson failure "$failure" '{
     running: true,
     paused: ($failure != null or ([.[] | select(.request_id == 1) | .data][0] // false)),

@@ -7,6 +7,7 @@ TestCase {
   when: windowShown
   width: 800
   height: 600
+  visible: true
 
   Atlas.Globe {
     id: globe
@@ -42,6 +43,13 @@ TestCase {
     globe.selectedStation = { uuid: "different", latitude: 0, longitude: 10 }
     compare(selectionChanges.count, 1)
     compare(globe.highlightedStation, null)
+  }
+
+  function test_themeChangeRepaintsWithoutInteraction() {
+    globe.backgroundColor = "#000000"
+    tryVerify(function() { return Qt.colorEqual(grabImage(globe).pixel(2, 2), "#000000") })
+    globe.backgroundColor = "#ffffff"
+    tryVerify(function() { return Qt.colorEqual(grabImage(globe).pixel(2, 2), "#ffffff") })
   }
 
   function test_offscreenMarkersAreSkippedButEdgeMarkersRemainClickable() {

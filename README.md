@@ -84,6 +84,9 @@ not the audio streams.
 Fresh world and country caches load without DNS lookups. The globe skips
 off-screen station markers when zoomed in, and player-status updates for the
 same station preserve the landing highlight without repainting the globe.
+Theme colors update the globe immediately. Background station expansion stops
+after three consecutive attempts add no stations, including failed requests;
+reopening Radio Atlas allows expansion to try again.
 
 ## Audio outputs and AirPlay
 
@@ -145,9 +148,15 @@ Map geometry comes from public-domain Natural Earth data.
 ## Troubleshooting
 
 Player and proxy diagnostics are written to
-`$XDG_RUNTIME_DIR/omarchy-radio-atlas/mpv.log` and `proxy.log`. If saved state
-is malformed, oversized, or contains too many entries, Radio Atlas refuses to
-overwrite it and reports
+`$XDG_RUNTIME_DIR/omarchy-radio-atlas/mpv.log` and `proxy.log`. Proxy diagnostics
+identify request, connection, and relay failures, idle timeouts, and which side
+closed a connection. They omit URLs, hostnames, and raw error messages and are
+capped at 200 lines per player session. Stopping and starting playback begins
+a new session and replaces those logs. A connection closing is not necessarily
+an error; it also happens when changing stations or stopping playback.
+
+If saved state is malformed, oversized, or contains too many entries, Radio Atlas
+refuses to overwrite it and reports
 `~/.local/share/radio-atlas/state.json`; back up that file before repairing or
 removing it.
 
