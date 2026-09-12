@@ -18,6 +18,7 @@ bash -n "$project_dir/radio-fetch" "$project_dir/radio-player" \
   "$project_dir/tests/fixtures/"*
 luac -p "$project_dir/radio-status.lua"
 node "$project_dir/tests/model.test.mjs"
+node "$project_dir/tests/expansion.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
 python3 "$project_dir/tests/playback.test.py"
 QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner \
@@ -112,7 +113,7 @@ rg -Fq '"audio-device",$device' "$project_dir/radio-player"
 rg -Fq 'set_property","audio-device' "$project_dir/radio-player"
 rg -q 'id: outputList' "$project_dir/RadioAtlas.qml"
 sed -n '/id: stationList/,/^          }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'interactive: !root.outputMenuOpen'
+  | rg -F 'interactive: !root.outputMenuOpen' >/dev/null
 ! rg -Fq '.slice(0, 16)' "$project_dir/RadioAtlas.qml"
 sed -n '/tooltipText: root.playerOutput/,/^              }/p' "$project_dir/RadioAtlas.qml" \
   | rg -q 'focusable: true'

@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 import threading
@@ -139,6 +140,31 @@ class PlaybackTest(unittest.TestCase):
         self.action("previous")
         self.wait_status(lambda s: s.get("loaded") and s["playlistPosition"] == 0)
         self.assertEqual(self.requests, failed_requests + ["/live"])
+
+    def test_status_command_does_not_overwrite_player_status(self):
+        state = dict(running=True, loaded=True, station=dict(uuid="station-0"))
+        self.status_path.write_text(json.dumps(state))
+        (self.runtime / "playlist.json").write_text('[{"uuid":"station-0"}]')
+        server = socket.socket(socket.AF_UNIX)
+        self.addCleanup(server.close)
+        server.bind(str(self.runtime / "mpv.sock"))
+        server.listen(1)
+
+        def reply():
+            connection, _ = server.accept()
+            with connection, connection.makefile("r") as requests:
+                for value in [False, "Test", 0, 1, 70, False, "auto", None]:
+                    request = json.loads(requests.readline())
+                    response = dict(request_id=request["request_id"], error="success", data=value)
+                    connection.sendall((json.dumps(response) + "\n").encode())
+
+        responder = threading.Thread(target=reply, daemon=True)
+        responder.start()
+        snapshot = self.action("status")
+        responder.join(timeout=5)
+        self.assertTrue(snapshot["loaded"])
+        self.assertEqual(snapshot["title"], "Test")
+        self.assertEqual(json.loads(self.status_path.read_text()), state)
 
 
 if __name__ == "__main__":

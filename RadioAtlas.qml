@@ -38,6 +38,7 @@ Item {
   property string fetchStderr: ""
   property string worldExpandOutput: ""
   readonly property int worldStationLimit: 5000
+  property int worldExpansionMisses: 0
 
   property bool playerRunning: false
   property bool playerPaused: false
@@ -188,6 +189,7 @@ Item {
     try { payload = JSON.parse(payloadJson || "{}") } catch (error) { payload = ({}) }
 
     opened = true
+    worldExpansionMisses = 0
     windowFrameReady = false
     windowRevealTimer.stop()
     panel.visible = true
@@ -299,7 +301,7 @@ Item {
 
   function scheduleWorldExpansion(delay) {
     if (!opened || worldStations.length === 0
-        || worldStations.length >= worldStationLimit) return
+        || worldStations.length >= worldStationLimit || worldExpansionMisses >= 3) return
     worldExpandTimer.interval = Math.max(500, Number(delay || 1600))
     worldExpandTimer.restart()
   }
@@ -905,6 +907,7 @@ Item {
       var output = root.worldExpandOutput
       root.worldExpandOutput = ""
       if (!root.opened) return
+      root.worldExpansionMisses += 1
       if (exitCode !== 0) {
         root.scheduleWorldExpansion(30000)
         return
@@ -925,9 +928,14 @@ Item {
       var merged = RadioModel.mergeStations(
         root.worldStations, stations, root.worldStationLimit)
       var added = merged.length - root.worldStations.length
+      if (added === 0) {
+        root.scheduleWorldExpansion(10000)
+        return
+      }
+      root.worldExpansionMisses = 0
       root.worldStations = merged
       if (root.mode === "world") root.results = merged
-      root.scheduleWorldExpansion(added > 0 ? 1600 : 10000)
+      root.scheduleWorldExpansion(1600)
     }
   }
 
