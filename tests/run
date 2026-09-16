@@ -104,6 +104,13 @@ sed -n '/id: mapHint/,/^          }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'anchors.right: signalCount.left'
 sed -n '/id: mapHint/,/^          }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'elide: Text.ElideRight'
+rg -q 'id: zoomControls' "$project_dir/RadioAtlas.qml"
+rg -q 'id: zoomInButton' "$project_dir/RadioAtlas.qml"
+rg -q 'id: zoomOutButton' "$project_dir/RadioAtlas.qml"
+sed -n '/id: zoomControls/,/^          }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'anchors.right: parent.right'
+sed -n '/id: zoomControls/,/^          }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'anchors.bottom: signalCount.top'
 rg -q 'rowMouse.containsMouse' "$project_dir/RadioAtlas.qml"
 ! rg -q 'selectedIndex === index.*Style.selectedFillFor' "$project_dir/RadioAtlas.qml"
 ! rg -q 'send_command .*\|\| true' "$project_dir/radio-player"

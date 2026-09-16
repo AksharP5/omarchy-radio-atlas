@@ -1439,6 +1439,87 @@ Item {
             onCountryActivated: function(code, name) { root.browseCountry(code, name) }
           }
 
+          Rectangle {
+            id: zoomControls
+            anchors.right: parent.right
+            anchors.rightMargin: Style.spacing.panelPadding
+            anchors.bottom: signalCount.top
+            anchors.bottomMargin: Style.spacing.md
+            width: Style.space(34)
+            height: Style.space(69)
+            radius: Style.cornerRadius
+            color: root.background
+            border.color: root.faint
+            border.width: 1
+            z: 2
+
+            Accessible.role: Accessible.Pane
+            Accessible.name: "Zoom controls"
+
+            Button {
+              id: zoomInButton
+              anchors.top: parent.top
+              anchors.left: parent.left
+              anchors.right: parent.right
+              height: Style.space(34)
+              iconText: "\uf067"
+              tooltipText: "Zoom in"
+              focusable: false
+              foreground: globe.canZoomIn ? root.foreground : root.dim
+              accent: root.accent
+              opacity: globe.canZoomIn ? 1.0 : 0.4
+              enabled: globe.canZoomIn
+              radius: zoomControls.radius
+              bottomLeftRadius: 0
+              bottomRightRadius: 0
+              background: "transparent"
+              horizontalPadding: 0
+              verticalPadding: 0
+              Accessible.role: Accessible.Button
+              Accessible.name: "Zoom in"
+              onClicked: {
+                globe.zoomIn()
+                keyCatcher.forceActiveFocus()
+              }
+            }
+
+            Rectangle {
+              id: zoomDivider
+              anchors.top: zoomInButton.bottom
+              anchors.left: parent.left
+              anchors.right: parent.right
+              height: 1
+              color: root.faint
+            }
+
+            Button {
+              id: zoomOutButton
+              anchors.top: zoomDivider.bottom
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              iconText: "\uf068"
+              tooltipText: "Zoom out"
+              focusable: false
+              foreground: globe.canZoomOut ? root.foreground : root.dim
+              accent: root.accent
+              opacity: globe.canZoomOut ? 1.0 : 0.4
+              enabled: globe.canZoomOut
+              radius: zoomControls.radius
+              topLeftRadius: 0
+              topRightRadius: 0
+              background: "transparent"
+              horizontalPadding: 0
+              verticalPadding: 0
+              Accessible.role: Accessible.Button
+              Accessible.name: "Zoom out"
+              onClicked: {
+                globe.zoomOut()
+                keyCatcher.forceActiveFocus()
+              }
+            }
+          }
+
           Text {
             id: mapHint
             anchors.left: parent.left

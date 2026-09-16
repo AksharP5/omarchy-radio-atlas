@@ -16,6 +16,8 @@ Item {
   property real globeScale: 1
   property real minimumScale: 0.72
   property real maximumScale: 24
+  readonly property bool canZoomIn: (zoomAnimation.running ? zoomAnimation.to : globeScale) < maximumScale - 0.001
+  readonly property bool canZoomOut: (zoomAnimation.running ? zoomAnimation.to : globeScale) > minimumScale + 0.001
   property real longitudeSensitivity: 0.22
   property real latitudeSensitivity: 0.18
   readonly property real kineticLaunchSpeed: 120
@@ -142,12 +144,48 @@ Item {
     highlightY = position.y
   }
 
+  NumberAnimation {
+    id: zoomAnimation
+    target: root
+    property: "globeScale"
+    duration: 180
+    easing.type: Easing.OutCubic
+  }
+
+  function stopZoomAnimation() {
+    zoomAnimation.stop()
+  }
+
+  function zoomBy(factor) {
+    interactionStarted()
+    stopKineticRotation(true)
+    suppressNextTap = false
+    hoveredStation = null
+    var currentTarget = zoomAnimation.running ? zoomAnimation.to : globeScale
+    var targetScale = RadioModel.clamp(
+      currentTarget * factor, minimumScale, maximumScale)
+    if (Math.abs(targetScale - globeScale) < 0.001) return
+    zoomAnimation.stop()
+    zoomAnimation.from = globeScale
+    zoomAnimation.to = targetScale
+    zoomAnimation.start()
+  }
+
+  function zoomIn(factor) {
+    zoomBy(factor || 1.5)
+  }
+
+  function zoomOut(factor) {
+    zoomBy(1 / (factor || 1.5))
+  }
+
   function focusCoordinate(latitude, longitude) {
     var nextLatitude = Number(latitude)
     var nextLongitude = Number(longitude)
     if (!isFinite(nextLatitude) || !isFinite(nextLongitude)) return
 
     stopKineticRotation(true)
+    stopZoomAnimation()
     centreLatitude = RadioModel.clamp(nextLatitude, -78, 78)
     centreLongitude = RadioModel.wrapLongitude(nextLongitude)
   }
@@ -548,7 +586,10 @@ Item {
     globeCanvas.requestPaint()
   }
   onVisibleChanged: {
-    if (!visible) stopKineticRotation(true)
+    if (!visible) {
+      stopKineticRotation(true)
+      stopZoomAnimation()
+    }
   }
 
   Canvas {
@@ -672,6 +713,7 @@ Item {
     onActiveChanged: {
       if (active) {
         root.stopKineticRotation(true)
+        root.stopZoomAnimation()
         wasActive = true
         launchCanceled = false
         launchPending = false
@@ -728,6 +770,7 @@ Item {
     onWheel: function(event) {
       root.interactionStarted()
       root.stopKineticRotation(true)
+      root.stopZoomAnimation()
       root.suppressNextTap = false
       root.hoveredStation = null
       var factor = Math.exp(event.angleDelta.y / 720)
