@@ -22,6 +22,7 @@ TestCase {
   }
 
   function init() {
+    globe.stopZoomAnimation()
     globe.centreLatitude = 0
     globe.centreLongitude = 0
     globe.globeScale = 1
@@ -79,5 +80,31 @@ TestCase {
     globe.centreLongitude = 180
     globe.paintSignals(context)
     compare(globe.stationUnderPointer(globe.width / 2, globe.height / 2).uuid, "back")
+  }
+
+  function test_zoomControls() {
+    globe.globeScale = 1
+    verify(globe.canZoomIn)
+    verify(globe.canZoomOut)
+
+    globe.zoomIn(2)
+    tryCompare(globe, "globeScale", 2)
+    verify(globe.canZoomIn)
+    verify(globe.canZoomOut)
+
+    globe.zoomOut(2)
+    tryCompare(globe, "globeScale", 1)
+
+    globe.globeScale = globe.maximumScale
+    verify(!globe.canZoomIn)
+    verify(globe.canZoomOut)
+    globe.zoomIn(2)
+    compare(globe.globeScale, globe.maximumScale)
+
+    globe.globeScale = globe.minimumScale
+    verify(globe.canZoomIn)
+    verify(!globe.canZoomOut)
+    globe.zoomOut(2)
+    compare(globe.globeScale, globe.minimumScale)
   }
 }
