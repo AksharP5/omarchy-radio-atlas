@@ -31,5 +31,19 @@ jobs:
       - name: Allow Bubblewrap user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      - name: Diagnose namespace capabilities
+        run: |
+          bwrap --version
+          ip -Version
+          sysctl -a 2>/dev/null | rg 'apparmor|unprivileged_userns'
+          bwrap --unshare-net --unshare-pid --die-with-parent --cap-add CAP_NET_ADMIN \
+            --bind / / --dev-bind /dev /dev -- /usr/bin/bash --noprofile --norc -c '
+              id
+              cat /proc/self/attr/current
+              rg "Cap|NoNewPrivs|Seccomp" /proc/self/status
+              ip link set lo up
+            ' || true
+          sudo dmesg | tail -n 60
+
       - name: Run tests
         run: ./tests/run
