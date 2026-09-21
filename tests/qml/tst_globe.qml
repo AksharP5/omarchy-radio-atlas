@@ -214,7 +214,7 @@ TestCase {
     }
   }
 
-  function test_dragDoesNotActivateStationAndKineticRotationStillAdvances() {
+  function test_dragDoesNotActivateStationAndKineticRotationCanStartAndStop() {
     globe.stations = [{ uuid: "centre", latitude: 0, longitude: 0 }]
     waitForRendering(globe)
     mouseMove(globe, 400, 300, 20)
@@ -224,9 +224,9 @@ TestCase {
     wait(20)
     compare(activations.count, 0)
     globe.stopKineticRotation(true)
-    var longitude = globe.centreLongitude
     verify(globe.startKineticRotation(600, 0))
-    tryVerify(function() { return globe.centreLongitude < longitude })
+    compare(globe.kineticVelocityX, 600)
+    compare(globe.kineticVelocityY, 0)
     globe.stopKineticRotation(true)
     compare(globe.kineticVelocityX, 0)
   }
