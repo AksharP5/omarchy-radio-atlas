@@ -391,6 +391,18 @@ Item {
     var sinLongitude = Math.sin(longitude)
     var cosLongitude = Math.cos(longitude)
     var globeRadius = radius()
+    // Read QML properties and convert colors once, not for every station.
+    var canvasWidth = globeCanvas.width
+    var canvasHeight = globeCanvas.height
+    var centreX = canvasWidth / 2
+    var centreY = canvasHeight / 2
+    var hitRadius = stationHitRadius
+    var selection = selectedStation
+    var highlight = highlightedStation
+    var markerColor = withAlpha(signalColor, 1)
+    var activeColor = accentColor
+    var selectedOutline = withAlpha(activeColor, 0.72)
+    var highlightedOutline = withAlpha(activeColor, 0.92)
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i]
       var horizontal = row.worldX * cosLongitude + row.worldY * sinLongitude
@@ -399,33 +411,34 @@ Item {
       var depth = sinLatitude * row.worldZ + cosLatitude * horizontal
       row.visible = depth >= 0
       if (!row.visible) continue
-      row.screenX = globeCanvas.width / 2 + xProjection * globeRadius
-      row.screenY = globeCanvas.height / 2 - yProjection * globeRadius
+      row.screenX = centreX + xProjection * globeRadius
+      row.screenY = centreY - yProjection * globeRadius
       row.depth = depth
-      row.visible = row.screenX >= -stationHitRadius
-        && row.screenX <= globeCanvas.width + stationHitRadius
-        && row.screenY >= -stationHitRadius
-        && row.screenY <= globeCanvas.height + stationHitRadius
+      row.visible = row.screenX >= -hitRadius
+        && row.screenX <= canvasWidth + hitRadius
+        && row.screenY >= -hitRadius
+        && row.screenY <= canvasHeight + hitRadius
       if (!row.visible) continue
 
-      var selected = selectedStation && row.station.uuid === selectedStation.uuid
-      var highlighted = highlightedStation
-        && row.station.uuid === highlightedStation.uuid && !selected
+      var selected = selection && row.station.uuid === selection.uuid
+      var highlighted = highlight && row.station.uuid === highlight.uuid && !selected
       var markerRadius = selected ? 4.2 : (highlighted ? 3.7 : 1.7 + depth * 1.25)
       ctx.beginPath()
       ctx.arc(row.screenX, row.screenY, markerRadius, 0, Math.PI * 2)
-      ctx.fillStyle = selected || highlighted
-        ? accentColor : withAlpha(signalColor, 0.42 + depth * 0.48)
+      ctx.fillStyle = selected || highlighted ? activeColor : markerColor
+      ctx.globalAlpha = selected || highlighted ? 1 : 0.42 + depth * 0.48
       ctx.fill()
 
       if (selected || highlighted) {
+        ctx.globalAlpha = 1
         ctx.beginPath()
         ctx.arc(row.screenX, row.screenY, selected ? 8.5 : 7.5, 0, Math.PI * 2)
-        ctx.strokeStyle = withAlpha(accentColor, selected ? 0.72 : 0.92)
+        ctx.strokeStyle = selected ? selectedOutline : highlightedOutline
         ctx.lineWidth = selected ? 1.2 : 1.4
         ctx.stroke()
       }
     }
+    ctx.globalAlpha = 1
   }
 
   function paintGlobe(ctx) {
