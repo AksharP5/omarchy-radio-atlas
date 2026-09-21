@@ -527,6 +527,8 @@ play_station() {
     mv "$temporary_playlist" "$playlist"
     send_command '{"command":["script-message","radio-atlas-reload"]}' \
       || { echo 'Radio player could not refresh its station queue' >&2; exit 4; }
+    send_command '{"command":["set_property","pause",false]}' \
+      || { echo 'Radio player could not resume playback' >&2; exit 4; }
   fi
 
   if [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]]; then
