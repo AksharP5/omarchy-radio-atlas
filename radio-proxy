@@ -65,7 +65,7 @@ def embeds_non_public_ipv4(ip: ipaddress.IPv4Address | ipaddress.IPv6Address):
         embedded.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
     if ip in IPV4_COMPATIBLE:
         embedded.append(ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF))
-    return any(not address.is_global for address in embedded)
+    return any(not address.is_global or address.is_multicast for address in embedded)
 
 
 def route_is_local(ip: ipaddress.IPv4Address | ipaddress.IPv6Address):
@@ -111,11 +111,12 @@ def public_endpoints(host: str, port: int):
             raise ProxyError(b"502 Bad Gateway")
         seen.add(key)
         ip = ipaddress.ip_address(address[0].split("%", 1)[0])
+        nat64 = isinstance(ip, ipaddress.IPv6Address) and ip in NAT64_WELL_KNOWN
         if (
             not ip.is_global
             or ip.is_multicast
             or ip.is_unspecified
-            or ip.is_reserved
+            or (ip.is_reserved and not nat64)
             or getattr(ip, "is_site_local", False)
             or embeds_non_public_ipv4(ip)
         ):

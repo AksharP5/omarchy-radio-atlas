@@ -42,6 +42,8 @@ class ProxyTests(unittest.TestCase):
             "fd00::1",
             "fec0::1",
             "fe80::1",
+            "4000::1",
+            "64:ff9b:1::808:808",
         )
         for address in addresses:
             with self.subTest(address=address):
@@ -69,12 +71,15 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(route_check.call_count, radio_proxy.MAX_RESOLVED_ENDPOINTS)
 
     def test_effectively_local_public_destination_is_rejected(self):
-        with (
-            patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve("2001:4860:4860::8888")),
-            patch.object(radio_proxy, "route_is_local", return_value=True),
-        ):
-            with self.assertRaises(radio_proxy.ProxyError):
-                radio_proxy.public_endpoints("station.example", 80)
+        for address in ("2001:4860:4860::8888", "64:ff9b::808:808"):
+            with (
+                self.subTest(address=address),
+                patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve(address)),
+                patch.object(radio_proxy, "route_is_local", return_value=True) as route_check,
+            ):
+                with self.assertRaises(radio_proxy.ProxyError):
+                    radio_proxy.public_endpoints("station.example", 80)
+                route_check.assert_called_once_with(radio_proxy.ipaddress.ip_address(address))
 
     def test_kernel_local_route_is_detected(self):
         result = radio_proxy.subprocess.CompletedProcess(
@@ -83,12 +88,32 @@ class ProxyTests(unittest.TestCase):
         with patch.object(radio_proxy.subprocess, "run", return_value=result):
             self.assertTrue(radio_proxy.route_is_local(radio_proxy.ipaddress.ip_address("8.8.8.8")))
 
-    def test_nat64_destination_with_private_ipv4_is_rejected(self):
-        address = "64:ff9b::a00:1"
-        self.assertTrue(radio_proxy.embeds_non_public_ipv4(radio_proxy.ipaddress.ip_address(address)))
-        with patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve(address)):
-            with self.assertRaises(radio_proxy.ProxyError):
-                radio_proxy.public_endpoints("station.example", 80)
+    def test_public_dns64_destinations_are_returned(self):
+        for addresses in (
+            ("64:ff9b::c127:db2",),
+            ("193.39.13.178", "64:ff9b::c127:db2"),
+        ):
+            with (
+                self.subTest(addresses=addresses),
+                patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve(*addresses)),
+                patch.object(radio_proxy, "route_is_local", return_value=False),
+            ):
+                endpoints = radio_proxy.public_endpoints("station.example", 80)
+                self.assertEqual([endpoint[3][0] for endpoint in endpoints], list(addresses))
+
+    def test_nat64_destination_with_non_public_ipv4_is_rejected(self):
+        for ipv4 in ("10.0.0.1", "127.0.0.1", "169.254.169.254", "100.64.0.1", "224.0.0.1"):
+            address = str(radio_proxy.ipaddress.IPv6Address(
+                int(radio_proxy.NAT64_WELL_KNOWN.network_address)
+                | int(radio_proxy.ipaddress.IPv4Address(ipv4))))
+            with (
+                self.subTest(ipv4=ipv4),
+                patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve("8.8.8.8", address)),
+                patch.object(radio_proxy, "route_is_local", return_value=False),
+            ):
+                with self.assertRaises(radio_proxy.ProxyError) as error:
+                    radio_proxy.public_endpoints("station.example", 80)
+                self.assertEqual(error.exception.status, b"403 Forbidden")
 
     def test_ipv4_compatible_loopback_is_rejected(self):
         address = "::127.0.0.1"
