@@ -98,8 +98,8 @@ class PlaybackTest(unittest.TestCase):
         self.log.seek(0)
         self.fail(f"Status did not match: {state}\n{self.log.read()}")
 
-    def action(self, action):
-        result = subprocess.run([str(PROJECT / "radio-player"), action], env=self.env,
+    def action(self, action, *arguments):
+        result = subprocess.run([str(PROJECT / "radio-player"), action, *arguments], env=self.env,
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
@@ -140,6 +140,29 @@ class PlaybackTest(unittest.TestCase):
         self.action("previous")
         self.wait_status(lambda s: s.get("loaded") and s["playlistPosition"] == 0)
         self.assertEqual(self.requests, failed_requests + ["/live"])
+
+    def test_selecting_station_resumes_paused_playback(self):
+        self.start(["/live", "/other"])
+        self.wait_status(lambda s: s.get("loaded"))
+        self.assertTrue(self.action("toggle")["paused"])
+        (self.runtime / "play-selection.json").write_text(
+            (self.runtime / "playlist.json").read_text())
+
+        self.assertFalse(self.action("play", "station-1", "selection")["paused"])
+        self.wait_status(lambda s: s.get("loaded") and not s["paused"]
+                         and s["station"]["uuid"] == "station-1")
+        self.assertEqual(self.requests, ["/live", "/other"])
+
+    def test_selecting_station_recovers_from_stream_failure(self):
+        self.start(["/broken", "/live"])
+        self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        (self.runtime / "play-selection.json").write_text(
+            (self.runtime / "playlist.json").read_text())
+
+        self.action("play", "station-1", "selection")
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertFalse(state["paused"])
+        self.assertEqual(state["error"], "")
 
     def test_status_command_does_not_overwrite_player_status(self):
         state = dict(running=True, loaded=True, station=dict(uuid="station-0"))
