@@ -167,6 +167,9 @@ removing it.
 
 ## Development
 
+The native QML tests require Qt 6.5 or newer for the globe's drag-event API.
+CI runs them on Ubuntu 26.04 with Qt 6.10.
+
 ```bash
 ./tests/run
 qmllint -I /usr/share/omarchy/shell BarWidget.qml Globe.qml RadioAtlas.qml

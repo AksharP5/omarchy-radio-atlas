@@ -1,4 +1,4 @@
-import QtQuick
+import QtQuick 6.5
 import QtTest
 import "../.." as Atlas
 
@@ -20,6 +20,12 @@ TestCase {
     id: selectionChanges
     target: globe
     signalName: "selectedStationUuidChanged"
+  }
+
+  SignalSpy {
+    id: activations
+    target: globe
+    signalName: "stationActivated"
   }
 
   Component {
@@ -50,6 +56,7 @@ TestCase {
   }
 
   function init() {
+    globe.stopKineticRotation(true)
     markerCanvas.visible = false
     globe.centreLatitude = 0
     globe.centreLongitude = 0
@@ -60,6 +67,39 @@ TestCase {
     globe.signalColor = "#d9dee3"
     globe.accentColor = "#ff8a3d"
     selectionChanges.clear()
+    activations.clear()
+  }
+
+  function cleanup() {
+    globe.stopKineticRotation(true)
+  }
+
+  function test_dragRotatesWithoutActivatingStation() {
+    globe.stations = [{ uuid: "centre", latitude: 0, longitude: 0 }]
+    waitForRendering(globe)
+    mouseMove(globe, 400, 300, 20)
+    mouseDrag(globe, 400, 300, 75, 20, Qt.LeftButton, Qt.NoModifier, 20)
+    verify(globe.centreLongitude < 0)
+    verify(globe.centreLatitude > 0)
+    compare(activations.count, 0)
+  }
+
+  function test_kineticRotationMovesAndHighlightsLanding() {
+    globe.stations = [{ uuid: "landing", latitude: 0, longitude: 0 }]
+    waitForRendering(globe)
+    verify(globe.startKineticRotation(150, 0))
+    tryVerify(function() {
+      if (globe.highlightedStation) return true
+      // A stalled frame cancels motion without a landing. Retry that launch.
+      if (globe.kineticVelocityX === 0) globe.startKineticRotation(150, 0)
+      return false
+    })
+    verify(globe.centreLongitude < 0)
+    compare(globe.centreLatitude, 0)
+    compare(globe.kineticVelocityX, 0)
+    compare(globe.kineticVelocityY, 0)
+    compare(globe.highlightedStation.uuid, "landing")
+    compare(activations.count, 0)
   }
 
   function test_statusUpdatePreservesLandingHighlight() {
