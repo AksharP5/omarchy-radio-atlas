@@ -1229,6 +1229,69 @@ Item {
       borderSpec: Border.surfaceSpec("menu", "border", root.border, Math.max(1, Style.normalBorderWidth))
       radius: Style.cornerRadius
 
+      Keys.priority: Keys.AfterItem
+      Keys.onPressed: function(event) {
+        if (searchField.activeFocus) {
+          if (event.key === Qt.Key_Escape) {
+            if (searchField.text) {
+              searchField.clear()
+              root.showWorld()
+            }
+            else keyCatcher.forceActiveFocus()
+            event.accepted = true
+          }
+          return
+        }
+
+        if (root.helpVisible) {
+          if (event.key === Qt.Key_Escape || root.isHelpKey(event)) {
+            root.toggleControls()
+            event.accepted = true
+          }
+          return
+        }
+
+        if (event.key === Qt.Key_Escape) {
+          root.dismiss()
+          event.accepted = true
+        } else if (root.isHelpKey(event)) {
+          root.toggleControls()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Slash) {
+          searchField.forceActiveFocus()
+          searchField.selectAll()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Up) {
+          root.moveSelection(-1)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Down) {
+          root.moveSelection(1)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          root.playSelected()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Space) {
+          if (root.playerRunning) root.playerAction("toggle")
+          else root.playSelected()
+          event.accepted = true
+        } else if (event.key === Qt.Key_R) {
+          root.tuneRandom()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal) {
+          root.changePlayerVolume(5)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Minus) {
+          root.changePlayerVolume(-5)
+          event.accepted = true
+        } else if (event.key === Qt.Key_M) {
+          root.playerAction("mute")
+          event.accepted = true
+        } else if (event.key === Qt.Key_F && root.selectedStation) {
+          root.toggleFavorite(root.selectedStation.uuid)
+          event.accepted = true
+        }
+      }
+
       MouseArea {
         id: cardMouse
         anchors.fill: parent
@@ -1240,69 +1303,6 @@ Item {
         anchors.fill: parent
         focus: true
         z: 1
-
-        Keys.priority: Keys.AfterItem
-        Keys.onPressed: function(event) {
-          if (searchField.activeFocus) {
-            if (event.key === Qt.Key_Escape) {
-              if (searchField.text) {
-                searchField.clear()
-                root.showWorld()
-              }
-              else keyCatcher.forceActiveFocus()
-              event.accepted = true
-            }
-            return
-          }
-
-          if (root.helpVisible) {
-            if (event.key === Qt.Key_Escape || root.isHelpKey(event)) {
-              root.toggleControls()
-              event.accepted = true
-            }
-            return
-          }
-
-          if (event.key === Qt.Key_Escape) {
-            root.dismiss()
-            event.accepted = true
-          } else if (root.isHelpKey(event)) {
-            root.toggleControls()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Slash) {
-            searchField.forceActiveFocus()
-            searchField.selectAll()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.moveSelection(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.moveSelection(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.playSelected()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Space) {
-            if (root.playerRunning) root.playerAction("toggle")
-            else root.playSelected()
-            event.accepted = true
-          } else if (event.key === Qt.Key_R) {
-            root.tuneRandom()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal) {
-            root.changePlayerVolume(5)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Minus) {
-            root.changePlayerVolume(-5)
-            event.accepted = true
-          } else if (event.key === Qt.Key_M) {
-            root.playerAction("mute")
-            event.accepted = true
-          } else if (event.key === Qt.Key_F && root.selectedStation) {
-            root.toggleFavorite(root.selectedStation.uuid)
-            event.accepted = true
-          }
-        }
       }
 
       Item {

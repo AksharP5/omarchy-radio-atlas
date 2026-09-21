@@ -33,6 +33,7 @@ luac -p "$project_dir/radio-status.lua"
 node "$project_dir/tests/model.test.mjs"
 node "$project_dir/tests/expansion.test.mjs"
 node "$project_dir/tests/selection.test.mjs"
+node "$project_dir/tests/keyboard.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
 python3 "$project_dir/tests/playback.test.py"
 QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner \
@@ -49,7 +50,7 @@ sed -n '/function close()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
 rg -q 'id: controlsPane' "$project_dir/RadioAtlas.qml"
 rg -Fq '{ input: "?", action: "Show or hide controls" }' \
   "$project_dir/RadioAtlas.qml"
-sed -n '/Keys.onPressed: function(event)/,/^        }/p' "$project_dir/RadioAtlas.qml" \
+sed -n '/Keys.onPressed: function(event)/,/^      }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'root.isHelpKey(event)'
 rg -q 'worldStationLimit: 5000' "$project_dir/RadioAtlas.qml"
 rg -q 'id: worldExpandTimer' "$project_dir/RadioAtlas.qml"
