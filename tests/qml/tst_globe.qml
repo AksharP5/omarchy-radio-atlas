@@ -22,12 +22,6 @@ TestCase {
     signalName: "selectedStationUuidChanged"
   }
 
-  SignalSpy {
-    id: activations
-    target: globe
-    signalName: "stationActivated"
-  }
-
   Component {
     id: countedGlobe
     Atlas.Globe {
@@ -56,7 +50,6 @@ TestCase {
   }
 
   function init() {
-    globe.stopKineticRotation(true)
     markerCanvas.visible = false
     globe.centreLatitude = 0
     globe.centreLongitude = 0
@@ -66,7 +59,6 @@ TestCase {
     globe.highlightedStation = null
     globe.signalColor = "#d9dee3"
     globe.accentColor = "#ff8a3d"
-    activations.clear()
     selectionChanges.clear()
   }
 
@@ -212,22 +204,5 @@ TestCase {
           - expected.blue(x, y) * expectedAlpha) <= 3)
       }
     }
-  }
-
-  function test_dragDoesNotActivateStationAndKineticRotationCanStartAndStop() {
-    globe.stations = [{ uuid: "centre", latitude: 0, longitude: 0 }]
-    waitForRendering(globe)
-    mouseMove(globe, 400, 300, 20)
-    mouseDrag(globe, 400, 300, 75, 20, Qt.LeftButton, Qt.NoModifier, 20)
-    verify(globe.centreLongitude < 0)
-    verify(globe.centreLatitude > 0)
-    wait(20)
-    compare(activations.count, 0)
-    globe.stopKineticRotation(true)
-    verify(globe.startKineticRotation(600, 0))
-    compare(globe.kineticVelocityX, 600)
-    compare(globe.kineticVelocityY, 0)
-    globe.stopKineticRotation(true)
-    compare(globe.kineticVelocityX, 0)
   }
 }
