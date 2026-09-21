@@ -3,6 +3,19 @@ set -euo pipefail
 
 project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
+assert_no_match() {
+  local status=0
+  # Only rg's no-match status is success; search errors must fail too.
+  rg --line-number --with-filename "$@" >&2 || status=$?
+  if (( status == 1 )); then
+    return 0
+  fi
+  printf 'Expected no matches; rg exited %s:' "$status" >&2
+  printf ' %q' "$@" >&2
+  printf '\n' >&2
+  return 1
+}
+
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
@@ -24,7 +37,7 @@ python3 "$project_dir/tests/proxy.test.py"
 python3 "$project_dir/tests/playback.test.py"
 QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner \
   -platform offscreen -input "$project_dir/tests/qml"
-! rg -q 'playerStatusProcess|refreshPlayerStatus' \
+assert_no_match 'playerStatusProcess|refreshPlayerStatus' \
   "$project_dir/BarWidget.qml" "$project_dir/RadioAtlas.qml"
 rg -q 'maximumScale: 24' "$project_dir/Globe.qml"
 rg -q 'searchDebounce.restart()' "$project_dir/RadioAtlas.qml"
@@ -41,7 +54,7 @@ sed -n '/Keys.onPressed: function(event)/,/^        }/p' "$project_dir/RadioAtla
 rg -q 'worldStationLimit: 5000' "$project_dir/RadioAtlas.qml"
 rg -q 'id: worldExpandTimer' "$project_dir/RadioAtlas.qml"
 rg -q 'id: worldExpandProcess' "$project_dir/RadioAtlas.qml"
-! rg -q 'enabled: !root.fetching' "$project_dir/RadioAtlas.qml"
+assert_no_match 'enabled: !root.fetching' "$project_dir/RadioAtlas.qml"
 rg -Fq 'mergeGeoStations(worldStations, displayStations, countries)' "$project_dir/RadioAtlas.qml"
 rg -Fq 'if (mode === "world") return "world"' "$project_dir/RadioAtlas.qml"
 sed -n '/function activateMapStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
@@ -82,7 +95,8 @@ rg -Fq 'RadioModel.prioritizeStations(' <<<"$country_fetch_block"
 rg -Fq 'root.setStationList("country", countryStations)' <<<"$country_fetch_block"
 sed -n '/if (root.pendingFetchAction)/,/^        }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'nextAction === "random" ? root.randomExclusions() : nextValue'
-! sed -n '/function playSelected()/,/^  }/p' "$project_dir/RadioAtlas.qml" | rg -q 'recordPlayed'
+sed -n '/function playSelected()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | assert_no_match 'recordPlayed'
 rg -q 'clockwiseArc' "$project_dir/Globe.qml"
 rg -q 'Accessible.onPressAction' "$project_dir/RadioAtlas.qml"
 rg -q 'state.loaded === true' "$project_dir/RadioAtlas.qml"
@@ -97,16 +111,16 @@ sed -n '/id: playingFavoriteButton/,/^            }/p' "$project_dir/RadioAtlas.
   | rg -Fq 'root.toggleFavorite(root.playingStationUuid)'
 rg -q 'property color favoriteColor: lightTheme' "$project_dir/RadioAtlas.qml"
 [[ $(rg -c '\? root\.favoriteColor : root\.foreground' "$project_dir/RadioAtlas.qml") == 2 ]]
-! rg -q 'active: root\.isFavorite' "$project_dir/RadioAtlas.qml"
-! rg -Fq 'color: root.fetching ? root.dim' "$project_dir/RadioAtlas.qml"
+assert_no_match 'active: root\.isFavorite' "$project_dir/RadioAtlas.qml"
+assert_no_match -F 'color: root.fetching ? root.dim' "$project_dir/RadioAtlas.qml"
 rg -Fq 'click another country to browse' "$project_dir/RadioAtlas.qml"
 sed -n '/id: mapHint/,/^          }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'anchors.right: signalCount.left'
 sed -n '/id: mapHint/,/^          }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'elide: Text.ElideRight'
 rg -q 'rowMouse.containsMouse' "$project_dir/RadioAtlas.qml"
-! rg -q 'selectedIndex === index.*Style.selectedFillFor' "$project_dir/RadioAtlas.qml"
-! rg -q 'send_command .*\|\| true' "$project_dir/radio-player"
+assert_no_match 'selectedIndex === index.*Style.selectedFillFor' "$project_dir/RadioAtlas.qml"
+assert_no_match 'send_command .*\|\| true' "$project_dir/radio-player"
 rg -q 'id: outputMenu' "$project_dir/RadioAtlas.qml"
 rg -q 'function selectOutput' "$project_dir/RadioAtlas.qml"
 rg -q 'function toggleOutputMenu' "$project_dir/RadioAtlas.qml"
@@ -115,7 +129,7 @@ rg -Fq 'set_property","audio-device' "$project_dir/radio-player"
 rg -q 'id: outputList' "$project_dir/RadioAtlas.qml"
 sed -n '/id: stationList/,/^          }/p' "$project_dir/RadioAtlas.qml" \
   | rg -F 'interactive: !root.outputMenuOpen' >/dev/null
-! rg -Fq '.slice(0, 16)' "$project_dir/RadioAtlas.qml"
+assert_no_match -F '.slice(0, 16)' "$project_dir/RadioAtlas.qml"
 sed -n '/tooltipText: root.playerOutput/,/^              }/p' "$project_dir/RadioAtlas.qml" \
   | rg -q 'focusable: true'
 sed -n '/id: outputOption/,/^                }/p' "$project_dir/RadioAtlas.qml" \
@@ -132,7 +146,7 @@ rg -Fq 'estimatedLocation === true' "$project_dir/Globe.qml"
 sed -n '/function paintGlobe/,/^  }/p' "$project_dir/Globe.qml" \
   | rg -Fq 'if (!isFinite(globeRadius) || globeRadius <= 0) return'
 rg -Fq '  FloatingWindow {' "$project_dir/RadioAtlas.qml"
-! rg -q 'WlrLayershell|PanelWindow' "$project_dir/RadioAtlas.qml"
+assert_no_match 'WlrLayershell|PanelWindow' "$project_dir/RadioAtlas.qml"
 sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'openWindow(payloadJson)'
 sed -n '/function openWindow(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
@@ -154,7 +168,7 @@ sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'org.omarchy.screensaver'
 sed -n '/function handleHyprlandEvent/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'dismiss()'
-! rg -q 'resizewindowpixel|centerwindow|hl\.dsp\.window\.(float|resize|center|set_prop)' \
+assert_no_match 'resizewindowpixel|centerwindow|hl\.dsp\.window\.(float|resize|center|set_prop)' \
   "$project_dir/RadioAtlas.qml"
 rg -Fq 'hl.window_rule({' "$project_dir/radio-window"
 rg -Fq 'initial_class = "^org[.]quickshell$"' "$project_dir/radio-window"
@@ -167,18 +181,18 @@ rg -Fq 'border_size = 0' "$project_dir/radio-window"
 rg -Fq 'HyprlandWindow.opacity: root.windowFrameReady ? 1 : 0' "$project_dir/RadioAtlas.qml"
 sed -n '/function scheduleWindowReveal/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'windowRevealTimer.restart()'
-! rg -q 'Super \+ W|Super \+ Shift' "$project_dir/README.md" "$project_dir/RadioAtlas.qml"
+assert_no_match 'Super \+ W|Super \+ Shift' "$project_dir/README.md" "$project_dir/RadioAtlas.qml"
 rg -q 'keyboardSelectionVisible' "$project_dir/RadioAtlas.qml"
 rg -q 'reportedVolume' "$project_dir/RadioAtlas.qml"
 rg -q 'submittedVolume' "$project_dir/RadioAtlas.qml"
 rg -q 'playPreparing' "$project_dir/RadioAtlas.qml"
 rg -q 'id: stopProcess' "$project_dir/RadioAtlas.qml"
-! rg -q 'playerAction\("stop"\)' "$project_dir/RadioAtlas.qml"
+assert_no_match 'playerAction\("stop"\)' "$project_dir/RadioAtlas.qml"
 rg -Fq 'safeTooltipText(root.playerTitle)' "$project_dir/BarWidget.qml"
 for qml in "$project_dir/RadioAtlas.qml" "$project_dir/Globe.qml"; do
   [[ $(rg -c '^\s*Text \{' "$qml") == $(rg -c 'textFormat: Text\.PlainText' "$qml") ]]
 done
-! rg -q '/tmp/omarchy-radio-atlas' \
+assert_no_match '/tmp/omarchy-radio-atlas' \
   "$project_dir/radio-fetch" "$project_dir/radio-player" "$project_dir/radio-state"
 rg -q '^max_response_bytes=4194304$' "$project_dir/radio-fetch"
 rg -q '^world_cache_minutes=1440$' "$project_dir/radio-fetch"
@@ -189,16 +203,16 @@ rg -q '^refresh_country_cache_in_background\(\)' "$project_dir/radio-fetch"
 rg -Fq -- '--max-filesize "$max_response_bytes"' "$project_dir/radio-fetch"
 rg -q -- "--proto '=https'" "$project_dir/radio-fetch"
 rg -Fq 'setpriv --pdeathsig TERM curl' "$project_dir/radio-fetch"
-! rg -q -- '--location' "$project_dir/radio-fetch"
+assert_no_match -- '--location' "$project_dir/radio-fetch"
 rg -Fq -- '--retry 1 --retry-delay 0' "$project_dir/radio-fetch"
 rg -Fq '.[:500]' "$project_dir/radio-fetch"
-! sed -n '/  random)/,/^    ;;/p' "$project_dir/radio-fetch" \
-  | rg -Fq 'has_geo_info=true'
+sed -n '/  random)/,/^    ;;/p' "$project_dir/radio-fetch" \
+  | assert_no_match -F 'has_geo_info=true'
 rg -q 'pendingPlayStation' "$project_dir/RadioAtlas.qml"
 rg -q 'playPendingStation' "$project_dir/RadioAtlas.qml"
 rg -q 'pendingPlayStations' "$project_dir/RadioAtlas.qml"
-! sed -n '/function setStationList/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -q 'cancelPendingPlay'
+sed -n '/function setStationList/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | assert_no_match 'cancelPendingPlay'
 sed -n '/function playPendingStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'playStation(station, scope, stations)'
 sed -n '/function playStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
@@ -215,8 +229,8 @@ sed -n '/id: favoriteSelectionFile/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'blockWrites: true'
 rg -Fq 'selection_file="$runtime_dir/play-selection.json"' "$project_dir/radio-player"
 rg -q 'pendingFavoriteRequests' "$project_dir/RadioAtlas.qml"
-! sed -n '/function toggleFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -q 'favoriteSelectionFile\.setText'
+sed -n '/function toggleFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+  | assert_no_match 'favoriteSelectionFile\.setText'
 sed -n '/function startFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'favoriteSelectionFile.setText(JSON.stringify(request.rows)'
 rg -Fq 'favorite-selection.json' "$project_dir/radio-state"
