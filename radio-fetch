@@ -191,13 +191,37 @@ store_random_results() {
 }
 
 refresh_world_cache() {
+  local world_tmp nepal_tmp merged_tmp
+  world_tmp=$(mktemp "$runtime_dir/world-XXXXXX")
+  nepal_tmp=$(mktemp "$runtime_dir/nepal-XXXXXX")
+  merged_tmp=$(mktemp "$runtime_dir/merged-XXXXXX")
+
   request 500 '/json/stations/search' \
     --data-urlencode 'has_geo_info=true' \
     --data-urlencode 'hidebroken=true' \
     --data-urlencode 'order=clickcount' \
     --data-urlencode 'reverse=true' \
     --data-urlencode 'limit=500' \
-    | store_results "$world_cache_file" >/dev/null
+    > "$world_tmp" 2>/dev/null || { rm -f "$world_tmp" "$nepal_tmp" "$merged_tmp"; return 1; }
+
+  curl -s --max-time 12 \
+    "https://all.api.radio-browser.info/json/stations/bycountrycodeexact/NP?hidebroken=true&order=clickcount&reverse=true&limit=100" \
+    > "$nepal_tmp" 2>/dev/null || true
+
+  if [[ -s "$nepal_tmp" ]] && jq -e 'type == "array" and length > 0' "$nepal_tmp" >/dev/null 2>&1; then
+    jq -s '
+      (.[0] // []) as $world
+      | (.[1] // []) as $nepal
+      | ($world | map(.stationuuid // "")) as $world_uuids
+      | ($nepal | map(select(.stationuuid as $u | ($world_uuids | index($u)) == null))) as $new
+      | ($new + $world)[:500]
+    ' "$world_tmp" "$nepal_tmp" > "$merged_tmp"
+    store_results "$world_cache_file" < "$merged_tmp" >/dev/null
+  else
+    store_results "$world_cache_file" < "$world_tmp" >/dev/null
+  fi
+
+  rm -f "$world_tmp" "$nepal_tmp" "$merged_tmp"
 }
 
 refresh_world_cache_in_background() {
