@@ -114,6 +114,9 @@ Item {
   property color mapSphere: lightTheme ? "#d2d0ca" : "#11151a"
   property color mapLand: lightTheme ? "#a9aaa6" : "#283039"
   property color mapGrid: lightTheme ? "#3f454a" : "#7d8791"
+  property color mapNight: lightTheme ? "#1b2028" : "#040608"
+  property color mapTerminator: accent
+
 
   property bool windowSetupReady: false
   property bool windowFrameReady: false
@@ -1425,7 +1428,10 @@ Item {
             sphereColor: root.mapSphere
             landColor: root.mapLand
             gridColor: root.mapGrid
+            nightColor: root.mapNight
+            terminatorColor: root.mapTerminator
             outlineColor: root.lightTheme ? "#3c4247" : "#9099a3"
+
             signalColor: root.lightTheme ? "#202428" : "#d9dee3"
             accentColor: root.accent
             textColor: root.foreground
