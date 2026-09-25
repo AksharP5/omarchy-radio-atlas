@@ -36,7 +36,7 @@ class PlaybackTest(unittest.TestCase):
         self.status_path = runtime / "status.json"
         self.requests = []
         requests = self.requests
-        short, live = audio(0.2), audio(30)
+        short, live = audio(1), audio(30)
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -114,6 +114,7 @@ class PlaybackTest(unittest.TestCase):
         self.assertEqual(self.action("status")["error"], "Stream disconnected")
         self.assertEqual(self.requests, ["/short"])
         self.action("toggle")
+        self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-0")
         self.wait_status(lambda s: s.get("error") == "Stream disconnected")
         self.assertEqual(self.requests, ["/short", "/short"])
         self.action("next")
