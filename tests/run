@@ -528,6 +528,11 @@ if "$project_dir/radio-state" get >/dev/null 2>&1; then
   echo "Invalid saved state was silently accepted" >&2
   exit 1
 fi
+if "$project_dir/radio-player" resume >/dev/null 2>"$test_root/resume-invalid.err"; then
+  echo "Resume accepted invalid saved state" >&2
+  exit 1
+fi
+rg -Fq 'saved state is invalid' "$test_root/resume-invalid.err"
 cmp "$test_root/invalid-state.json" "$XDG_DATA_HOME/radio-atlas/state.json"
 if "$project_dir/radio-player" volume 42 >/dev/null 2>&1; then
   echo "Volume update overwrote invalid saved state" >&2
@@ -569,6 +574,11 @@ rm "$XDG_DATA_HOME/radio-atlas/state.json"
 
 "$project_dir/radio-state" get \
   | jq -e '.favorites == [] and .recent == [] and .volume == 70' >/dev/null
+if "$project_dir/radio-player" resume >/dev/null 2>"$test_root/resume-empty.err"; then
+  echo "Resume accepted empty listening history" >&2
+  exit 1
+fi
+rg -Fq 'No station has been played yet' "$test_root/resume-empty.err"
 
 fixture='[{"uuid":"12345678-1234-1234-1234-123456789abc","name":"Test Radio","url":"https://example.com/radio.mp3","countryCode":"US","latitude":40,"longitude":-74}]'
 printf '%s\n' "$fixture" > "$runtime_dir/results.json"
@@ -686,6 +696,20 @@ fi
 preparing_pid=""
 [[ ! -e $mpv_marker ]]
 
+resume_mpv_marker="$test_root/resume-mpv-started"
+if RADIO_ATLAS_FETCH_PATH="$project_dir/tests/fixtures/radio-fetch" \
+  RADIO_ATLAS_TEST_FETCH_READY="$fetch_ready" \
+  RADIO_ATLAS_TEST_FETCH_RELEASE="$fetch_release" \
+  RADIO_ATLAS_TEST_MPV_MARKER="$resume_mpv_marker" \
+  PATH="$project_dir/tests/fixtures:$PATH" \
+  timeout 5 "$project_dir/radio-player" resume >/dev/null 2>&1; then
+  echo "Stopped-session fixture unexpectedly started playback" >&2
+  exit 1
+fi
+[[ -e $resume_mpv_marker ]]
+jq -e '.[0].uuid == "87654321-4321-4321-4321-cba987654321"' \
+  "$runtime_dir/playlist.json" >/dev/null
+
 /usr/bin/socat UNIX-LISTEN:"$runtime_dir/mpv.sock" EXEC:/usr/bin/cat &
 listener_pid=$!
 track_player_pid "$listener_pid"
@@ -750,6 +774,19 @@ jq -e 'length == 3
   and .[0].uuid == "abcdefab-1234-1234-1234-abcdefabcdef"
   and .[1].uuid == "22222222-1234-1234-1234-222222222222"
   and .[2].uuid == "11111111-1234-1234-1234-111111111111"' \
+  "$runtime_dir/playlist.json" >/dev/null
+
+"$project_dir/radio-state" played 12345678-1234-1234-1234-123456789abc >/dev/null
+RADIO_ATLAS_FETCH_PATH="$project_dir/tests/fixtures/radio-fetch" \
+RADIO_ATLAS_TEST_FETCH_READY="$fetch_ready" \
+RADIO_ATLAS_TEST_FETCH_RELEASE="$fetch_release" \
+RADIO_ATLAS_TEST_SOCAT_MODE=success PATH="$project_dir/tests/fixtures:$PATH" \
+  timeout 5 "$project_dir/radio-player" resume \
+  | jq -e '.running == true
+    and .station.uuid == "12345678-1234-1234-1234-123456789abc"' >/dev/null
+jq -e 'length == 2
+  and .[0].uuid == "12345678-1234-1234-1234-123456789abc"
+  and .[1].uuid == "87654321-4321-4321-4321-cba987654321"' \
   "$runtime_dir/playlist.json" >/dev/null
 
 RADIO_ATLAS_TEST_SOCAT_MODE=success PATH="$project_dir/tests/fixtures:$PATH" \

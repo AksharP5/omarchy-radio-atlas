@@ -72,7 +72,9 @@ Favorites, listening history, volume, and the selected audio output remain in
 | Escape | Hide controls, clear search, or close |
 
 On the bar, left click opens Radio Atlas, middle click tunes randomly, right
-click stops its player, and the mouse wheel adjusts radio volume.
+click stops its player or resumes the most recently played station when stopped,
+and the mouse wheel adjusts radio volume. If there is no listening history,
+right click does nothing.
 
 If a station disconnects or cannot be played, Radio Atlas keeps it selected and
 shows the failure. Click the play button to retry that station, or Next/Previous
