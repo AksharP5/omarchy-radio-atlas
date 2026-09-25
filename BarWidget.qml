@@ -18,6 +18,7 @@ BarWidget {
   property int pendingVolume: -1
   property string playerTitle: ""
   property bool statusReady: false
+  property bool playerStateReady: false
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
   readonly property string statusPath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas/status.json"
 
@@ -43,6 +44,7 @@ BarWidget {
       if (root.pendingVolume < 0) root.playerVolume = root.reportedVolume
       root.playerTitle = root.singleLineText(
         state.title || (state.station && state.station.name) || "", 160)
+      root.playerStateReady = true
     } catch (error) {
       return
     }
@@ -142,6 +144,7 @@ BarWidget {
     onPressed: function(mouseButton) {
       if (!root.bar) return
       if (mouseButton === Qt.RightButton) {
+        if (!root.playerStateReady) return
         root.runPlayerAction(root.playerRunning ? "stop" : "resume")
         return
       }

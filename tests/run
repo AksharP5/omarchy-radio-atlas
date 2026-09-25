@@ -696,6 +696,20 @@ fi
 preparing_pid=""
 [[ ! -e $mpv_marker ]]
 
+resume_mpv_marker="$test_root/resume-mpv-started"
+if RADIO_ATLAS_FETCH_PATH="$project_dir/tests/fixtures/radio-fetch" \
+  RADIO_ATLAS_TEST_FETCH_READY="$fetch_ready" \
+  RADIO_ATLAS_TEST_FETCH_RELEASE="$fetch_release" \
+  RADIO_ATLAS_TEST_MPV_MARKER="$resume_mpv_marker" \
+  PATH="$project_dir/tests/fixtures:$PATH" \
+  timeout 5 "$project_dir/radio-player" resume >/dev/null 2>&1; then
+  echo "Stopped-session fixture unexpectedly started playback" >&2
+  exit 1
+fi
+[[ -e $resume_mpv_marker ]]
+jq -e '.[0].uuid == "87654321-4321-4321-4321-cba987654321"' \
+  "$runtime_dir/playlist.json" >/dev/null
+
 /usr/bin/socat UNIX-LISTEN:"$runtime_dir/mpv.sock" EXEC:/usr/bin/cat &
 listener_pid=$!
 track_player_pid "$listener_pid"
