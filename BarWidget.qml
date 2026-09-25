@@ -142,7 +142,7 @@ BarWidget {
     onPressed: function(mouseButton) {
       if (!root.bar) return
       if (mouseButton === Qt.RightButton) {
-        root.runPlayerAction("stop")
+        root.runPlayerAction(root.playerRunning ? "stop" : "resume")
         return
       }
       if (mouseButton === Qt.MiddleButton) {
