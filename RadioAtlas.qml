@@ -17,7 +17,14 @@ Item {
 
   property bool opened: false
   property var countries: []
-  property var countryNames: ({})
+  readonly property var countryNames: {
+    try {
+      return JSON.parse(countryNamesFile.text() || "{}")
+    } catch (error) {
+      console.warn("Country names could not be loaded:", error)
+      return ({})
+    }
+  }
   property var worldStations: []
   property var results: []
   property var favorites: []
@@ -766,16 +773,11 @@ Item {
   }
 
   FileView {
+    id: countryNamesFile
     path: Qt.resolvedUrl("assets/country-search.json").toString().replace(/^file:\/\//, "")
+    blockLoading: true
     watchChanges: false
     printErrors: true
-    onLoaded: {
-      try {
-        root.countryNames = JSON.parse(text())
-      } catch (error) {
-        root.fetchError = "Country names could not be loaded"
-      }
-    }
   }
 
   FileView {

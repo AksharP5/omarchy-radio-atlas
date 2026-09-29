@@ -67,6 +67,19 @@ try {
     assert.match(code, /^[A-Z]{2}$/)
     assert.equal(countryNames[code.toLowerCase()], code)
   }
+
+  const incompletePlugin = path.join(directory, "plugin")
+  fs.mkdirSync(path.join(incompletePlugin, "assets"), { recursive: true })
+  for (const file of ["radio-fetch", "manifest.json"])
+    fs.copyFileSync(path.join(project, file), path.join(incompletePlugin, file))
+  for (const lookup of [undefined, "{invalid json"]) {
+    if (lookup !== undefined)
+      fs.writeFileSync(path.join(incompletePlugin, "assets/country-search.json"), lookup)
+    const result = spawnSync(path.join(incompletePlugin, "radio-fetch"), ["search", "jazz"], { env, encoding: "utf8" })
+    assert.equal(result.status, 0, result.stderr)
+    assert.deepEqual(JSON.parse(result.stdout).map(station => station.uuid).sort(), ["tag", "us"])
+    assert.notEqual(result.stderr, "", "Keep lookup failures visible in diagnostics")
+  }
 } finally {
   fs.rmSync(directory, { recursive: true, force: true })
 }

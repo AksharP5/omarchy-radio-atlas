@@ -323,7 +323,7 @@ with open(sys.argv[1]) as source:
     countries = json.load(source)
 print(countries.get(sys.argv[2].strip().lower(), ""))
 PY
-  )
+  ) || country_code=""
   country_filter="country=$query"
   [[ -z $country_code ]] || country_filter="countrycode=$country_code"
   load_bases
