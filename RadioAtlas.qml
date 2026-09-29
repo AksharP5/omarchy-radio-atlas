@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import QtQuick.Controls as QQC
 import Quickshell
 import Quickshell.Hyprland
@@ -1692,7 +1693,8 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: Style.space(126)
+            height: Math.max(Style.space(126), nowPlaying.height + playerStatus.height
+              + playerControls.implicitHeight + Style.spacing.md * 3 + Style.spacing.xs)
             color: "transparent"
 
             Rectangle {
@@ -1723,6 +1725,7 @@ Item {
             }
 
             Text {
+              id: playerStatus
               anchors.left: nowPlaying.left
               anchors.right: nowPlaying.right
               anchors.top: nowPlaying.bottom
@@ -1761,120 +1764,116 @@ Item {
               onClicked: root.toggleFavorite(root.playingStationUuid)
             }
 
-            Row {
+            Column {
+              id: playerControls
               anchors.left: parent.left
-              anchors.leftMargin: Style.spacing.sm
-              anchors.bottom: parent.bottom
-              anchors.bottomMargin: Style.spacing.sm
-              spacing: Style.spacing.xs
-
-              Button {
-                iconText: "\uf048"
-                tooltipText: "Previous station"
-                enabled: root.playerRunning && !root.playerActionBusy
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.playerAction("previous")
-              }
-              Button {
-                iconText: root.playerRunning && !root.playerPaused ? "\uf04c" : "\uf04b"
-                tooltipText: root.streamError ? "Retry station"
-                  : root.playerRunning && !root.playerPaused ? "Pause" : "Play"
-                enabled: !root.playerActionBusy
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.playerRunning ? root.playerAction("toggle") : root.playSelected()
-              }
-              Button {
-                iconText: "\uf051"
-                tooltipText: "Next station"
-                enabled: root.playerRunning && !root.playerActionBusy
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.playerAction("next")
-              }
-              Button {
-                iconText: "\uf04d"
-                tooltipText: "Stop"
-                enabled: (root.playerRunning || root.playPreparing)
-                  && !stopProcess.running
-                  && !root.playCancellationRequested
-                  && (!playerActionProcess.running || root.playPreparing)
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.stopPlayer()
-              }
-            }
-
-            Row {
-              id: outputControls
               anchors.right: parent.right
-              anchors.rightMargin: Style.spacing.md
-              anchors.leftMargin: Style.spacing.sm
               anchors.bottom: parent.bottom
-              anchors.bottomMargin: Style.spacing.sm
+              anchors.margins: Style.spacing.md
               spacing: Style.spacing.xs
 
-              Button {
-                id: outputButton
-                anchors.verticalCenter: parent.verticalCenter
-                iconText: "\uf0a1"
-                tooltipText: root.playerOutput
-                  ? "Audio output: " + root.outputLabel(root.playerOutput)
-                  : "Choose audio output"
-                active: root.playerOutput !== ""
-                enabled: !stopProcess.running && !outputProcess.running
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.toggleOutputMenu()
+              Row {
+                spacing: Style.spacing.xs
+
+                Button {
+                  iconText: "\uf048"
+                  tooltipText: "Previous station"
+                  enabled: root.playerRunning && !root.playerActionBusy
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.playerAction("previous")
+                }
+                Button {
+                  iconText: root.playerRunning && !root.playerPaused ? "\uf04c" : "\uf04b"
+                  tooltipText: root.streamError ? "Retry station"
+                    : root.playerRunning && !root.playerPaused ? "Pause" : "Play"
+                  enabled: !root.playerActionBusy
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.playerRunning ? root.playerAction("toggle") : root.playSelected()
+                }
+                Button {
+                  iconText: "\uf051"
+                  tooltipText: "Next station"
+                  enabled: root.playerRunning && !root.playerActionBusy
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.playerAction("next")
+                }
+                Button {
+                  iconText: "\uf04d"
+                  tooltipText: "Stop"
+                  enabled: (root.playerRunning || root.playPreparing)
+                    && !stopProcess.running
+                    && !root.playCancellationRequested
+                    && (!playerActionProcess.running || root.playPreparing)
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.stopPlayer()
+                }
               }
 
-              Button {
-                anchors.verticalCenter: parent.verticalCenter
-                iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
-                tooltipText: root.playerMuted ? "Unmute" : "Mute (M)"
-                active: root.playerMuted
-                enabled: root.playerRunning && !root.playerActionBusy
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.playerAction("mute")
-              }
+              RowLayout {
+                id: outputControls
+                width: parent.width
+                spacing: Style.spacing.xs
 
-              PanelSlider {
-                id: volumeSlider
-                anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(116)
-                height: implicitHeight
-                minimum: 0
-                maximum: 100
-                step: 1
-                integer: true
-                value: root.playerVolume
-                trackColor: root.faint
-                fillColor: root.accent
-                knobColor: root.foreground
-                tickColor: root.background
-                enabled: !stopProcess.running
-                Accessible.name: "Radio volume"
-                onMoved: function(nextVolume) { root.setPlayerVolume(nextVolume) }
-                onRightClicked: root.playerAction("mute")
-              }
+                Button {
+                  id: outputButton
+                  iconText: "\uf0a1"
+                  tooltipText: root.playerOutput
+                    ? "Audio output: " + root.outputLabel(root.playerOutput)
+                    : "Choose audio output"
+                  active: root.playerOutput !== ""
+                  enabled: !stopProcess.running && !outputProcess.running
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.toggleOutputMenu()
+                }
 
-              Text {
-                anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(30)
-                text: root.playerVolume + "%"
-                textFormat: Text.PlainText
-                color: root.dim
-                font.family: Style.font.menuFamily
-                font.pixelSize: Style.font.caption
-                horizontalAlignment: Text.AlignRight
+                Button {
+                  iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
+                  tooltipText: root.playerMuted ? "Unmute" : "Mute (M)"
+                  active: root.playerMuted
+                  enabled: root.playerRunning && !root.playerActionBusy
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.playerAction("mute")
+                }
+
+                PanelSlider {
+                  id: volumeSlider
+                  Layout.fillWidth: true
+                  minimum: 0
+                  maximum: 100
+                  step: 1
+                  integer: true
+                  value: root.playerVolume
+                  trackColor: root.faint
+                  fillColor: root.accent
+                  knobColor: root.foreground
+                  tickColor: root.background
+                  enabled: !stopProcess.running
+                  Accessible.name: "Radio volume"
+                  onMoved: function(nextVolume) { root.setPlayerVolume(nextVolume) }
+                  onRightClicked: root.playerAction("mute")
+                }
+
+                Text {
+                  text: root.playerVolume + "%"
+                  Layout.minimumWidth: implicitWidth
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.caption
+                  horizontalAlignment: Text.AlignRight
+                }
               }
             }
           }

@@ -26,7 +26,7 @@ jobs:
           sudo apt-get install --yes bubblewrap iproute2 jq lua5.4 mpv python3 ripgrep socat
           sudo apt-get install --yes qt6-declarative-dev-tools qml6-module-qttest \
             qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript \
-            qml6-module-qtqml-models
+            qml6-module-qtqml-models qml6-module-qtquick-layouts
 
       - name: Allow Bubblewrap network namespace setup
         run: |
