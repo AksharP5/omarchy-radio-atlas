@@ -116,12 +116,12 @@ TestCase {
     } else {
       compare(bounds(outputControls).bottom, bounds(transportControls).bottom,
         "Normal windows must retain the single row")
-      verify(bounds(outputControls).left >= bounds(transportControls).right + Style.spacing.xs - 0.5,
-        "Volume must remain to the right of playback")
+      verify(Math.abs(bounds(outputControls).left - bounds(transportControls).right - Style.spacing.xs) <= 0.5,
+        "Keep the same gap between playback and output buttons")
       if (data.shortSlider)
         verify(volumeSlider.width < Style.space(116), "Shorten the slider before moving to two rows")
       else
-        compare(volumeSlider.width, Style.space(116), "Keep the normal slider width")
+        verify(volumeSlider.width >= Style.space(116), "Use spare width for the volume slider")
     }
     var controls = controlsIn(playerPanel)
     compare(controls.length, 9, "Favorite, six playback/output buttons, slider, percentage")
