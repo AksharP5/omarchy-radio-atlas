@@ -7,6 +7,8 @@ output=""
 max_filesize=""
 limit=""
 request_url=""
+search_field=""
+search_value=""
 while (( $# > 0 )); do
   case "$1" in
     --output)
@@ -21,6 +23,12 @@ while (( $# > 0 )); do
       if [[ ${2:-} == limit=* ]]; then
         limit=${2#limit=}
       fi
+      case "${2:-}" in
+        name=*|country=*|countrycode=*|tag=*)
+          search_field=${2%%=*}
+          search_value=${2#*=}
+          ;;
+      esac
       shift 2
       ;;
     https://*)
@@ -45,6 +53,17 @@ payload='[
   {"stationuuid":"cccccccc-1111-1111-1111-cccccccccccc","name":"Unsafe","url_resolved":"file:///etc/passwd","countrycode":"US","geo_lat":40,"geo_long":-74},
   {"stationuuid":"dddddddd-1111-1111-1111-dddddddddddd","name":"Invalid coordinates","url_resolved":"https://example.com/invalid","countrycode":"US","geo_lat":140,"geo_long":-74}
 ]'
+
+if [[ -n ${RADIO_ATLAS_TEST_SEARCH_STATIONS:-} ]]; then
+  payload=$(jq -c --arg field "$search_field" --arg query "$search_value" '
+    if $field == "countrycode" then
+      [.[] | select(.countrycode == $query)]
+    else
+      (if $field == "tag" then "tags" else $field end) as $key
+      | [.[] | select(.[$key] | ascii_downcase | contains($query | ascii_downcase))]
+    end
+  ' "$RADIO_ATLAS_TEST_SEARCH_STATIONS")
+fi
 
 if [[ ${RADIO_ATLAS_TEST_CURL_UNKNOWN_LOCATION:-0} == 1 ]]; then
   payload=$(jq -c '. + [{

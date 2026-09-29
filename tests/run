@@ -31,6 +31,7 @@ bash -n "$project_dir/radio-fetch" "$project_dir/radio-player" \
   "$project_dir/tests/fixtures/"*
 luac -p "$project_dir/radio-status.lua"
 node "$project_dir/tests/model.test.mjs"
+node "$project_dir/tests/search.test.mjs"
 node "$project_dir/tests/expansion.test.mjs"
 node "$project_dir/tests/selection.test.mjs"
 node "$project_dir/tests/keyboard.test.mjs"

@@ -17,6 +17,14 @@ Item {
 
   property bool opened: false
   property var countries: []
+  readonly property var countryNames: {
+    try {
+      return JSON.parse(countryNamesFile.text() || "{}")
+    } catch (error) {
+      console.warn("Country names could not be loaded:", error)
+      return ({})
+    }
+  }
   property var worldStations: []
   property var results: []
   property var favorites: []
@@ -382,7 +390,7 @@ Item {
     }
     restorePlayingCountry(false)
     fetchError = ""
-    setStationList("search", RadioModel.searchStations(worldStations, query))
+    setStationList("search", RadioModel.searchStations(worldStations, query, 150, countryNames))
     return true
   }
 
@@ -762,6 +770,14 @@ Item {
         root.fetchError = "Map data could not be loaded"
       }
     }
+  }
+
+  FileView {
+    id: countryNamesFile
+    path: Qt.resolvedUrl("assets/country-search.json").toString().replace(/^file:\/\//, "")
+    blockLoading: true
+    watchChanges: false
+    printErrors: true
   }
 
   FileView {
