@@ -1828,7 +1828,6 @@ Item {
               RowLayout {
                 id: outputControls
                 Layout.fillWidth: true
-                Layout.maximumWidth: playerControls.columns === 1 ? Infinity : implicitWidth
                 Layout.alignment: Qt.AlignRight | Qt.AlignBottom
                 spacing: Style.spacing.xs
 
