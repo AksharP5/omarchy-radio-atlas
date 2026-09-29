@@ -1773,7 +1773,8 @@ Item {
               anchors.rightMargin: Style.spacing.md
               anchors.bottomMargin: Style.spacing.sm
               columns: width < transportControls.implicitWidth
-                + outputControls.implicitWidth + columnSpacing ? 1 : 2
+                + outputControls.implicitWidth - volumeSlider.Layout.preferredWidth
+                + volumeSlider.Layout.minimumWidth + columnSpacing ? 1 : 2
               columnSpacing: Style.spacing.xs
               rowSpacing: Style.spacing.xs
 
@@ -1826,7 +1827,8 @@ Item {
 
               RowLayout {
                 id: outputControls
-                Layout.fillWidth: playerControls.columns === 1
+                Layout.fillWidth: true
+                Layout.maximumWidth: playerControls.columns === 1 ? Infinity : implicitWidth
                 Layout.alignment: Qt.AlignRight | Qt.AlignBottom
                 spacing: Style.spacing.xs
 
@@ -1858,6 +1860,7 @@ Item {
                 PanelSlider {
                   id: volumeSlider
                   Layout.fillWidth: true
+                  Layout.minimumWidth: knobSize * 2
                   Layout.preferredWidth: Style.space(116)
                   minimum: 0
                   maximum: 100
