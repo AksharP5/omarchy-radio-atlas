@@ -1764,15 +1764,22 @@ Item {
               onClicked: root.toggleFavorite(root.playingStationUuid)
             }
 
-            Column {
+            GridLayout {
               id: playerControls
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.bottom: parent.bottom
-              anchors.margins: Style.spacing.md
-              spacing: Style.spacing.xs
+              anchors.leftMargin: Style.spacing.sm
+              anchors.rightMargin: Style.spacing.md
+              anchors.bottomMargin: Style.spacing.sm
+              columns: width < transportControls.implicitWidth
+                + outputControls.implicitWidth + columnSpacing ? 1 : 2
+              columnSpacing: Style.spacing.xs
+              rowSpacing: Style.spacing.xs
 
               Row {
+                id: transportControls
+                Layout.alignment: Qt.AlignLeft | Qt.AlignBottom
                 spacing: Style.spacing.xs
 
                 Button {
@@ -1819,7 +1826,8 @@ Item {
 
               RowLayout {
                 id: outputControls
-                width: parent.width
+                Layout.fillWidth: playerControls.columns === 1
+                Layout.alignment: Qt.AlignRight | Qt.AlignBottom
                 spacing: Style.spacing.xs
 
                 Button {
@@ -1850,6 +1858,7 @@ Item {
                 PanelSlider {
                   id: volumeSlider
                   Layout.fillWidth: true
+                  Layout.preferredWidth: Style.space(116)
                   minimum: 0
                   maximum: 100
                   step: 1
@@ -1868,6 +1877,7 @@ Item {
                 Text {
                   text: root.playerVolume + "%"
                   Layout.minimumWidth: implicitWidth
+                  Layout.preferredWidth: Math.max(Style.space(30), implicitWidth)
                   textFormat: Text.PlainText
                   color: root.dim
                   font.family: Style.font.menuFamily

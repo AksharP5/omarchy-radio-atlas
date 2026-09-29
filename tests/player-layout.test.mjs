@@ -110,11 +110,13 @@ TestCase {
 
   function test_controlsFit_data() {
     return [
-      { tag: "normal", panelWidth: 390, fontSize: 12 },
-      { tag: "small-window", panelWidth: 312, fontSize: 12 },
-      { tag: "small-window-larger-font", panelWidth: 442, fontSize: 17 },
-      { tag: "small-window-large-font", panelWidth: 624, fontSize: 24 },
-      { tag: "large-font-fixed-spacing", panelWidth: 312, fontSize: 24, spacingScaleWithFont: false }
+      { tag: "normal", panelWidth: 390, fontSize: 12, stacked: false },
+      { tag: "normal-larger-font", panelWidth: 553, fontSize: 17, stacked: false },
+      { tag: "small-window", panelWidth: 312, fontSize: 12, stacked: true },
+      { tag: "small-window-larger-font", panelWidth: 442, fontSize: 17, stacked: true },
+      { tag: "small-window-large-font", panelWidth: 624, fontSize: 24, stacked: true },
+      { tag: "large-font-fixed-spacing", panelWidth: 312, fontSize: 24, spacingScaleWithFont: false, stacked: true },
+      { tag: "expanded-again", panelWidth: 390, fontSize: 12, stacked: false }
     ]
   }
 
@@ -140,7 +142,18 @@ TestCase {
     width = data.panelWidth
     baseFontSize = data.fontSize
     spacingScaleWithFont = data.spacingScaleWithFont !== false
+    waitForPolish(playerControls)
     waitForPolish(outputControls)
+    if (data.stacked) {
+      verify(bounds(outputControls).top >= bounds(transportControls).bottom + style.spacing.xs - 0.5,
+        "Volume must move below playback when the window is narrow")
+    } else {
+      compare(bounds(outputControls).bottom, bounds(transportControls).bottom,
+        "Normal windows must retain the single row")
+      verify(bounds(outputControls).left >= bounds(transportControls).right + style.spacing.xs - 0.5,
+        "Volume must remain to the right of playback")
+      compare(volumeSlider.width, style.space(116), "Keep the normal slider width")
+    }
     var controls = controlsIn(playerPanel)
     compare(controls.length, 9, "Favorite, six playback/output buttons, slider, percentage")
     var status = playerPanel.children.find(function(item) {
