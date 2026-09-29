@@ -76,6 +76,11 @@ click stops its player or resumes the most recently played station when stopped,
 and the mouse wheel adjusts radio volume. If there is no listening history,
 right click does nothing.
 
+Search accepts country names, two-letter country codes, and aliases such as
+`USA` and `UK`. Recognized countries match by code while station-name and tag
+searches still run. Other queries retain country-name substring matching.
+The bundled country lookup also works in the instant local preview.
+
 If a station disconnects or cannot be played, Radio Atlas keeps it selected and
 shows the failure. Click the play button to retry that station, or Next/Previous
 to choose another queued station. It does not automatically reconnect or switch

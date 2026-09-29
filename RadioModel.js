@@ -486,20 +486,26 @@ function prioritizeStations(priority, fallback, maximum) {
   return combineStations([priority, fallback], maximum, false)
 }
 
-function searchStations(stations, query, maximum) {
+function searchStations(stations, query, maximum, countryNames) {
   var rows = Array.isArray(stations) ? stations : []
   var wanted = String(query || "").trim().toLowerCase()
   if (!wanted) return []
+  var resolvedCountry = countryNames && countryNames[wanted]
+  var countryCode = typeof resolvedCountry === "string" ? resolvedCountry : ""
 
   var output = []
   var limit = Math.max(1, Number(maximum || 150))
   for (var i = 0; i < rows.length && output.length < limit; i++) {
     var station = rows[i]
     if (!station) continue
+    if (countryCode && String(station.countryCode || "").toUpperCase() === countryCode) {
+      output.push(station)
+      continue
+    }
     var fields = [
       station.name,
-      station.country,
-      station.countryCode,
+      countryCode ? "" : station.country,
+      countryCode ? "" : station.countryCode,
       station.state,
       station.language,
       station.tags,
