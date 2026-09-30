@@ -1,0 +1,252 @@
+"""Exercise stream failure and recovery with real mpv, without audio or public network."""
+import io
+import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import tempfile
+import threading
+import time
+import unittest
+import wave
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+PROJECT = Path(__file__).resolve().parents[1]
+
+
+def audio(seconds):
+    data = io.BytesIO()
+    with wave.open(data, "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(8000)
+        stream.writeframes(b"\0\0" * int(8000 * seconds))
+    return data.getvalue()
+
+
+class PlaybackTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="radio-atlas-playback-")
+        self.addCleanup(self.directory.cleanup)
+        root = Path(self.directory.name)
+        runtime = root / "omarchy-radio-atlas"
+        runtime.mkdir()
+        self.status_path = runtime / "status.json"
+        self.requests = []
+        requests = self.requests
+        short, live = audio(1), audio(30)
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                if self.path == "/broken":
+                    self.send_error(503)
+                    return
+                playlists = {
+                    "/playlist.m3u": ["/live", "/alternate"],
+                    "/broken.m3u": ["/broken", "/alternate"],
+                    "/empty.m3u": [],
+                }
+                if self.path == "/nested.pls":
+                    data = ("[playlist]\nNumberOfEntries=2\n"
+                            f"File1=http://127.0.0.1:{self.server.server_port}/playlist.m3u\n"
+                            f"File2=http://127.0.0.1:{self.server.server_port}/unused\n"
+                            "Version=2\n").encode()
+                    content_type = "audio/x-scpls"
+                elif self.path in playlists:
+                    data = ("#EXTM3U\n" + "".join(
+                        f"http://127.0.0.1:{self.server.server_port}{path}\n"
+                        for path in playlists[self.path])).encode()
+                    content_type = "audio/x-mpegurl"
+                else:
+                    data = short if self.path == "/short" else live
+                    content_type = "audio/wav"
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+            def log_message(self, *_):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.addCleanup(self.server.server_close)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.shutdown)
+        self.env = dict(os.environ, XDG_RUNTIME_DIR=str(root), XDG_DATA_HOME=str(root / "data"),
+                        RADIO_ATLAS_STATUS_FILE=str(self.status_path),
+                        RADIO_ATLAS_QUEUE_FILE=str(runtime / "playlist.json"))
+        self.runtime = runtime
+
+    def start(self, paths, position=0):
+        urls = [f"http://127.0.0.1:{self.server.server_port}{path}" for path in paths]
+        queue = [dict(uuid=f"station-{i}", name=path, url=url)
+                 for i, (path, url) in enumerate(zip(paths, urls))]
+        (self.runtime / "playlist.json").write_text(json.dumps(queue))
+        self.log = tempfile.TemporaryFile(mode="w+")
+        self.addCleanup(self.log.close)
+        process = subprocess.Popen([
+            "mpv", "--no-config", "--no-video", "--ao=null", "--idle=yes",
+            "--loop-playlist=inf", "--network-timeout=2", f"--playlist-start={position}",
+            "--load-unsafe-playlists=no",
+            f"--script={PROJECT / 'radio-status.lua'}",
+            f"--input-ipc-server={self.runtime / 'mpv.sock'}", *urls,
+        ], env=self.env, stdout=self.log, stderr=self.log)
+
+        def stop():
+            process.terminate()
+            process.wait(timeout=5)
+
+        self.addCleanup(stop)
+
+    def wait_status(self, predicate):
+        deadline = time.monotonic() + 6
+        state = {}
+        while time.monotonic() < deadline:
+            if self.status_path.exists():
+                state = json.loads(self.status_path.read_text())
+                if predicate(state):
+                    return state
+            time.sleep(0.02)
+        self.log.seek(0)
+        self.fail(f"Status did not match: {state}\n{self.log.read()}")
+
+    def action(self, action, *arguments):
+        result = subprocess.run([str(PROJECT / "radio-player"), action, *arguments], env=self.env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def test_disconnect_stays_selected_and_retry_reopens_same_stream(self):
+        self.start(["/short", "/live"])
+        state = self.wait_status(lambda s: s.get("error") == "Stream disconnected")
+        self.assertEqual(state["station"]["uuid"], "station-0")
+        self.assertFalse(state["loaded"])
+        self.assertTrue(state["paused"])
+        # Check the public status command too: it must not erase the Lua failure state.
+        self.assertEqual(self.action("status")["error"], "Stream disconnected")
+        self.assertEqual(self.requests, ["/short"])
+        self.action("toggle")
+        self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-0")
+        self.wait_status(lambda s: s.get("error") == "Stream disconnected")
+        self.assertEqual(self.requests, ["/short", "/short"])
+        self.action("next")
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertEqual(state["error"], "")
+        self.assertFalse(state["paused"])
+        self.action("toggle")
+        self.wait_status(lambda s: s["paused"])
+        self.action("toggle")
+        self.wait_status(lambda s: not s["paused"])
+
+    def test_open_failure_stays_selected_and_previous_uses_failed_position(self):
+        self.start(["/live", "/broken", "/other"], position=1)
+        state = self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        self.assertEqual(state["playlistPosition"], 1)
+        self.assertTrue(state["errorDetail"])
+        state = self.action("status")
+        self.assertEqual(state["station"]["uuid"], "station-1")
+        self.assertTrue(self.requests)
+        self.assertEqual(set(self.requests), {"/broken"})
+        failed_requests = list(self.requests)
+        self.action("status")
+        self.assertEqual(self.requests, failed_requests)
+        self.action("previous")
+        self.wait_status(lambda s: s.get("loaded") and s["playlistPosition"] == 0)
+        self.assertEqual(self.requests, failed_requests + ["/live"])
+
+    def test_selecting_station_resumes_paused_playback(self):
+        self.start(["/live", "/other"])
+        self.wait_status(lambda s: s.get("loaded"))
+        self.assertTrue(self.action("toggle")["paused"])
+        (self.runtime / "play-selection.json").write_text(
+            (self.runtime / "playlist.json").read_text())
+
+        self.assertFalse(self.action("play", "station-1", "selection")["paused"])
+        self.wait_status(lambda s: s.get("loaded") and not s["paused"]
+                         and s["station"]["uuid"] == "station-1")
+        self.assertEqual(self.requests, ["/live", "/other"])
+
+    def test_selecting_station_recovers_from_stream_failure(self):
+        self.start(["/broken", "/live"])
+        self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        (self.runtime / "play-selection.json").write_text(
+            (self.runtime / "playlist.json").read_text())
+
+        self.action("play", "station-1", "selection")
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertFalse(state["paused"])
+        self.assertEqual(state["error"], "")
+
+    def test_nested_playlist_keeps_station_identity_and_navigation(self):
+        self.start(["/nested.pls", "/other"])
+        state = self.wait_status(lambda s: s.get("loaded"))
+        self.assertEqual(state["station"]["uuid"], "station-0")
+        self.assertEqual(state["playlistCount"], 2)
+        self.action("next")
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertEqual(state["title"], "other")
+        self.assertEqual(self.requests, ["/nested.pls", "/playlist.m3u", "/live", "/other"])
+        self.action("previous")
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-0")
+        self.assertEqual(state["title"], "live")
+        self.assertEqual(self.action("status")["station"]["uuid"], "station-0")
+
+    def test_failed_playlist_stream_keeps_station_selected(self):
+        self.start(["/broken.m3u", "/other"])
+        state = self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        self.assertEqual(state["station"]["uuid"], "station-0")
+        self.assertEqual(state["playlistCount"], 2)
+        self.action("next")
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertEqual(state["title"], "other")
+        self.assertEqual(set(self.requests), {"/broken.m3u", "/broken", "/other"})
+
+    def test_empty_playlist_stays_selected_and_can_be_retried(self):
+        self.start(["/empty.m3u", "/other"])
+        state = self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        self.assertEqual(state["station"]["uuid"], "station-0")
+        self.assertEqual(state["errorDetail"], "Station playlist is empty")
+        self.assertEqual(self.action("status")["playlistPosition"], 0)
+        self.assertEqual(self.requests, ["/empty.m3u"])
+        self.action("toggle")
+        self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        self.assertEqual(self.requests, ["/empty.m3u", "/empty.m3u"])
+        self.action("next")
+        self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertEqual(self.requests, ["/empty.m3u", "/empty.m3u", "/other"])
+
+    def test_status_command_does_not_overwrite_player_status(self):
+        state = dict(running=True, loaded=True, station=dict(uuid="station-0"))
+        self.status_path.write_text(json.dumps(state))
+        (self.runtime / "playlist.json").write_text('[{"uuid":"station-0"}]')
+        server = socket.socket(socket.AF_UNIX)
+        self.addCleanup(server.close)
+        server.bind(str(self.runtime / "mpv.sock"))
+        server.listen(1)
+
+        def reply():
+            connection, _ = server.accept()
+            with connection, connection.makefile("r") as requests:
+                for value in [False, "Test", 0, 1, 70, False, "auto", None]:
+                    request = json.loads(requests.readline())
+                    response = dict(request_id=request["request_id"], error="success", data=value)
+                    connection.sendall((json.dumps(response) + "\n").encode())
+
+        responder = threading.Thread(target=reply, daemon=True)
+        responder.start()
+        snapshot = self.action("status")
+        responder.join(timeout=5)
+        self.assertTrue(snapshot["loaded"])
+        self.assertEqual(snapshot["title"], "Test")
+        self.assertEqual(json.loads(self.status_path.read_text()), state)
+
+
+if __name__ == "__main__":
+    unittest.main()

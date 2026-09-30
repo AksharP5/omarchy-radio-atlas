@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode=${RADIO_ATLAS_TEST_PACTL_MODE:-}
+[[ -n $mode ]] || exec /usr/bin/pactl "$@"
+
+if [[ $mode == fail ]]; then
+  exit 1
+fi
+if [[ $mode == many ]]; then
+  jq -cn '[range(1; 19) | {
+    name: ("test_sink_" + tostring),
+    description: ("Test Output " + tostring)
+  }]'
+  exit 0
+fi
+printf '%s\n' '[
+  {"name":"alsa_output.pci-0000_00_1f.3.analog-stereo","description":"Built-in Audio"},
+  {"name":"raop_sink.Living-Room.local.192.168.1.49.7000","description":"Living Room"},
+  {"name":"default","description":"Device named default"},
+  {"name":"auto","description":"Device named auto"}
+]'

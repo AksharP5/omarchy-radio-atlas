@@ -22,15 +22,17 @@ file_within_limit() {
 valid_state_file() {
   local path=$1
   file_within_limit "$path" && jq -e -s '
-    length == 1 and (.[0]
-      | type == "object"
-      and (.favorites | type == "array")
-      and (.favorites | length <= 500)
-      and (.recent | type == "array")
-      and (.recent | length <= 30)
-      and ((.volume // 70) | type == "number")
-      and ((.volume // 70) >= 0 and (.volume // 70) <= 100))
-  ' "$path" >/dev/null 2>&1
+      length == 1 and (.[0]
+        | type == "object"
+        and (.favorites | type == "array")
+        and (.favorites | length <= 500)
+        and (.recent | type == "array")
+        and (.recent | length <= 30)
+        and ((.volume // 70) | type == "number")
+        and ((.volume // 70) >= 0 and (.volume // 70) <= 100)
+        and ((.output // "") | type == "string")
+        and ((.output // "") | test("^([A-Za-z0-9._:+-]{0,160})$")))
+    ' "$path" >/dev/null 2>&1
 }
 
 ensure_state() {
@@ -103,6 +105,19 @@ write_volume() {
   mv "$temporary" "$state_file"
 }
 
+write_output() {
+  local output=$1
+  local temporary
+  temporary=$(mktemp "$state_dir/state.XXXXXX")
+  jq -c --arg output "$output" '.output = $output' "$state_file" > "$temporary"
+  if ! valid_state_file "$temporary"; then
+    rm -f "$temporary"
+    echo 'Radio Atlas could not save the audio output safely' >&2
+    return 4
+  fi
+  mv "$temporary" "$state_file"
+}
+
 ensure_state
 action=${1:-get}
 case "$action" in
@@ -136,6 +151,12 @@ case "$action" in
     (( volume >= 0 && volume <= 100 )) \
       || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
     write_volume "$volume"
+    ;;
+  output)
+    output=${2:-}
+    [[ $output =~ ^[A-Za-z0-9._:+-]{0,160}$ ]] \
+      || { echo 'Invalid audio output' >&2; exit 2; }
+    write_output "$output"
     ;;
   *)
     echo "Unknown action: $action" >&2

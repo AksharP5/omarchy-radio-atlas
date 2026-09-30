@@ -1,9 +1,9 @@
 import QtQuick
+import QtQuick.Layouts
 import QtQuick.Controls as QQC
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
-import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "RadioModel.js" as RadioModel
@@ -17,6 +17,14 @@ Item {
 
   property bool opened: false
   property var countries: []
+  readonly property var countryNames: {
+    try {
+      return JSON.parse(countryNamesFile.text() || "{}")
+    } catch (error) {
+      console.warn("Country names could not be loaded:", error)
+      return ({})
+    }
+  }
   property var worldStations: []
   property var results: []
   property var favorites: []
@@ -24,6 +32,8 @@ Item {
   property string mode: "world"
   property string activeCountryCode: ""
   property string activeCountryName: ""
+  property string browsedCountryCode: ""
+  property bool countryCacheLoaded: false
   property bool helpVisible: false
   property int selectedIndex: -1
   property var selectedStation: null
@@ -39,14 +49,26 @@ Item {
   property string fetchStderr: ""
   property string worldExpandOutput: ""
   readonly property int worldStationLimit: 5000
+  property int worldExpansionMisses: 0
 
   property bool playerRunning: false
   property bool playerPaused: false
+  property string streamError: ""
   property bool playerMuted: false
   property int playerVolume: 70
   property int reportedVolume: 70
   property int pendingVolume: -1
   property string playerTitle: ""
+  property string playerOutput: ""
+  property var audioOutputs: []
+  property string outputsError: ""
+  property bool outputMenuOpen: false
+  readonly property var outputChoices: {
+    var rows = [{ id: "", label: "System default" }]
+    for (var i = 0; i < audioOutputs.length; i++) rows.push(audioOutputs[i])
+    return rows
+  }
+
   property var playingStation: null
   property string playingStationUuid: ""
   property string recordedStationUuid: ""
@@ -71,6 +93,9 @@ Item {
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
   readonly property string statePath: Qt.resolvedUrl("radio-state").toString().replace(/^file:\/\//, "")
   readonly property string runtimePath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas"
+  readonly property string countryCachePath:
+    (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache")
+      + "/omarchy-radio-atlas/countries"
   readonly property string statusPath: runtimePath + "/status.json"
   readonly property string playSelectionPath: runtimePath + "/play-selection.json"
   readonly property string favoriteSelectionPath: runtimePath + "/favorite-selection.json"
@@ -104,8 +129,15 @@ Item {
   property color mapLand: lightTheme ? "#a9aaa6" : "#283039"
   property color mapGrid: lightTheme ? "#3f454a" : "#7d8791"
 
-  readonly property int cardWidth: Math.min(Style.space(1180), panel.width - Style.gapsOut * 2)
-  readonly property int cardHeight: Math.min(Style.space(760), panel.height - Style.gapsOut * 2)
+  property bool windowSetupReady: false
+  property bool windowFrameReady: false
+  property string pendingOpenPayload: ""
+  readonly property int preferredWidth: Style.space(1180)
+  readonly property int preferredHeight: Style.space(760)
+  readonly property string windowPath:
+    Qt.resolvedUrl("radio-window").toString().replace(/^file:\/\//, "")
+  readonly property int cardWidth: panel.width
+  readonly property int cardHeight: panel.height
   readonly property int headerHeight: Style.space(68)
   readonly property int sidebarWidth: Math.min(Style.space(390), cardWidth * 0.39)
   readonly property var controlSections: [
@@ -129,14 +161,15 @@ Item {
       title: "MOUSE AND BAR",
       inputWidth: 124,
       controls: [
-        { input: "DRAG GLOBE", action: "Rotate" },
+        { input: "DRAG / FLICK", action: "Spin globe" },
         { input: "GLOBE WHEEL", action: "Zoom" },
         { input: "CLICK SIGNAL", action: "Play station" },
         { input: "CLICK COUNTRY", action: "Browse stations" },
         { input: "BAR LEFT", action: "Open or close" },
         { input: "BAR MIDDLE", action: "Tune randomly" },
-        { input: "BAR RIGHT", action: "Stop playback" },
-        { input: "BAR WHEEL", action: "Change volume" }
+        { input: "BAR RIGHT", action: "Stop or resume playback" },
+        { input: "BAR WHEEL", action: "Change volume" },
+        { input: "SPEAKER", action: "Choose audio output" }
       ]
     }
   ]
@@ -148,14 +181,32 @@ Item {
 
   function toggleControls() {
     helpVisible = !helpVisible
+    outputMenuOpen = false
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
+  function registerWindowSetup() {
+    windowSetupReady = false
+    if (!windowSetupProcess.running) windowSetupProcess.running = true
+  }
+
   function open(payloadJson) {
+    if (!windowSetupReady) {
+      pendingOpenPayload = payloadJson || "{}"
+      return
+    }
+    openWindow(payloadJson)
+  }
+
+  function openWindow(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (error) { payload = ({}) }
 
     opened = true
+    worldExpansionMisses = 0
+    windowFrameReady = false
+    windowRevealTimer.stop()
+    panel.visible = true
     fetchError = ""
     loadState()
     if (payload.action === "random") {
@@ -168,7 +219,12 @@ Item {
 
   function close() {
     helpVisible = false
+    outputMenuOpen = false
+    globe.stopKineticRotation(true)
     opened = false
+    windowFrameReady = false
+    windowRevealTimer.stop()
+    panel.visible = false
     worldExpandTimer.stop()
     if (worldExpandProcess.running) worldExpandProcess.running = false
   }
@@ -179,15 +235,28 @@ Item {
       shell.hide((manifest && manifest.id) || "akshar.radio-atlas")
   }
 
+  function scheduleWindowReveal() {
+    if (windowFrameReady || !panel.visible || !panel.backingWindowVisible) return
+    windowRevealTimer.restart()
+  }
+
   function handleHyprlandEvent(event) {
-    if (!opened || String(event && event.name || "") !== "openwindow") return
+    var eventName = String(event && event.name || "")
+    if (eventName === "configreloaded") {
+      windowSetupReloadTimer.restart()
+      return
+    }
+    if (!opened || eventName !== "openwindow") return
     var parts = []
     try {
       parts = event.parse(4)
     } catch (error) {
       parts = String(event && event.data || "").split(",")
     }
-    if (String(parts[2] || "") === "org.omarchy.screensaver") dismiss()
+    var windowClass = String(parts[2] || "")
+    if (windowClass === "org.omarchy.screensaver") {
+      dismiss()
+    }
   }
 
   function highlightStationCountry(station, focusGlobe) {
@@ -238,15 +307,18 @@ Item {
     else setSelection((selectedIndex + delta + displayStations.length) % displayStations.length, true)
   }
 
-  function setStationList(nextMode, stations) {
+  function setStationList(nextMode, stations, preserveSelection) {
+    var selectedUuid = preserveSelection && selectedStation ? selectedStation.uuid : ""
+    var fromKeyboard = preserveSelection && keyboardSelectionVisible
     mode = nextMode
     if (nextMode !== "favorites" && nextMode !== "recent") results = stations
-    setSelection(stations.length > 0 ? 0 : -1)
+    var index = RadioModel.indexByUuid(stations, selectedUuid)
+    setSelection(index >= 0 ? index : (stations.length > 0 ? 0 : -1), fromKeyboard)
   }
 
   function scheduleWorldExpansion(delay) {
     if (!opened || worldStations.length === 0
-        || worldStations.length >= worldStationLimit) return
+        || worldStations.length >= worldStationLimit || worldExpansionMisses >= 3) return
     worldExpandTimer.interval = Math.max(500, Number(delay || 1600))
     worldExpandTimer.restart()
   }
@@ -326,7 +398,7 @@ Item {
     }
     restorePlayingCountry(false)
     fetchError = ""
-    setStationList("search", RadioModel.searchStations(worldStations, query))
+    setStationList("search", RadioModel.searchStations(worldStations, query, 150, countryNames))
     return true
   }
 
@@ -351,6 +423,9 @@ Item {
     if (!countryName) countryName = countryCode
     searchDebounce.stop()
     cancelPendingFetch()
+    if (mode !== "country" || browsedCountryCode !== countryCode)
+      countryCacheLoaded = false
+    browsedCountryCode = countryCode
     var cachedStations = RadioModel.stationsForCountry(worldStations, countryCode)
     worldStations = RadioModel.prioritizeStations(
       cachedStations, worldStations, worldStationLimit)
@@ -361,6 +436,33 @@ Item {
     searchField.text = countryName
     startFetch("country", countryCode)
     keyCatcher.forceActiveFocus()
+  }
+
+  function applyCountryStations(code, stations) {
+    if (mode !== "country" || code !== browsedCountryCode) return
+    var countryStations = RadioModel.mergeStations(results, stations, 500)
+    worldStations = RadioModel.prioritizeStations(
+      countryStations, worldStations, worldStationLimit)
+    setStationList("country", countryStations, true)
+  }
+
+  function applyCountryCache(raw) {
+    if (mode !== "country") return
+    try {
+      if (typeof raw !== "string" || raw.length > 4194304)
+        throw new Error("Country cache is too large")
+      var stations = JSON.parse(raw)
+      if (!Array.isArray(stations) || stations.length > 25)
+        throw new Error("Country cache is not a station list")
+      for (var i = 0; i < stations.length; i++) {
+        if (!stations[i] || stations[i].countryCode !== browsedCountryCode)
+          throw new Error("Country cache does not match this country")
+      }
+      countryCacheLoaded = true
+      applyCountryStations(browsedCountryCode, stations)
+    } catch (error) {
+      console.warn("Country cache could not be loaded:", error)
+    }
   }
 
   function tuneRandom() {
@@ -488,7 +590,10 @@ Item {
       var nextPlayingUuid = nextPlayingStation ? String(nextPlayingStation.uuid) : ""
       playerRunning = state.running === true
       playerPaused = state.paused === true
+      streamError = String(state.error || "").replace(/[\r\n\t]+/g, " ").slice(0, 200)
       playerMuted = state.muted === true
+      playerOutput = /^[A-Za-z0-9._:+-]{0,160}$/.test(String(state.output || ""))
+        ? String(state.output) : ""
       var nextVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
       reportedVolume = isFinite(nextVolume) ? Math.max(0, Math.min(100, nextVolume)) : 70
       if (pendingVolume < 0) playerVolume = reportedVolume
@@ -510,10 +615,7 @@ Item {
           if (displayStations[i].name === playerTitle) { matchingIndex = i; break }
         }
       }
-      if (matchingIndex >= 0) {
-        selectedIndex = matchingIndex
-        selectedStation = displayStations[matchingIndex]
-      }
+      if (playingChanged && matchingIndex >= 0) setSelection(matchingIndex)
 
       var countryStation = nextPlayingStation || (matchingIndex >= 0 ? selectedStation : null)
       if (playerRunning && playingChanged && countryStation)
@@ -550,6 +652,44 @@ Item {
     volumeProcess.errorOutput = ""
     volumeProcess.command = [root.playerPath, "volume", String(pendingVolume)]
     volumeProcess.running = true
+  }
+
+  function refreshOutputs() {
+    if (outputsProcess.running) return
+    outputsError = ""
+    outputsProcess.output = ""
+    outputsProcess.errorOutput = ""
+    outputsProcess.command = [playerPath, "outputs"]
+    outputsProcess.running = true
+  }
+
+  function selectOutput(value) {
+    var sink = String(value || "")
+    if (outputProcess.running) return
+    playerError = ""
+    outputProcess.submittedOutput = sink
+    outputProcess.output = ""
+    outputProcess.errorOutput = ""
+    outputProcess.command = sink
+      ? [playerPath, "output", sink]
+      : [playerPath, "output"]
+    outputProcess.running = true
+  }
+
+  function toggleOutputMenu() {
+    if (outputMenuOpen) {
+      outputMenuOpen = false
+      return
+    }
+    outputMenuOpen = true
+    refreshOutputs()
+  }
+
+  function outputLabel(sink) {
+    for (var i = 0; i < audioOutputs.length; i++) {
+      if (audioOutputs[i].id === sink) return audioOutputs[i].label
+    }
+    return sink
   }
 
   function loadState() {
@@ -671,6 +811,24 @@ Item {
   }
 
   FileView {
+    id: countryNamesFile
+    path: Qt.resolvedUrl("assets/country-search.json").toString().replace(/^file:\/\//, "")
+    blockLoading: true
+    watchChanges: false
+    printErrors: true
+  }
+
+  FileView {
+    id: countryCacheFile
+    path: root.mode === "country" && root.browsedCountryCode
+      ? root.countryCachePath + "/" + root.browsedCountryCode + ".json" : ""
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.applyCountryCache(text())
+  }
+
+  FileView {
     path: root.statusReady ? root.statusPath : ""
     watchChanges: true
     atomicWrites: true
@@ -699,6 +857,18 @@ Item {
     atomicWrites: true
     printErrors: true
     onSaveFailed: root.localError = "Favorite could not be updated"
+  }
+
+  Process {
+    id: windowSetupProcess
+    command: [root.windowPath, String(root.preferredWidth), String(root.preferredHeight)]
+    onExited: function(exitCode) {
+      root.windowSetupReady = true
+      if (!root.pendingOpenPayload) return
+      var payload = root.pendingOpenPayload
+      root.pendingOpenPayload = ""
+      root.openWindow(payload)
+    }
   }
 
   Process {
@@ -745,9 +915,12 @@ Item {
         root.pendingFetchValue = ""
         root.fetching = false
         Qt.callLater(function() {
-          if (root.mode === nextAction)
-            root.startFetch(nextAction,
-              nextAction === "random" ? root.randomExclusions() : nextValue)
+          if (root.mode !== nextAction) return
+          if (nextAction === "search"
+              && String(searchField.text || "").trim() !== nextValue) return
+          if (nextAction === "country" && root.browsedCountryCode !== nextValue) return
+          root.startFetch(nextAction,
+            nextAction === "random" ? root.randomExclusions() : nextValue)
         })
         return
       }
@@ -756,6 +929,8 @@ Item {
       if (root.mode !== root.fetchAction) return
       if (root.fetchAction === "search"
           && String(searchField.text || "").trim() !== root.fetchValue) return
+      if (root.fetchAction === "country"
+          && root.fetchValue !== root.browsedCountryCode) return
       if (exitCode !== 0) {
         root.fetchError = root.displayStations.length > 0
           ? "Showing cached stations · Radio Browser is unavailable"
@@ -769,14 +944,13 @@ Item {
       root.fetchError = ""
 
       if (root.fetchAction === "world") {
-        root.setStationList("world", root.worldStations)
+        root.setStationList("world", root.worldStations, true)
       } else if (root.fetchAction === "country") {
-        var countryStations = RadioModel.mergeStations(root.results, stations, 500)
-        root.worldStations = RadioModel.prioritizeStations(
-          countryStations, root.worldStations, root.worldStationLimit)
-        root.setStationList("country", countryStations)
+        if (!root.countryCacheLoaded)
+          root.applyCountryStations(root.fetchValue, stations)
+        countryCacheFile.reload()
       } else if (root.fetchAction === "search") {
-        root.setStationList("search", stations)
+        root.setStationList("search", stations, true)
       } else if (root.fetchAction === "random") {
         root.setStationList("random", stations)
         if (stations.length > 0) {
@@ -799,6 +973,7 @@ Item {
       var output = root.worldExpandOutput
       root.worldExpandOutput = ""
       if (!root.opened) return
+      root.worldExpansionMisses += 1
       if (exitCode !== 0) {
         root.scheduleWorldExpansion(30000)
         return
@@ -819,9 +994,14 @@ Item {
       var merged = RadioModel.mergeStations(
         root.worldStations, stations, root.worldStationLimit)
       var added = merged.length - root.worldStations.length
+      if (added === 0) {
+        root.scheduleWorldExpansion(10000)
+        return
+      }
+      root.worldExpansionMisses = 0
       root.worldStations = merged
       if (root.mode === "world") root.results = merged
-      root.scheduleWorldExpansion(added > 0 ? 1600 : 10000)
+      root.scheduleWorldExpansion(1600)
     }
   }
 
@@ -860,6 +1040,76 @@ Item {
         return
       }
       Qt.callLater(root.flushPlayerVolume)
+    }
+  }
+
+  Process {
+    id: outputsProcess
+    property string output: ""
+    property string errorOutput: ""
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: outputsProcess.output = text
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: outputsProcess.errorOutput = text
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.outputsError = "Audio outputs are unavailable"
+        root.audioOutputs = []
+        return
+      }
+      var parsed = null
+      try {
+        var document = JSON.parse(outputsProcess.output || "{}")
+        if (document && Array.isArray(document.outputs)) parsed = document.outputs
+      } catch (error) {
+        parsed = null
+      }
+      if (parsed === null) {
+        root.outputsError = "Audio outputs are unavailable"
+        root.audioOutputs = []
+        return
+      }
+      root.audioOutputs = parsed.filter(function(row) {
+        return row && typeof row === "object"
+          && /^[A-Za-z0-9._:+-]{1,160}$/.test(String(row.id || ""))
+      }).map(function(row) {
+        return {
+          id: String(row.id),
+          label: String(row.label || row.id).replace(/[\r\n\t]+/g, " ").slice(0, 160)
+        }
+      })
+      root.outputsError = ""
+    }
+  }
+
+  Process {
+    id: outputProcess
+    property string submittedOutput: ""
+    property string output: ""
+    property string errorOutput: ""
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: outputProcess.output = text
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: outputProcess.errorOutput = text
+    }
+    onExited: function(exitCode) {
+      if (exitCode === 0) {
+        root.statusReady = true
+        root.playerError = ""
+        root.playerOutput = outputProcess.submittedOutput
+        root.outputMenuOpen = false
+        return
+      }
+      root.playerError = "Could not change audio output"
     }
   }
 
@@ -973,7 +1223,7 @@ Item {
     id: searchDebounce
     interval: 300
     repeat: false
-    onTriggered: root.search(searchField.text)
+    onTriggered: root.startFetch("search", String(searchField.text || "").trim())
   }
 
   Timer {
@@ -990,6 +1240,22 @@ Item {
   }
 
   Timer {
+    id: windowSetupReloadTimer
+    interval: 100
+    repeat: false
+    onTriggered: root.registerWindowSetup()
+  }
+
+  Timer {
+    id: windowRevealTimer
+    interval: 50
+    repeat: false
+    onTriggered: {
+      if (panel.visible && panel.backingWindowVisible) root.windowFrameReady = true
+    }
+  }
+
+  Timer {
     id: volumeTimer
     interval: 90
     repeat: false
@@ -997,6 +1263,7 @@ Item {
   }
 
   Component.onCompleted: {
+    registerWindowSetup()
     statusInitProcess.command = [playerPath, "status"]
     statusInitProcess.running = true
   }
@@ -1006,26 +1273,93 @@ Item {
     function onRawEvent(event) { root.handleHyprlandEvent(event) }
   }
 
-  PanelWindow {
+  FloatingWindow {
     id: panel
-    visible: root.opened
-    anchors { top: true; bottom: true; left: true; right: true }
-    mask: Region { item: card }
-    color: "transparent"
-    WlrLayershell.namespace: "omarchy-radio-atlas"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: root.opened && cardHover.hovered
-      ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
-    exclusionMode: ExclusionMode.Ignore
+    visible: false
+    title: "Radio Atlas"
+    color: root.background
+    implicitWidth: root.preferredWidth
+    implicitHeight: root.preferredHeight
+    minimumSize: Qt.size(Style.space(800), Style.space(560))
+    HyprlandWindow.opacity: root.windowFrameReady ? 1 : 0
+
+    onVisibleChanged: {
+      if (visible) root.scheduleWindowReveal()
+      if (!visible && root.opened) root.dismiss()
+    }
+    onBackingWindowVisibleChanged: root.scheduleWindowReveal()
+    onWidthChanged: root.scheduleWindowReveal()
+    onHeightChanged: root.scheduleWindowReveal()
 
     BorderSurface {
       id: card
-      width: root.cardWidth
-      height: root.cardHeight
-      anchors.centerIn: parent
+      anchors.fill: parent
       color: root.background
       borderSpec: Border.surfaceSpec("menu", "border", root.border, Math.max(1, Style.normalBorderWidth))
       radius: Style.cornerRadius
+
+      Keys.priority: Keys.AfterItem
+      Keys.onPressed: function(event) {
+        if (searchField.activeFocus) {
+          if (event.key === Qt.Key_Escape) {
+            if (searchField.text) {
+              searchField.clear()
+              root.showWorld()
+            }
+            else keyCatcher.forceActiveFocus()
+            event.accepted = true
+          }
+          return
+        }
+
+        if (root.helpVisible) {
+          if (event.key === Qt.Key_Escape || root.isHelpKey(event)) {
+            root.toggleControls()
+            event.accepted = true
+          }
+          return
+        }
+
+        if (event.key === Qt.Key_Escape) {
+          root.dismiss()
+          event.accepted = true
+        } else if (root.isHelpKey(event)) {
+          root.toggleControls()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Slash) {
+          searchField.forceActiveFocus()
+          searchField.selectAll()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Up) {
+          root.moveSelection(-1)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Down) {
+          root.moveSelection(1)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+          root.playSelected()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Space) {
+          if (root.playerRunning) root.playerAction("toggle")
+          else root.playSelected()
+          event.accepted = true
+        } else if (event.key === Qt.Key_R) {
+          root.tuneRandom()
+          event.accepted = true
+        } else if (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal) {
+          root.changePlayerVolume(5)
+          event.accepted = true
+        } else if (event.key === Qt.Key_Minus) {
+          root.changePlayerVolume(-5)
+          event.accepted = true
+        } else if (event.key === Qt.Key_M) {
+          root.playerAction("mute")
+          event.accepted = true
+        } else if (event.key === Qt.Key_F && root.selectedStation) {
+          root.toggleFavorite(root.selectedStation.uuid)
+          event.accepted = true
+        }
+      }
 
       MouseArea {
         id: cardMouse
@@ -1033,79 +1367,11 @@ Item {
         onClicked: keyCatcher.forceActiveFocus()
       }
 
-      HoverHandler {
-        id: cardHover
-        onHoveredChanged: if (hovered) keyCatcher.forceActiveFocus()
-      }
-
       Item {
         id: keyCatcher
         anchors.fill: parent
         focus: true
         z: 1
-
-        Keys.priority: Keys.AfterItem
-        Keys.onPressed: function(event) {
-          if (searchField.activeFocus) {
-            if (event.key === Qt.Key_Escape) {
-              if (searchField.text) {
-                searchField.clear()
-                root.showWorld()
-              }
-              else keyCatcher.forceActiveFocus()
-              event.accepted = true
-            }
-            return
-          }
-
-          if (root.helpVisible) {
-            if (event.key === Qt.Key_Escape || root.isHelpKey(event)) {
-              root.toggleControls()
-              event.accepted = true
-            }
-            return
-          }
-
-          if (event.key === Qt.Key_Escape) {
-            root.dismiss()
-            event.accepted = true
-          } else if (root.isHelpKey(event)) {
-            root.toggleControls()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Slash) {
-            searchField.forceActiveFocus()
-            searchField.selectAll()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.moveSelection(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.moveSelection(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.playSelected()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Space) {
-            if (root.playerRunning) root.playerAction("toggle")
-            else root.playSelected()
-            event.accepted = true
-          } else if (event.key === Qt.Key_R) {
-            root.tuneRandom()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Plus || event.key === Qt.Key_Equal) {
-            root.changePlayerVolume(5)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Minus) {
-            root.changePlayerVolume(-5)
-            event.accepted = true
-          } else if (event.key === Qt.Key_M) {
-            root.playerAction("mute")
-            event.accepted = true
-          } else if (event.key === Qt.Key_F && root.selectedStation) {
-            root.toggleFavorite(root.selectedStation.uuid)
-            event.accepted = true
-          }
-        }
       }
 
       Item {
@@ -1254,7 +1520,7 @@ Item {
               ? root.fetchError || root.localError
               : (root.activeCountryName
                 ? root.activeCountryName + "  ·  click another country to browse"
-                : "Drag to rotate  ·  wheel to zoom  ·  click a signal or country")
+                : "Drag or flick to spin  ·  wheel to zoom  ·  click a signal or country")
             textFormat: Text.PlainText
             color: root.fetchError || root.localError ? root.urgent : root.dim
             font.family: Style.font.menuFamily
@@ -1350,6 +1616,7 @@ Item {
             currentIndex: root.selectedIndex
             boundsBehavior: Flickable.StopAtBounds
             cacheBuffer: 500
+            interactive: !root.outputMenuOpen
 
             QQC.ScrollBar.vertical: QQC.ScrollBar {}
 
@@ -1494,7 +1761,8 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: Style.space(126)
+            height: Math.max(Style.space(126), nowPlaying.height + playerStatus.height
+              + playerControls.implicitHeight + Style.spacing.md * 3 + Style.spacing.xs)
             color: "transparent"
 
             Rectangle {
@@ -1525,18 +1793,20 @@ Item {
             }
 
             Text {
+              id: playerStatus
               anchors.left: nowPlaying.left
               anchors.right: nowPlaying.right
               anchors.top: nowPlaying.bottom
               anchors.topMargin: Style.spacing.xs
               text: root.playerError
                 ? root.playerError
+                : root.streamError ? root.streamError + ". Play to retry, or Next."
                 : (!root.playerRunning ? "Choose a signal to begin"
                 : (root.playingTrackTitle ? root.playingTrackTitle + "  ·  " : "")
                   + (root.playerPaused ? "Paused" : "Live")
                   + (root.playlistCount > 1 ? "  ·  " + root.playlistCount + " stations queued" : ""))
               textFormat: Text.PlainText
-              color: root.playerError ? root.urgent : root.dim
+              color: root.playerError || root.streamError ? root.urgent : root.dim
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.caption
               elide: Text.ElideRight
@@ -1562,103 +1832,224 @@ Item {
               onClicked: root.toggleFavorite(root.playingStationUuid)
             }
 
-            Row {
+            GridLayout {
+              id: playerControls
               anchors.left: parent.left
-              anchors.leftMargin: Style.spacing.sm
+              anchors.right: parent.right
               anchors.bottom: parent.bottom
+              anchors.leftMargin: Style.spacing.sm
+              anchors.rightMargin: Style.spacing.md
               anchors.bottomMargin: Style.spacing.sm
-              spacing: Style.spacing.xs
+              columns: width < transportControls.implicitWidth
+                + outputControls.implicitWidth - volumeSlider.Layout.preferredWidth
+                + volumeSlider.Layout.minimumWidth + columnSpacing ? 1 : 2
+              columnSpacing: Style.spacing.xs
+              rowSpacing: Style.spacing.xs
 
-              Button {
-                iconText: "\uf048"
-                tooltipText: "Previous station"
-                enabled: root.playerRunning && !root.playerActionBusy
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.playerAction("previous")
+              Row {
+                id: transportControls
+                Layout.alignment: Qt.AlignLeft | Qt.AlignBottom
+                spacing: Style.spacing.xs
+
+                Button {
+                  iconText: "\uf048"
+                  tooltipText: "Previous station"
+                  enabled: root.playerRunning && !root.playerActionBusy
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.playerAction("previous")
+                }
+                Button {
+                  iconText: root.playerRunning && !root.playerPaused ? "\uf04c" : "\uf04b"
+                  tooltipText: root.streamError ? "Retry station"
+                    : root.playerRunning && !root.playerPaused ? "Pause" : "Play"
+                  enabled: !root.playerActionBusy
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.playerRunning ? root.playerAction("toggle") : root.playSelected()
+                }
+                Button {
+                  iconText: "\uf051"
+                  tooltipText: "Next station"
+                  enabled: root.playerRunning && !root.playerActionBusy
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.playerAction("next")
+                }
+                Button {
+                  iconText: "\uf04d"
+                  tooltipText: "Stop"
+                  enabled: (root.playerRunning || root.playPreparing)
+                    && !stopProcess.running
+                    && !root.playCancellationRequested
+                    && (!playerActionProcess.running || root.playPreparing)
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.stopPlayer()
+                }
               }
-              Button {
-                iconText: root.playerRunning && !root.playerPaused ? "\uf04c" : "\uf04b"
-                tooltipText: root.playerRunning && !root.playerPaused ? "Pause" : "Play"
-                enabled: !root.playerActionBusy
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.playerRunning ? root.playerAction("toggle") : root.playSelected()
-              }
-              Button {
-                iconText: "\uf051"
-                tooltipText: "Next station"
-                enabled: root.playerRunning && !root.playerActionBusy
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.playerAction("next")
-              }
-              Button {
-                iconText: "\uf04d"
-                tooltipText: "Stop"
-                enabled: (root.playerRunning || root.playPreparing)
-                  && !stopProcess.running
-                  && !root.playCancellationRequested
-                  && (!playerActionProcess.running || root.playPreparing)
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.stopPlayer()
+
+              RowLayout {
+                id: outputControls
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignRight | Qt.AlignBottom
+                spacing: Style.spacing.xs
+
+                Button {
+                  id: outputButton
+                  iconText: "\uf0a1"
+                  tooltipText: root.playerOutput
+                    ? "Audio output: " + root.outputLabel(root.playerOutput)
+                    : "Choose audio output"
+                  active: root.playerOutput !== ""
+                  enabled: !stopProcess.running && !outputProcess.running
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.toggleOutputMenu()
+                }
+
+                Button {
+                  iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
+                  tooltipText: root.playerMuted ? "Unmute" : "Mute (M)"
+                  active: root.playerMuted
+                  enabled: root.playerRunning && !root.playerActionBusy
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.playerAction("mute")
+                }
+
+                PanelSlider {
+                  id: volumeSlider
+                  Layout.fillWidth: true
+                  Layout.minimumWidth: knobSize * 2
+                  Layout.preferredWidth: Style.space(116)
+                  minimum: 0
+                  maximum: 100
+                  step: 1
+                  integer: true
+                  value: root.playerVolume
+                  trackColor: root.faint
+                  fillColor: root.accent
+                  knobColor: root.foreground
+                  tickColor: root.background
+                  enabled: !stopProcess.running
+                  Accessible.name: "Radio volume"
+                  onMoved: function(nextVolume) { root.setPlayerVolume(nextVolume) }
+                  onRightClicked: root.playerAction("mute")
+                }
+
+                Text {
+                  text: root.playerVolume + "%"
+                  Layout.minimumWidth: implicitWidth
+                  Layout.preferredWidth: Math.max(Style.space(30), implicitWidth)
+                  textFormat: Text.PlainText
+                  color: root.dim
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.caption
+                  horizontalAlignment: Text.AlignRight
+                }
               }
             }
+          }
 
-            Row {
+          MouseArea {
+            visible: root.outputMenuOpen
+            anchors.fill: parent
+            z: 2
+            onClicked: root.outputMenuOpen = false
+          }
+
+          Rectangle {
+            id: outputMenu
+            visible: root.outputMenuOpen
+            readonly property point buttonPosition: {
+              sidebar.width
+              sidebar.height
+              outputControls.x
+              outputControls.y
+              return outputButton.mapToItem(
+                sidebar, outputButton.width / 2, 0)
+            }
+            x: Math.max(Style.spacing.sm, Math.min(
+              parent.width - width - Style.spacing.sm,
+              buttonPosition.x - width / 2))
+            y: buttonPosition.y - height - Style.spacing.xs
+            z: 3
+            width: Math.min(Style.space(300), parent.width - Style.spacing.md * 2)
+            height: outputMenuColumn.implicitHeight + Style.spacing.md * 2
+            radius: Style.cornerRadius
+            color: root.background
+            border.color: root.faint
+            border.width: 1
+
+            Accessible.role: Accessible.Pane
+            Accessible.name: "Audio output"
+
+            Column {
+              id: outputMenuColumn
+              anchors.top: parent.top
+              anchors.topMargin: Style.spacing.md
+              anchors.left: parent.left
               anchors.right: parent.right
-              anchors.rightMargin: Style.spacing.md
-              anchors.leftMargin: Style.spacing.sm
-              anchors.bottom: parent.bottom
-              anchors.bottomMargin: Style.spacing.sm
               spacing: Style.spacing.xs
 
-              Button {
-                anchors.verticalCenter: parent.verticalCenter
-                iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
-                tooltipText: root.playerMuted ? "Unmute" : "Mute (M)"
-                active: root.playerMuted
-                enabled: root.playerRunning && !root.playerActionBusy
-                focusable: true
-                foreground: root.foreground
-                accent: root.accent
-                onClicked: root.playerAction("mute")
-              }
-
-              PanelSlider {
-                id: volumeSlider
-                anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(116)
-                height: implicitHeight
-                minimum: 0
-                maximum: 100
-                step: 1
-                integer: true
-                value: root.playerVolume
-                trackColor: root.faint
-                fillColor: root.accent
-                knobColor: root.foreground
-                tickColor: root.background
-                enabled: !stopProcess.running
-                Accessible.name: "Radio volume"
-                onMoved: function(nextVolume) { root.setPlayerVolume(nextVolume) }
-                onRightClicked: root.playerAction("mute")
-              }
-
               Text {
-                anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(30)
-                text: root.playerVolume + "%"
+                anchors.left: parent.left
+                anchors.leftMargin: Style.spacing.xs
+                text: "AUDIO OUTPUT"
                 textFormat: Text.PlainText
                 color: root.dim
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.caption
-                horizontalAlignment: Text.AlignRight
+                font.bold: true
+              }
+
+              ListView {
+                id: outputList
+                width: parent.width
+                height: Math.min(contentHeight, Style.space(320))
+                model: root.outputChoices
+                spacing: Style.spacing.xs
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                QQC.ScrollBar.vertical: QQC.ScrollBar {
+                  policy: QQC.ScrollBar.AsNeeded
+                }
+
+                delegate: Button {
+                  id: outputOption
+                  required property var modelData
+                  width: ListView.view.width
+                  leftAlign: true
+                  text: outputOption.modelData.label
+                  selected: outputOption.modelData.id === root.playerOutput
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  Accessible.role: Accessible.Button
+                  Accessible.name: outputOption.modelData.label
+                  onClicked: root.selectOutput(outputOption.modelData.id)
+                }
+              }
+
+              Text {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Style.spacing.xs
+                visible: root.audioOutputs.length === 0 && !outputsProcess.running
+                text: root.outputsError || "No other audio outputs found"
+                textFormat: Text.PlainText
+                color: root.outputsError ? root.urgent : root.dim
+                font.family: Style.font.menuFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.Wrap
               }
             }
           }

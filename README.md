@@ -11,7 +11,7 @@ usual play, pause, previous, and next controls.
 
 ## Features
 
-- Precise drag rotation and deep wheel zoom on a theme-aware globe
+- Kinetic drag rotation that highlights a nearby station when it settles, plus deep wheel zoom on a theme-aware globe
 - A fast cached world view that progressively adds thousands of stations and keeps the session catalog when closed
 - Country stations stay on the session globe and take priority over background signals
 - Country-level map estimates when a station has no published coordinates
@@ -20,11 +20,12 @@ usual play, pause, previous, and next controls.
 - Instant cached results while full-directory search and country browsing refresh from Radio Browser
 - Random tuning that avoids recent stations, plus favorites and listening history
 - Independent volume slider, mute, and bar-wheel volume control
-- Click-through desktop focus outside the atlas panel
+- Audio output picker that routes radio to any PipeWire sink, including AirPlay speakers exposed as RAOP sinks
+- Centered, floating window with normal Omarchy window-manager behavior
 - Automatic dismissal when Omarchy starts its screensaver
 - Keyboard navigation
 - Persistent world and country caches with background refresh and transient retries
-- Automatic skip to the next playlist entry when a stream fails
+- Keeps your chosen station selected if its stream fails, with explicit retry or next controls
 
 ## Install
 
@@ -46,7 +47,7 @@ Stop the independent radio player before removing the plugin:
 omarchy plugin remove akshar.radio-atlas
 ```
 
-Favorites, listening history, and the saved volume remain in
+Favorites, listening history, volume, and the selected audio output remain in
 `~/.local/share/radio-atlas/state.json` so reinstalling restores them. Remove
 `~/.local/share/radio-atlas/` manually if you also want to delete that data.
 
@@ -54,7 +55,7 @@ Favorites, listening history, and the saved volume remain in
 
 | Input | Action |
 | --- | --- |
-| Drag globe | Rotate |
+| Drag or flick globe | Rotate; a flick coasts and highlights a nearby station |
 | Wheel over globe | Zoom |
 | Click signal | Play station |
 | Click country | Browse country |
@@ -66,11 +67,82 @@ Favorites, listening history, and the saved volume remain in
 | `F` | Favorite selected station |
 | `+` / `-` | Raise or lower radio volume |
 | `M` | Mute or unmute |
+| Speaker icon | Choose the audio output |
 | `?` | Show or hide controls |
 | Escape | Hide controls, clear search, or close |
 
 On the bar, left click opens Radio Atlas, middle click tunes randomly, right
-click stops its player, and the mouse wheel adjusts radio volume.
+click stops its player or resumes the most recently played station when stopped,
+and the mouse wheel adjusts radio volume. If there is no listening history,
+right click does nothing.
+
+Search accepts country names, two-letter country codes, and aliases such as
+`USA` and `UK`. Recognized countries match by code while station-name and tag
+searches still run. Other queries retain country-name substring matching.
+The bundled country lookup also works in the instant local preview.
+
+If a station disconnects or cannot be played, Radio Atlas keeps it selected and
+shows the failure. Click the play button to retry that station, or Next/Previous
+to choose another queued station. It does not automatically reconnect or switch
+stations. A repeated opening clip can come from the station's stream server;
+retrying may play that same clip again. Radio Browser supplies station listings,
+not the audio streams.
+
+For M3U and PLS station playlists, Radio Atlas plays the first stream and keeps
+Next/Previous moving between stations. Empty playlists show a playback failure
+without switching stations.
+
+Fresh world and country caches load without DNS lookups.
+Country browsing picks up completed background refreshes in the open list,
+preserving the selected station and ignoring updates for other countries.
+The globe skips off-screen station markers when zoomed in, and player-status
+updates for the same station preserve the landing highlight without repainting
+the globe.
+Search and world refreshes also preserve your selected station when it remains
+in the results, including its keyboard highlight. Track-title, volume, and pause
+updates preserve your station-list selection.
+Theme colors update the globe immediately. Background station expansion stops
+after three consecutive attempts add no stations, including failed requests;
+reopening Radio Atlas allows expansion to try again.
+
+## Audio outputs and AirPlay
+
+The speaker button next to the volume slider chooses where radio plays. It lists
+every PipeWire output device through `pactl`, which ships with Omarchy's
+PipeWire setup. "System default" follows the desktop's current output, the
+choice is saved alongside the volume in `~/.local/share/radio-atlas/state.json`,
+and switching while playing takes effect immediately. If the chosen device
+disappears, mpv may pause and will not always resume when it returns. Choose
+"System default" or another available output, then resume playback.
+
+AirPlay speakers appear in this list once PipeWire exposes them as RAOP sinks.
+On Arch Linux, the RAOP modules ship in the optional `pipewire-zeroconf`
+package. Install it, enable discovery, and restart the user services:
+
+```bash
+sudo pacman -S pipewire-zeroconf
+mkdir -p ~/.config/pipewire/pipewire.conf.d
+cp /usr/share/pipewire/pipewire.conf.avail/50-raop.conf \
+  ~/.config/pipewire/pipewire.conf.d/
+systemctl --user restart pipewire wireplumber
+```
+
+If you run a firewall such as ufw, allow the timing feedback AirPlay speakers
+send back to the sender on UDP ports 6001-6002; without it the session connects
+but the speaker stays silent:
+
+```bash
+sudo ufw allow in from 192.168.0.0/16 to any port 6001:6002 proto udp
+```
+
+PipeWire's RAOP discovery occasionally drops a sink when a device briefly
+stops announcing itself over mDNS. If an AirPlay speaker disappears from the
+output list, re-discover it with `systemctl --user restart pipewire wireplumber`.
+
+PipeWire's RAOP sink streams classic AirPlay audio as uncompressed PCM.
+AirPort Express, Apple TV, many AV receivers, and HomePods accept it; AirPlay 2
+only features such as HomePod stereo pairs are not supported. A device that
+refuses the stream simply stays silent; pick another output to recover.
 
 ## Data and privacy
 
@@ -93,13 +165,30 @@ Map geometry comes from public-domain Natural Earth data.
 ## Troubleshooting
 
 Player and proxy diagnostics are written to
-`$XDG_RUNTIME_DIR/omarchy-radio-atlas/mpv.log` and `proxy.log`. If saved state
-is malformed, oversized, or contains too many entries, Radio Atlas refuses to
-overwrite it and reports
+`$XDG_RUNTIME_DIR/omarchy-radio-atlas/mpv.log` and `proxy.log`. Proxy diagnostics
+identify request, connection, and relay failures, idle timeouts, and which side
+closed a connection. They omit URLs, hostnames, and raw error messages and are
+capped at 200 lines per player session. Stopping and starting playback begins
+a new session and replaces those logs. A connection closing is not necessarily
+an error; it also happens when changing stations or stopping playback.
+
+If saved state is malformed, oversized, or contains too many entries, Radio Atlas
+refuses to overwrite it and reports
 `~/.local/share/radio-atlas/state.json`; back up that file before repairing or
 removing it.
 
+<a href="https://www.greptile.com/?utm_source=oss_badge&amp;utm_medium=readme&amp;utm_campaign=greptile_for_open_source">
+  <img src="https://www.greptile.com/badge.svg" alt="Greptile: The War on Bugs" width="100%">
+</a>
+
 ## Development
+
+The native QML tests require Qt 6.5 or newer for the globe's drag-event API.
+CI runs them on Ubuntu 26.04 with Qt 6.10.
+Player layout tests use the real Omarchy UI components from
+`/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkout's `shell`
+directory to test another version. CI uses a pinned checkout and disables shell
+processes and theme-file access during these tests.
 
 ```bash
 ./tests/run

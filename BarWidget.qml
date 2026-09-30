@@ -11,12 +11,14 @@ BarWidget {
 
   property bool playerRunning: false
   property bool playerPaused: false
+  property string streamError: ""
   property bool playerMuted: false
   property int playerVolume: 70
   property int reportedVolume: 70
   property int pendingVolume: -1
   property string playerTitle: ""
   property bool statusReady: false
+  property bool playerStateReady: false
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
   readonly property string statusPath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas/status.json"
 
@@ -34,6 +36,7 @@ BarWidget {
       var state = JSON.parse(raw || "{}")
       root.playerRunning = state.running === true
       root.playerPaused = state.paused === true
+      root.streamError = root.singleLineText(state.error || "", 200)
       root.playerMuted = state.muted === true
       var nextVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
       root.reportedVolume = isFinite(nextVolume)
@@ -41,6 +44,7 @@ BarWidget {
       if (root.pendingVolume < 0) root.playerVolume = root.reportedVolume
       root.playerTitle = root.singleLineText(
         state.title || (state.station && state.station.name) || "", 160)
+      root.playerStateReady = true
     } catch (error) {
       return
     }
@@ -132,14 +136,16 @@ BarWidget {
     text: "\uf0ac"
     active: root.playerRunning && !root.playerPaused
     tooltipText: root.playerRunning
-      ? (root.playerPaused ? "Radio paused: " : "Playing: ") + root.safeTooltipText(root.playerTitle)
+      ? (root.streamError ? root.streamError + ": " : root.playerPaused ? "Radio paused: " : "Playing: ")
+        + root.safeTooltipText(root.playerTitle)
         + "  ·  " + (root.playerMuted ? "muted" : root.playerVolume + "%")
       : "Open Radio Atlas"
 
     onPressed: function(mouseButton) {
       if (!root.bar) return
       if (mouseButton === Qt.RightButton) {
-        root.runPlayerAction("stop")
+        if (!root.playerStateReady) return
+        root.runPlayerAction(root.playerRunning ? "stop" : "resume")
         return
       }
       if (mouseButton === Qt.MiddleButton) {
