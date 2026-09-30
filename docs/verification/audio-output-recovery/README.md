@@ -29,11 +29,12 @@ seeing an absent snapshot or on the order of pause and device notifications.
 | Fixed: another human MPRIS Pause while automatically paused | Stayed paused after reconnect |
 | Fixed: human Pause immediately before removal | Stayed paused after reconnect |
 | Fixed: UI toggle cancels recovery | Stayed paused after reconnect |
+| Fixed: repeated Stop followed by Play or PlayPause | Restarted the same station at playlist index 1 with nonzero PCM |
 
-All seven real audio tests passed in 24.154 seconds. Both negative controls
-failed for the reproduced bugs. Eleven focused tests cover event ordering,
+All eight real audio tests passed in 27.174 seconds. Both negative controls
+failed for the reproduced bugs. Thirteen focused tests cover event ordering,
 coalesced device lists, output flapping, cancellation, resume guards, normal
-media controls, metadata, and volume. The full suite and QML lint also passed.
+media controls, metadata, volume, and WirePlumber executable replacement. The full suite and QML lint also passed.
 [Recorded states and PCM peaks](evidence.jsonl) include baseline, original PR,
 and fixed results. Peak samples from the returned output exceed 7,000 on the
 signed 16-bit scale, alongside advancing playback and an uncorked stream routed

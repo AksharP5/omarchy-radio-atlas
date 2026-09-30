@@ -137,6 +137,7 @@ class Controls:
         self.recovery = None
         self.resume_source = None
         self.selected = ipc.get("audio-device", "auto")
+        self.stopped_position = None
 
     def cancel(self):
         if self.resume_source is not None:
@@ -172,14 +173,27 @@ class Controls:
     def play(self):
         self.cancel()
         if self.ipc.get("user-data/radio-atlas-failure") is not None:
+            self.stopped_position = None
             self.ipc.command("script-message", "radio-atlas-perform-toggle")
             return
         if self.ipc.get("idle-active", True):
-            self.ipc.command("playlist-play-index", "current")
+            position = self.stopped_position if self.stopped_position is not None else "current"
+            self.ipc.command("playlist-play-index", position)
+        self.stopped_position = None
         self.ipc.command("set_property", "pause", False)
+
+    def stop(self):
+        self.cancel()
+        position = self.ipc.get("playlist-pos", -1)
+        if isinstance(position, int) and position >= 0:
+            # Native Stop later clears its current entry, so retain the station
+            # until Play or navigation takes over.
+            self.stopped_position = position
+        self.ipc.command("stop", "keep-playlist")
 
     def action(self, *command):
         self.cancel()
+        self.stopped_position = None
         self.ipc.command(*command)
 
     @staticmethod
@@ -203,20 +217,25 @@ class Controls:
             self.resume_source = GLib.timeout_add(200, self.resume, loss)
 
     def resume(self, loss):
-        self.resume_source = None
         if self.recovery is not loss:
             return False
+        self.resume_source = None
+        if (not self.active() or not self.ipc.get("pause", False)
+                or self.ipc.get("audio-device", "auto") != loss.device):
+            self.cancel()
+            return False
+        if loss.device not in self.device_names(self.ipc.get("audio-device-list", [])):
+            return False
         self.cancel()
-        if (self.active() and self.ipc.get("pause", False)
-                and self.ipc.get("audio-device", "auto") == loss.device
-                and loss.device in self.device_names(self.ipc.get("audio-device-list", []))):
-            self.ipc.command("set_property", "pause", False)
+        self.ipc.command("set_property", "pause", False)
         return False
 
     def event(self, event):
         kind = event.get("event")
         if kind in {"start-file", "end-file", "idle", "shutdown"}:
             self.cancel()
+            if kind == "start-file":
+                self.stopped_position = None
             if kind == "shutdown":
                 self.quit_loop()
                 return
@@ -254,7 +273,7 @@ class Mpris(dbus.service.Object):
         try:
             daemon = self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
             pid = daemon.GetConnectionUnixProcessID(sender, dbus_interface="org.freedesktop.DBus")
-            return Path(os.readlink(f"/proc/{int(pid)}/exe")).name == "wireplumber"
+            return Path(os.readlink(f"/proc/{int(pid)}/exe").removesuffix(" (deleted)")).name == "wireplumber"
         except (dbus.DBusException, OSError, ValueError):
             return False
 
@@ -330,7 +349,7 @@ class Mpris(dbus.service.Object):
 
     @dbus.service.method(PLAYER)
     def Stop(self):
-        self.controls.action("stop", "keep-playlist")
+        self.controls.stop()
 
     @dbus.service.method(PLAYER)
     def Next(self):

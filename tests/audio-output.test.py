@@ -195,10 +195,13 @@ class AudioOutputTest(unittest.TestCase):
         return next((name for name in ast.literal_eval(reply)[0]
                      if name.startswith("org.mpris.MediaPlayer2.mpv")), None)
 
-    def mpris_pause(self):
+    def mpris_action(self, action):
         self.call("gdbus", "call", "--session", "--dest", self.mpris_name(),
                   "--object-path", "/org/mpris/MediaPlayer2",
-                  "--method", "org.mpris.MediaPlayer2.Player.Pause")
+                  "--method", "org.mpris.MediaPlayer2.Player." + action)
+
+    def mpris_pause(self):
+        self.mpris_action("Pause")
         self.wait(lambda: self.property("pause"))
 
     def ui_toggle(self):
@@ -303,6 +306,20 @@ class AudioOutputTest(unittest.TestCase):
             self.selected_module = self.add_sink("atlas_selected")
             self.assert_playing_on_selected(f"rapid cycle {cycle + 1}: selected restored")
 
+    def test_mpris_play_controls_restart_stopped_station(self):
+        self.ipc("loadfile", str(self.root / "tone.wav"), "append")
+        self.ipc("playlist-play-index", 1)
+        self.wait(lambda: self.property("playlist-pos") == 1 and
+                  (self.property("time-pos") or 0) > 0.1)
+        for action in ("Play", "PlayPause"):
+            self.mpris_action("Stop")
+            self.wait(lambda: self.property("idle-active"))
+            self.mpris_action("Stop")
+            self.mpris_action(action)
+            self.wait(lambda: (self.property("time-pos") or 0) > 0.1)
+            self.assertEqual(self.property("playlist-pos"), 1)
+            self.assert_playing_on_selected(f"MPRIS Stop then {action}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
@@ -311,7 +328,8 @@ if __name__ == "__main__":
     parser.add_argument("--legacy-player", action="store_true")
     parser.add_argument("--require-dependencies", action="store_true")
     parser.add_argument("--scenario", choices=("all", "reconnect", "mpris-pause", "ui-pause", "ui-cancel",
-                                              "repeated-pause", "pause-before-removal", "rapid-reconnect"),
+                                              "repeated-pause", "pause-before-removal", "rapid-reconnect",
+                                              "media-controls"),
                         default="all")
     options = parser.parse_args()
     SCRIPT = options.script.resolve()
@@ -328,7 +346,8 @@ if __name__ == "__main__":
                  "ui-cancel": "test_ui_toggle_cancels_recovery",
                  "repeated-pause": "test_mpris_pause_cancels_recovery_while_already_paused",
                  "pause-before-removal": "test_manual_pause_immediately_before_removal_is_preserved",
-                 "rapid-reconnect": "test_rapid_output_changes_recover"}
+                 "rapid-reconnect": "test_rapid_output_changes_recover",
+                 "media-controls": "test_mpris_play_controls_restart_stopped_station"}
     suite = (unittest.defaultTestLoader.loadTestsFromTestCase(AudioOutputTest)
              if options.scenario == "all" else unittest.TestSuite([AudioOutputTest(scenarios[options.scenario])]))
     result = unittest.TextTestRunner(verbosity=2).run(suite)

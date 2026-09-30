@@ -19,6 +19,7 @@ spec.loader.exec_module(mpris)
 class MPV:
     def __init__(self):
         self.properties = dict({"pause": False, "idle-active": False,
+                                "playlist-pos": 1, "playlist-current-pos": 1,
                                 "audio-device": "pipewire/speaker",
                                 "audio-device-list": [{"name": "pipewire/speaker"}]})
         self.commands = []
@@ -143,7 +144,7 @@ class RecoveryTest(unittest.TestCase):
 
     def test_delayed_resume_rechecks_stream_output_pause_and_device(self):
         for property_name, value in [("idle-active", True), ("audio-device", "auto"),
-                                     ("pause", False), ("audio-device-list", []),
+                                     ("pause", False),
                                      ("user-data/radio-atlas-failure", {"message": "failed"})]:
             with self.subTest(property_name=property_name):
                 self.ipc.properties = MPV().properties
@@ -166,6 +167,20 @@ class RecoveryTest(unittest.TestCase):
         self.run_timers()
         self.assertFalse(self.ipc.properties["pause"])
 
+    def test_missing_device_at_timer_waits_for_the_next_return(self):
+        self.devices()
+        self.controls.pause(policy=True)
+        self.devices("pipewire/speaker")
+        # mpv's native list can change before its observer event is delivered.
+        self.ipc.properties["audio-device-list"] = []
+        self.run_timers()
+        self.assertTrue(self.ipc.properties["pause"])
+        self.assertIsNotNone(self.controls.recovery)
+        self.devices("pipewire/speaker")
+        self.run_timers()
+        self.assertFalse(self.ipc.properties["pause"])
+        self.assertEqual(self.ipc.commands.count(("set_property", "pause", False)), 1)
+
     def test_play_and_ui_toggle_use_existing_failure_retry(self):
         self.ipc.properties["idle-active"] = True
         self.ipc.properties["user-data/radio-atlas-failure"] = {"position": 0}
@@ -176,15 +191,39 @@ class RecoveryTest(unittest.TestCase):
 
     def test_stop_then_play_and_toggle_restart_the_kept_station(self):
         for resume in [self.controls.play, self.controls.toggle]:
-            self.controls.action("stop", "keep-playlist")
+            self.controls.stop()
+            self.assertEqual(self.ipc.commands[-1], ("stop", "keep-playlist"))
+            self.ipc.properties["playlist-pos"] = -1
+            self.ipc.properties["playlist-current-pos"] = -1
             self.ipc.properties["idle-active"] = True
             self.ipc.properties["pause"] = True
+            self.controls.stop()
+            self.assertEqual(self.controls.stopped_position, 1)
             resume()
             self.assertEqual(self.ipc.commands[-2:], [
-                ("playlist-play-index", "current"), ("set_property", "pause", False)])
+                ("playlist-play-index", 1), ("set_property", "pause", False)])
+            self.assertIsNone(self.controls.stopped_position)
+            self.ipc.properties["playlist-pos"] = 1
 
 
 class PropertiesTest(unittest.TestCase):
+    def test_policy_sender_uses_executable_identity_even_after_an_upgrade(self):
+        server = mpris.Mpris.__new__(mpris.Mpris)
+        class Daemon:
+            def GetConnectionUnixProcessID(self, sender, dbus_interface):
+                return 123
+        class Bus:
+            def get_object(self, *_):
+                return Daemon()
+        server.bus = Bus()
+        for executable, policy in [("/usr/bin/wireplumber", True),
+                                   ("/usr/bin/wireplumber (deleted)", True),
+                                   ("/usr/bin/playerctl", False)]:
+            with self.subTest(executable=executable), patch.object(mpris.os, "readlink", return_value=executable):
+                self.assertEqual(server.policy_sender(":1.20"), policy)
+        with patch.object(mpris.os, "readlink", side_effect=FileNotFoundError):
+            self.assertFalse(server.policy_sender(":1.20"))
+
     def test_root_identity_and_playback_metadata_match_controls(self):
         ipc = MPV()
         ipc.properties.update({"media-title": "Station song", "playlist-pos": 1, "volume": 70})
