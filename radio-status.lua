@@ -10,6 +10,7 @@ local last_output = ""
 local station_loaded = false
 local station_position = -1
 local failure = nil
+local playlist_redirect = nil
 local max_queue_bytes = 4194304
 
 local function clean_text(value, limit)
@@ -128,20 +129,36 @@ mp.register_event("file-loaded", function()
   schedule_update()
 end)
 mp.register_event("end-file", function(event)
-  if event.reason == "eof" or event.reason == "error" then
+  local empty_playlist = event.reason == "redirect" and not event.playlist_insert_id
+  if event.reason == "eof" or event.reason == "error" or empty_playlist then
     failure = {
       position = station_position,
       message = station_loaded and "Stream disconnected" or "Station could not be played",
-      detail = clean_text(event.error, 200)
+      detail = empty_playlist and "Station playlist is empty" or clean_text(event.error, 200)
     }
     mp.set_property_native("user-data/radio-atlas-failure", failure)
   end
+  if event.reason == "redirect" and not empty_playlist then playlist_redirect = event end
   station_loaded = false
   schedule_update()
 end)
--- A hook blocks mpv from opening the next queued station before we stop it.
+-- Block automatic advancement until failures and playlist expansion are handled.
 mp.add_hook("on_after_end_file", 50, function()
-  if failure then mp.commandv("stop", "keep-playlist") end
+  if failure then
+    mp.commandv("stop", "keep-playlist")
+    return
+  end
+  if not playlist_redirect then return end
+  -- A station may return alternative stream URLs. Keep its first entry so
+  -- native Next/Previous and status indices still refer to stations.
+  local first_id = playlist_redirect.playlist_insert_id
+  local last_id = first_id + playlist_redirect.playlist_insert_num_entries - 1
+  local entries = mp.get_property_native("playlist", {})
+  for index = #entries, 1, -1 do
+    local id = entries[index].id
+    if id > first_id and id <= last_id then mp.commandv("playlist-remove", index - 1) end
+  end
+  playlist_redirect = nil
 end)
 mp.register_event("idle", function()
   station_loaded = false

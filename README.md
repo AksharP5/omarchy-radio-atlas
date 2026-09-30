@@ -88,6 +88,10 @@ stations. A repeated opening clip can come from the station's stream server;
 retrying may play that same clip again. Radio Browser supplies station listings,
 not the audio streams.
 
+For M3U and PLS station playlists, Radio Atlas plays the first stream and keeps
+Next/Previous moving between stations. Empty playlists show a playback failure
+without switching stations.
+
 Fresh world and country caches load without DNS lookups. The globe skips
 off-screen station markers when zoomed in, and player-status updates for the
 same station preserve the landing highlight without repainting the globe.
