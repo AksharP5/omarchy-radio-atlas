@@ -1223,7 +1223,7 @@ Item {
     id: searchDebounce
     interval: 300
     repeat: false
-    onTriggered: root.search(searchField.text)
+    onTriggered: root.startFetch("search", String(searchField.text || "").trim())
   }
 
   Timer {

@@ -46,12 +46,14 @@ assert.equal(context.selectedIndex, 2)
 assert.equal(context.stationList.currentIndex, 2)
 assert.equal(visibleIndex, 2)
 
-const refreshFunctions = source.match(/  function (?:setSelection|setStationList|moveSelection|playSelected|playlistScope)\([\s\S]*?\n  \}/g).join("\n")
+const refreshFunctions = source.match(/  function (?:setSelection|setStationList|moveSelection|playSelected|playlistScope|previewSearch|search)\([\s\S]*?\n  \}/g).join("\n")
+const debounce = source.match(/id: searchDebounce[\s\S]*?onTriggered: ([^\n]+)/)[1]
 const complete = source.match(/id: fetchProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 
 function refreshSession(mode) {
   const rows = [{ uuid: "first", name: "Jazz First" }, { uuid: "chosen", name: "Jazz Chosen" }]
   let played
+  let requestedQuery
   const run = vm.createContext({
     RadioModel: model, mode, results: rows, worldStations: rows, worldStationLimit: 5000,
     fetchAction: mode, fetchValue: mode === "search" ? "jazz" : "", pendingFetchAction: "",
@@ -59,6 +61,9 @@ function refreshSession(mode) {
     selectedIndex: -1, selectedStation: null, keyboardSelectionVisible: false,
     ListView: { Contain: 0 },
     stationList: { currentIndex: -1, positionViewAtIndex() {} },
+    countryNames: {},
+    restorePlayingCountry() {},
+    startFetch(action, query) { requestedQuery = query },
     scheduleWorldExpansion() {},
     playStation(station) { played = station.uuid },
   })
@@ -74,6 +79,7 @@ function refreshSession(mode) {
       run.complete(0)
     },
     enter() { run.playSelected(); return played },
+    debounce() { vm.runInContext(debounce, run); return requestedQuery },
   }
 }
 
@@ -91,6 +97,13 @@ for (const mode of ["search", "world"]) {
   assert.equal(session.run.selectedStation.url, updated.url)
   assert.equal(session.run.stationList.currentIndex, session.run.selectedIndex)
 }
+
+const waiting = refreshSession("search")
+waiting.run.previewSearch("jazz")
+waiting.run.moveSelection(1)
+assert.equal(waiting.debounce(), "jazz")
+assert.equal(waiting.run.selectedStation.uuid, "chosen", "Starting the debounced fetch keeps the preview selection")
+assert.equal(waiting.run.keyboardSelectionVisible, true)
 
 const removed = refreshSession("search")
 removed.finish([removed.rows[0]])
