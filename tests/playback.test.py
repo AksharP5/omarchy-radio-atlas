@@ -44,9 +44,27 @@ class PlaybackTest(unittest.TestCase):
                 if self.path == "/broken":
                     self.send_error(503)
                     return
-                data = short if self.path == "/short" else live
+                playlists = {
+                    "/playlist.m3u": ["/live", "/alternate"],
+                    "/broken.m3u": ["/broken", "/alternate"],
+                    "/empty.m3u": [],
+                }
+                if self.path == "/nested.pls":
+                    data = ("[playlist]\nNumberOfEntries=2\n"
+                            f"File1=http://127.0.0.1:{self.server.server_port}/playlist.m3u\n"
+                            f"File2=http://127.0.0.1:{self.server.server_port}/unused\n"
+                            "Version=2\n").encode()
+                    content_type = "audio/x-scpls"
+                elif self.path in playlists:
+                    data = ("#EXTM3U\n" + "".join(
+                        f"http://127.0.0.1:{self.server.server_port}{path}\n"
+                        for path in playlists[self.path])).encode()
+                    content_type = "audio/x-mpegurl"
+                else:
+                    data = short if self.path == "/short" else live
+                    content_type = "audio/wav"
                 self.send_response(200)
-                self.send_header("Content-Type", "audio/wav")
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 try:
@@ -76,6 +94,7 @@ class PlaybackTest(unittest.TestCase):
         process = subprocess.Popen([
             "mpv", "--no-config", "--no-video", "--ao=null", "--idle=yes",
             "--loop-playlist=inf", "--network-timeout=2", f"--playlist-start={position}",
+            "--load-unsafe-playlists=no",
             f"--script={PROJECT / 'radio-status.lua'}",
             f"--input-ipc-server={self.runtime / 'mpv.sock'}", *urls,
         ], env=self.env, stdout=self.log, stderr=self.log)
@@ -164,6 +183,44 @@ class PlaybackTest(unittest.TestCase):
         state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
         self.assertFalse(state["paused"])
         self.assertEqual(state["error"], "")
+
+    def test_nested_playlist_keeps_station_identity_and_navigation(self):
+        self.start(["/nested.pls", "/other"])
+        state = self.wait_status(lambda s: s.get("loaded"))
+        self.assertEqual(state["station"]["uuid"], "station-0")
+        self.assertEqual(state["playlistCount"], 2)
+        self.action("next")
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertEqual(state["title"], "other")
+        self.assertEqual(self.requests, ["/nested.pls", "/playlist.m3u", "/live", "/other"])
+        self.action("previous")
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-0")
+        self.assertEqual(state["title"], "live")
+        self.assertEqual(self.action("status")["station"]["uuid"], "station-0")
+
+    def test_failed_playlist_stream_keeps_station_selected(self):
+        self.start(["/broken.m3u", "/other"])
+        state = self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        self.assertEqual(state["station"]["uuid"], "station-0")
+        self.assertEqual(state["playlistCount"], 2)
+        self.action("next")
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertEqual(state["title"], "other")
+        self.assertEqual(set(self.requests), {"/broken.m3u", "/broken", "/other"})
+
+    def test_empty_playlist_stays_selected_and_can_be_retried(self):
+        self.start(["/empty.m3u", "/other"])
+        state = self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        self.assertEqual(state["station"]["uuid"], "station-0")
+        self.assertEqual(state["errorDetail"], "Station playlist is empty")
+        self.assertEqual(self.action("status")["playlistPosition"], 0)
+        self.assertEqual(self.requests, ["/empty.m3u"])
+        self.action("toggle")
+        self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        self.assertEqual(self.requests, ["/empty.m3u", "/empty.m3u"])
+        self.action("next")
+        self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertEqual(self.requests, ["/empty.m3u", "/empty.m3u", "/other"])
 
     def test_status_command_does_not_overwrite_player_status(self):
         state = dict(running=True, loaded=True, station=dict(uuid="station-0"))
