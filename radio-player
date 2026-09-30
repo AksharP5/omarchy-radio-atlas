@@ -478,6 +478,7 @@ play_station() {
       --no-video
       --force-window=no
       --audio-display=no
+      --audio-client-name="Radio Atlas"
       --idle=yes
       --loop-playlist=inf
       --cache-secs=20
@@ -485,6 +486,7 @@ play_station() {
       --demuxer-max-back-bytes=2MiB
       --network-timeout=30
       --load-unsafe-playlists=no
+      --load-scripts=no
       --volume="$(configured_volume)"
       --volume-max=100
       --input-ipc-server="$socket"

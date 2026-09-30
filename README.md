@@ -2,8 +2,8 @@
 
 Explore live radio on a rotatable globe from the Omarchy bar. Click a station
 signal to play it, or click a country to browse its stations. Playback runs in
-Omarchy's existing `mpv` and `mpv-mpris` setup, so `omarchy.media` provides the
-usual play, pause, previous, and next controls.
+`mpv`, with a dedicated MPRIS bridge so `omarchy.media` provides the usual play,
+pause, previous, and next controls.
 
 [View Radio Atlas on the Omarchy Plugin Marketplace](https://omarchyplugins.com/plugin.html?id=akshar.radio-atlas)
 
@@ -34,9 +34,10 @@ omarchy plugin add https://github.com/AksharP5/omarchy-radio-atlas.git --enable
 ```
 
 Radio Atlas uses `bubblewrap`, `curl`, `iproute2`, `jq`, `mpv`, `python`,
-`socat`, `coreutils`, and `util-linux`. These packages ship with Omarchy.
-`mpv-mpris` connects playback to `omarchy.media` and is also part of the
-standard Omarchy installation.
+`python-dbus`, `python-gobject`, `socat`, `coreutils`, and `util-linux`. These
+packages ship with Omarchy, including `python-dbus` through `uwsm`. Radio Atlas
+provides its own MPRIS controls and disables automatic mpv script loading for
+this player instance.
 
 ## Remove
 
@@ -113,12 +114,13 @@ PipeWire setup. "System default" follows the desktop's current output, the
 choice is saved alongside the volume in `~/.local/share/radio-atlas/state.json`,
 and switching while playing takes effect immediately. When a selected output
 disappears during playback, WirePlumber may pause the player through MPRIS.
-Radio Atlas resumes once when that same output returns, provided the pause
-immediately followed its removal. Playback already paused before removal stays
-paused, and unrelated outputs do not trigger recovery. Stop cancels pending recovery.
-An additional MPRIS Pause while already paused cannot cancel recovery because
-mpv reports no state change. "System default" does not identify the actual
-output, so it requires manual resume after a device-loss pause.
+Radio Atlas distinguishes that automatic pause from a deliberate media-control
+pause and resumes once when the same selected output returns. Playback already
+paused before removal stays paused. A manual Pause, including another Pause while
+already paused, cancels recovery. Unrelated outputs do not trigger it. Changing
+stations or outputs, a stream failure, and Stop also cancel recovery. "System
+default" does not identify the actual output, so it requires manual resume after
+a device-loss pause.
 
 AirPlay speakers appear in this list once PipeWire exposes them as RAOP sinks.
 On Arch Linux, the RAOP modules ship in the optional `pipewire-zeroconf`
@@ -196,6 +198,7 @@ directory to test another version. CI uses a pinned checkout and disables shell
 processes and theme-file access during these tests.
 
 ```bash
-./tests/run
+dbus-run-session -- ./tests/run
+python3 tests/audio-output.test.py --require-dependencies
 qmllint -I /usr/share/omarchy/shell BarWidget.qml Globe.qml RadioAtlas.qml
 ```

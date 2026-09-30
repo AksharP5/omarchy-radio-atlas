@@ -1,10 +1,11 @@
 """Verify output recovery on a private PipeWire/WirePlumber/MPRIS stack.
 
 Run directly; no hardware, host audio services, or public network are used.
-Pass --script to compare another radio-status.lua and --artifacts to retain proof.
+Pass --legacy-player --script to compare an older player and --artifacts to retain proof.
 """
 import argparse
 import ast
+import importlib.util
 import json
 import math
 import os
@@ -13,6 +14,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -23,6 +25,8 @@ PROJECT = Path(__file__).resolve().parents[1]
 PLUGIN = Path("/usr/lib/mpv-mpris/mpris.so")
 SCRIPT = PROJECT / "radio-status.lua"
 ARTIFACTS = None
+LEGACY_PLAYER = False
+REQUIRE_DEPENDENCIES = False
 DEPENDENCIES = ("mpv", "pipewire", "pipewire-pulse", "wireplumber", "pactl",
                 "parec", "dbus-daemon", "gdbus")
 
@@ -30,15 +34,22 @@ DEPENDENCIES = ("mpv", "pipewire", "pipewire-pulse", "wireplumber", "pactl",
 class AudioOutputTest(unittest.TestCase):
     def setUp(self):
         missing = [name for name in DEPENDENCIES if not shutil.which(name)]
-        if missing or not PLUGIN.exists():
-            self.skipTest("isolated audio test requires " + ", ".join(
-                missing + ([] if PLUGIN.exists() else [str(PLUGIN)])))
+        if LEGACY_PLAYER and not PLUGIN.exists():
+            missing.append(str(PLUGIN))
+        if not LEGACY_PLAYER:
+            missing.extend(name for name in ("dbus", "gi") if importlib.util.find_spec(name) is None)
+        if missing:
+            message = "isolated audio test requires " + ", ".join(missing)
+            if REQUIRE_DEPENDENCIES:
+                self.fail(message)
+            self.skipTest(message)
+        # Unix socket paths are limited to 108 bytes, independently of where proof is kept.
+        directory = tempfile.TemporaryDirectory(prefix="atlas-audio-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
         if ARTIFACTS:
-            self.root = Path(tempfile.mkdtemp(prefix=self._testMethodName + "-", dir=ARTIFACTS))
-        else:
-            directory = tempfile.TemporaryDirectory(prefix="radio-atlas-audio-test-")
-            self.addCleanup(directory.cleanup)
-            self.root = Path(directory.name)
+            destination = Path(tempfile.mkdtemp(prefix=self._testMethodName + "-", dir=ARTIFACTS))
+            self.addCleanup(self.retain_artifacts, destination)
         self.processes = []
         self.logs = []
         self.addCleanup(self.stop_processes)
@@ -76,15 +87,29 @@ class AudioOutputTest(unittest.TestCase):
             output.setframerate(8000)
             output.writeframes(b"".join(struct.pack("<h", int(10000 * math.sin(
                 2 * math.pi * 440 * sample / 8000))) for sample in range(8000 * 90)))
-        self.start("mpv", "--no-config", "--no-video", "--idle=yes", "--no-terminal", "--ao=pipewire",
-                   "--audio-device=pipewire/atlas_selected", f"--script={SCRIPT}",
-                   f"--script={PLUGIN}", f"--log-file={self.root / 'mpv-internal.log'}",
-                   f"--input-ipc-server={self.root / 'mpv.sock'}", str(tone))
+        command = ["mpv", "--no-config", "--load-scripts=no", "--no-video", "--idle=yes",
+                   "--no-terminal", "--ao=pipewire", "--audio-device=pipewire/atlas_selected",
+                   f"--script={SCRIPT}", f"--log-file={self.root / 'mpv-internal.log'}",
+                   f"--input-ipc-server={self.root / 'mpv.sock'}", str(tone)]
+        if LEGACY_PLAYER:
+            command.insert(-1, f"--script={PLUGIN}")
+        else:
+            command.insert(-1, "--audio-client-name=Radio Atlas")
+            command = [sys.executable, str(PROJECT / "radio-mpris"),
+                       str(self.root / "mpv.sock"), "--", *command]
+        self.start(*command)
         self.wait(lambda: (self.root / "mpv.sock").exists())
         self.wait(lambda: (self.property("time-pos") or 0) > 0.3)
+        if not LEGACY_PLAYER:
+            self.wait(lambda: self.property("user-data/radio-atlas-mpris-ready"))
         self.wait(self.mpris_name)
 
     def stop_processes(self):
+        if (self.root / "mpv.sock").exists():
+            try:
+                self.ipc("quit")
+            except (OSError, ValueError):
+                pass
         for process in reversed(self.processes):
             if process.poll() is None:
                 process.terminate()
@@ -95,6 +120,11 @@ class AudioOutputTest(unittest.TestCase):
                     process.wait(timeout=3)
         for log in self.logs:
             log.close()
+
+    def retain_artifacts(self, destination):
+        for path in self.root.iterdir():
+            if path.is_file() and path.suffix in {".log", ".json", ".jsonl"}:
+                shutil.copy2(path, destination / path.name)
 
     def start(self, *arguments):
         log = (self.root / f"{Path(arguments[0]).name}.log").open("wb")
@@ -255,24 +285,50 @@ class AudioOutputTest(unittest.TestCase):
         self.restore_selected()
         self.assert_stays_paused("UI pause cancels armed recovery")
 
+    def test_mpris_pause_cancels_recovery_while_already_paused(self):
+        self.remove_selected()
+        self.mpris_pause()
+        self.restore_selected()
+        self.assert_stays_paused("repeated human MPRIS Pause cancels policy recovery")
+
+    def test_manual_pause_immediately_before_removal_is_preserved(self):
+        self.mpris_pause()
+        self.remove_selected()
+        self.restore_selected()
+        self.assert_stays_paused("human Pause immediately before removal stays paused")
+
+    def test_rapid_output_changes_recover(self):
+        for cycle in range(3):
+            self.call("pactl", "unload-module", self.selected_module)
+            self.selected_module = self.add_sink("atlas_selected")
+            self.assert_playing_on_selected(f"rapid cycle {cycle + 1}: selected restored")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--script", type=Path, default=SCRIPT)
     parser.add_argument("--artifacts", type=Path)
-    parser.add_argument("--scenario", choices=("all", "reconnect", "mpris-pause", "ui-pause", "ui-cancel"),
+    parser.add_argument("--legacy-player", action="store_true")
+    parser.add_argument("--require-dependencies", action="store_true")
+    parser.add_argument("--scenario", choices=("all", "reconnect", "mpris-pause", "ui-pause", "ui-cancel",
+                                              "repeated-pause", "pause-before-removal", "rapid-reconnect"),
                         default="all")
     options = parser.parse_args()
     SCRIPT = options.script.resolve()
     if not SCRIPT.is_file():
         parser.error(f"script not found: {SCRIPT}")
     ARTIFACTS = options.artifacts
+    LEGACY_PLAYER = options.legacy_player
+    REQUIRE_DEPENDENCIES = options.require_dependencies
     if ARTIFACTS:
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
     scenarios = {"reconnect": "test_selected_output_reconnects",
                  "mpris-pause": "test_mpris_pause_is_preserved",
                  "ui-pause": "test_ui_pause_is_preserved",
-                 "ui-cancel": "test_ui_toggle_cancels_recovery"}
+                 "ui-cancel": "test_ui_toggle_cancels_recovery",
+                 "repeated-pause": "test_mpris_pause_cancels_recovery_while_already_paused",
+                 "pause-before-removal": "test_manual_pause_immediately_before_removal_is_preserved",
+                 "rapid-reconnect": "test_rapid_output_changes_recover"}
     suite = (unittest.defaultTestLoader.loadTestsFromTestCase(AudioOutputTest)
              if options.scenario == "all" else unittest.TestSuite([AudioOutputTest(scenarios[options.scenario])]))
     result = unittest.TextTestRunner(verbosity=2).run(suite)
