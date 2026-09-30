@@ -91,7 +91,7 @@ pending_fetch_line=$(rg -n 'if \(root.pendingFetchAction\)' "$project_dir/RadioA
   | cut -d: -f1)
 (( world_update_line < pending_fetch_line ))
 sed -n '/if (root.fetchAction === "world") {/,/^      }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'root.setStationList("world", root.worldStations)'
+  | rg -Fq 'root.setStationList("world", root.worldStations, true)'
 country_fetch_block=$(sed -n \
   '/root.fetchAction === "country"/,/root.fetchAction === "search"/p' \
   "$project_dir/RadioAtlas.qml")
