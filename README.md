@@ -92,9 +92,12 @@ For M3U and PLS station playlists, Radio Atlas plays the first stream and keeps
 Next/Previous moving between stations. Empty playlists show a playback failure
 without switching stations.
 
-Fresh world and country caches load without DNS lookups. The globe skips
-off-screen station markers when zoomed in, and player-status updates for the
-same station preserve the landing highlight without repainting the globe.
+Fresh world and country caches load without DNS lookups.
+Country browsing picks up completed background refreshes in the open list,
+preserving the selected station and ignoring updates for other countries.
+The globe skips off-screen station markers when zoomed in, and player-status
+updates for the same station preserve the landing highlight without repainting
+the globe.
 Track-title, volume, and pause updates also preserve your station-list selection.
 Theme colors update the globe immediately. Background station expansion stops
 after three consecutive attempts add no stations, including failed requests;
