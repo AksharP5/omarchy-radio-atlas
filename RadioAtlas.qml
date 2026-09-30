@@ -919,6 +919,7 @@ Item {
           if (root.mode !== nextAction) return
           if (nextAction === "search"
               && String(searchField.text || "").trim() !== nextValue) return
+          if (nextAction === "country" && root.browsedCountryCode !== nextValue) return
           root.startFetch(nextAction,
             nextAction === "random" ? root.randomExclusions() : nextValue)
         })
@@ -929,6 +930,8 @@ Item {
       if (root.mode !== root.fetchAction) return
       if (root.fetchAction === "search"
           && String(searchField.text || "").trim() !== root.fetchValue) return
+      if (root.fetchAction === "country"
+          && root.fetchValue !== root.browsedCountryCode) return
       if (exitCode !== 0) {
         root.fetchError = root.displayStations.length > 0
           ? "Showing cached stations · Radio Browser is unavailable"
@@ -944,7 +947,6 @@ Item {
       if (root.fetchAction === "world") {
         root.setStationList("world", root.worldStations)
       } else if (root.fetchAction === "country") {
-        if (root.fetchValue !== root.browsedCountryCode) return
         if (!root.countryCacheLoaded)
           root.applyCountryStations(root.fetchValue, stations)
         countryCacheFile.reload()
