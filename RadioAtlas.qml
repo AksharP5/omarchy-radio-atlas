@@ -307,10 +307,13 @@ Item {
     else setSelection((selectedIndex + delta + displayStations.length) % displayStations.length, true)
   }
 
-  function setStationList(nextMode, stations) {
+  function setStationList(nextMode, stations, preserveSelection) {
+    var selectedUuid = preserveSelection && selectedStation ? selectedStation.uuid : ""
+    var fromKeyboard = preserveSelection && keyboardSelectionVisible
     mode = nextMode
     if (nextMode !== "favorites" && nextMode !== "recent") results = stations
-    setSelection(stations.length > 0 ? 0 : -1)
+    var index = RadioModel.indexByUuid(stations, selectedUuid)
+    setSelection(index >= 0 ? index : (stations.length > 0 ? 0 : -1), fromKeyboard)
   }
 
   function scheduleWorldExpansion(delay) {
@@ -437,14 +440,10 @@ Item {
 
   function applyCountryStations(code, stations) {
     if (mode !== "country" || code !== browsedCountryCode) return
-    var selectedUuid = selectedStation && selectedStation.uuid
-    var fromKeyboard = keyboardSelectionVisible
     var countryStations = RadioModel.mergeStations(results, stations, 500)
     worldStations = RadioModel.prioritizeStations(
       countryStations, worldStations, worldStationLimit)
-    results = countryStations
-    var index = RadioModel.indexByUuid(countryStations, selectedUuid)
-    setSelection(index >= 0 ? index : (countryStations.length > 0 ? 0 : -1), fromKeyboard)
+    setStationList("country", countryStations, true)
   }
 
   function applyCountryCache(raw) {
@@ -945,13 +944,13 @@ Item {
       root.fetchError = ""
 
       if (root.fetchAction === "world") {
-        root.setStationList("world", root.worldStations)
+        root.setStationList("world", root.worldStations, true)
       } else if (root.fetchAction === "country") {
         if (!root.countryCacheLoaded)
           root.applyCountryStations(root.fetchValue, stations)
         countryCacheFile.reload()
       } else if (root.fetchAction === "search") {
-        root.setStationList("search", stations)
+        root.setStationList("search", stations, true)
       } else if (root.fetchAction === "random") {
         root.setStationList("random", stations)
         if (stations.length > 0) {

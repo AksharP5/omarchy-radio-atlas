@@ -98,7 +98,9 @@ preserving the selected station and ignoring updates for other countries.
 The globe skips off-screen station markers when zoomed in, and player-status
 updates for the same station preserve the landing highlight without repainting
 the globe.
-Track-title, volume, and pause updates also preserve your station-list selection.
+Search and world refreshes also preserve your selected station when it remains
+in the results, including its keyboard highlight. Track-title, volume, and pause
+updates preserve your station-list selection.
 Theme colors update the globe immediately. Background station expansion stops
 after three consecutive attempts add no stations, including failed requests;
 reopening Radio Atlas allows expansion to try again.

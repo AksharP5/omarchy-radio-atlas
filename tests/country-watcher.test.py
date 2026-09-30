@@ -16,7 +16,7 @@ if not quickshell:
 
 source = (project / 'RadioAtlas.qml').read_text()
 functions = '\n'.join(re.findall(
-    r'  function (?:setSelection|applyCountryStations|applyCountryCache)\([\s\S]*?\n  \}', source))
+    r'  function (?:setSelection|setStationList|applyCountryStations|applyCountryCache)\([\s\S]*?\n  \}', source))
 watcher = re.search(r'  FileView \{\n    id: countryCacheFile[\s\S]*?\n  \}', source).group()
 response = re.search(
     r'else if \(root.fetchAction === "country"\) \{([\s\S]*?)\n      \} else if', source).group(1)
