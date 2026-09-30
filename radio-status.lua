@@ -11,6 +11,7 @@ local station_loaded = false
 local station_position = -1
 local failure = nil
 local playlist_redirect = nil
+local mpris_ready = false
 local max_queue_bytes = 4194304
 
 local function clean_text(value, limit)
@@ -170,7 +171,7 @@ mp.register_script_message("radio-atlas-reload", function()
   queue = nil
   schedule_update()
 end)
-mp.register_script_message("radio-atlas-toggle", function()
+local function toggle_playback()
   if failure then
     if failure.position < 0 then return end
     mp.commandv("playlist-play-index", failure.position)
@@ -178,6 +179,18 @@ mp.register_script_message("radio-atlas-toggle", function()
     return
   end
   mp.commandv("cycle", "pause")
+end
+mp.register_script_message("radio-atlas-mpris-ready", function()
+  mpris_ready = true
+  mp.set_property_bool("user-data/radio-atlas-mpris-ready", true)
+end)
+mp.register_script_message("radio-atlas-perform-toggle", toggle_playback)
+mp.register_script_message("radio-atlas-toggle", function()
+  if mpris_ready then
+    mp.commandv("script-message", "radio-atlas-ui-toggle")
+    return
+  end
+  toggle_playback()
 end)
 mp.register_event("shutdown", function()
   if update_timer then update_timer:kill() end

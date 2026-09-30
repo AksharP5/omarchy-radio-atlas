@@ -30,6 +30,7 @@ bash -n "$project_dir/radio-fetch" "$project_dir/radio-player" \
   "$project_dir/radio-window" \
   "$project_dir/tests/fixtures/"*
 luac -p "$project_dir/radio-status.lua"
+python3 "$project_dir/tests/mpris.test.py"
 node "$project_dir/tests/model.test.mjs"
 node "$project_dir/tests/search.test.mjs"
 node "$project_dir/tests/search-queue.test.mjs"
