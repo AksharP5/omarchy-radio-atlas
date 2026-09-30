@@ -111,9 +111,14 @@ The speaker button next to the volume slider chooses where radio plays. It lists
 every PipeWire output device through `pactl`, which ships with Omarchy's
 PipeWire setup. "System default" follows the desktop's current output, the
 choice is saved alongside the volume in `~/.local/share/radio-atlas/state.json`,
-and switching while playing takes effect immediately. If the chosen device
-disappears, mpv may pause and will not always resume when it returns. Choose
-"System default" or another available output, then resume playback.
+and switching while playing takes effect immediately. When a selected output
+disappears during playback, WirePlumber may pause the player through MPRIS.
+Radio Atlas resumes once when that same output returns, provided the pause
+immediately followed its removal. Playback already paused before removal stays
+paused, and unrelated outputs do not trigger recovery. Stop cancels pending recovery.
+An additional MPRIS Pause while already paused cannot cancel recovery because
+mpv reports no state change. "System default" does not identify the actual
+output, so it requires manual resume after a device-loss pause.
 
 AirPlay speakers appear in this list once PipeWire exposes them as RAOP sinks.
 On Arch Linux, the RAOP modules ship in the optional `pipewire-zeroconf`

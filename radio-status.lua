@@ -12,6 +12,17 @@ local station_position = -1
 local failure = nil
 local playlist_redirect = nil
 local max_queue_bytes = 4194304
+local audio_devices = nil
+local device_loss = nil
+local resume_timer = nil
+-- Both native properties may change before their observer callbacks run.
+local observed_pause = mp.get_property_bool("pause", false)
+
+local function cancel_recovery()
+  if resume_timer then resume_timer:kill() end
+  resume_timer = nil
+  device_loss = nil
+end
 
 local function clean_text(value, limit)
   if type(value) ~= "string" then return "" end
@@ -111,6 +122,69 @@ local function schedule_update()
   update_timer = mp.add_timeout(0.04, emit_status)
 end
 
+local function update_audio_devices(list)
+  if type(list) ~= "table" then return end
+  local previous = audio_devices
+  audio_devices = {}
+  for _, device in ipairs(list) do
+    if type(device.name) == "string" then audio_devices[device.name] = true end
+  end
+
+  local selected = mp.get_property("audio-device", "auto")
+  if not selected:match("^pipewire/") then
+    cancel_recovery()
+    return
+  end
+  if previous and previous[selected] and not audio_devices[selected] then
+    cancel_recovery()
+    if station_loaded and not failure and not observed_pause then
+      device_loss = { device = selected, time = mp.get_time(), paused = false }
+    end
+    return
+  end
+  if not device_loss or not audio_devices[device_loss.device] or resume_timer then return end
+  if not device_loss.paused then
+    cancel_recovery()
+    return
+  end
+
+  local loss = device_loss
+  resume_timer = mp.add_timeout(0.2, function()
+    resume_timer = nil
+    if device_loss ~= loss then return end
+    cancel_recovery()
+    if not station_loaded or failure or not audio_devices[loss.device]
+      or mp.get_property("audio-device", "auto") ~= loss.device
+      or not mp.get_property_bool("pause", false) then return end
+    mp.set_property_bool("pause", false)
+  end)
+end
+
+mp.observe_property("audio-device-list", "native", function(_, list)
+  update_audio_devices(list)
+end)
+
+mp.observe_property("pause", "native", function(_, paused)
+  -- Either notification can arrive first; read the current list before
+  -- attributing a pause to a sink that was still present at the last update.
+  if paused and not device_loss then
+    update_audio_devices(mp.get_property_native("audio-device-list"))
+  end
+  observed_pause = paused
+  if not device_loss then return end
+  -- WirePlumber pauses through MPRIS just after removing the playing sink.
+  -- A pause before removal or later than this window belongs to the user.
+  if paused and not device_loss.paused and mp.get_time() - device_loss.time <= 0.5 then
+    device_loss.paused = true
+    return
+  end
+  cancel_recovery()
+end)
+
+mp.observe_property("audio-device", "native", function(_, selected)
+  if device_loss and selected ~= device_loss.device then cancel_recovery() end
+end)
+
 for _, property in ipairs({
   "pause", "mute", "media-title", "playlist-pos", "playlist-count", "volume", "audio-device"
 }) do
@@ -118,6 +192,7 @@ for _, property in ipairs({
 end
 
 mp.register_event("start-file", function()
+  cancel_recovery()
   station_loaded = false
   station_position = mp.get_property_number("playlist-pos", -1)
   failure = nil
@@ -129,6 +204,7 @@ mp.register_event("file-loaded", function()
   schedule_update()
 end)
 mp.register_event("end-file", function(event)
+  cancel_recovery()
   local empty_playlist = event.reason == "redirect" and not event.playlist_insert_id
   if event.reason == "eof" or event.reason == "error" or empty_playlist then
     failure = {
@@ -161,6 +237,7 @@ mp.add_hook("on_after_end_file", 50, function()
   playlist_redirect = nil
 end)
 mp.register_event("idle", function()
+  cancel_recovery()
   station_loaded = false
   -- Retain native Next/Previous navigation without reopening the failed stream.
   if failure then mp.set_property_number("playlist-current-pos", failure.position) end
@@ -171,6 +248,7 @@ mp.register_script_message("radio-atlas-reload", function()
   schedule_update()
 end)
 mp.register_script_message("radio-atlas-toggle", function()
+  cancel_recovery()
   if failure then
     if failure.position < 0 then return end
     mp.commandv("playlist-play-index", failure.position)
@@ -180,6 +258,7 @@ mp.register_script_message("radio-atlas-toggle", function()
   mp.commandv("cycle", "pause")
 end)
 mp.register_event("shutdown", function()
+  cancel_recovery()
   if update_timer then update_timer:kill() end
   write_status({
     running = false,
