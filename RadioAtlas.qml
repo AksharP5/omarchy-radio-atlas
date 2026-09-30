@@ -162,7 +162,7 @@ Item {
         { input: "CLICK COUNTRY", action: "Browse stations" },
         { input: "BAR LEFT", action: "Open or close" },
         { input: "BAR MIDDLE", action: "Tune randomly" },
-        { input: "BAR RIGHT", action: "Stop playback" },
+        { input: "BAR RIGHT", action: "Stop or resume playback" },
         { input: "BAR WHEEL", action: "Change volume" },
         { input: "SPEAKER", action: "Choose audio output" }
       ]
@@ -867,9 +867,11 @@ Item {
         root.pendingFetchValue = ""
         root.fetching = false
         Qt.callLater(function() {
-          if (root.mode === nextAction)
-            root.startFetch(nextAction,
-              nextAction === "random" ? root.randomExclusions() : nextValue)
+          if (root.mode !== nextAction) return
+          if (nextAction === "search"
+              && String(searchField.text || "").trim() !== nextValue) return
+          root.startFetch(nextAction,
+            nextAction === "random" ? root.randomExclusions() : nextValue)
         })
         return
       }
