@@ -33,6 +33,8 @@ luac -p "$project_dir/radio-status.lua"
 node "$project_dir/tests/model.test.mjs"
 node "$project_dir/tests/search.test.mjs"
 node "$project_dir/tests/search-queue.test.mjs"
+node "$project_dir/tests/country-refresh.test.mjs"
+python3 "$project_dir/tests/country-watcher.test.py"
 node "$project_dir/tests/expansion.test.mjs"
 node "$project_dir/tests/selection.test.mjs"
 node "$project_dir/tests/keyboard.test.mjs"
@@ -93,10 +95,7 @@ sed -n '/if (root.fetchAction === "world") {/,/^      }/p' "$project_dir/RadioAt
 country_fetch_block=$(sed -n \
   '/root.fetchAction === "country"/,/root.fetchAction === "search"/p' \
   "$project_dir/RadioAtlas.qml")
-rg -Fq 'RadioModel.mergeStations(root.results, stations, 500)' \
-  <<<"$country_fetch_block"
-rg -Fq 'RadioModel.prioritizeStations(' <<<"$country_fetch_block"
-rg -Fq 'root.setStationList("country", countryStations)' <<<"$country_fetch_block"
+rg -Fq 'root.applyCountryStations(root.fetchValue, stations)' <<<"$country_fetch_block"
 sed -n '/if (root.pendingFetchAction)/,/^        }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'nextAction === "random" ? root.randomExclusions() : nextValue'
 sed -n '/function playSelected()/,/^  }/p' "$project_dir/RadioAtlas.qml" \

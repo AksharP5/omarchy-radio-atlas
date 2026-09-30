@@ -54,6 +54,10 @@ payload='[
   {"stationuuid":"dddddddd-1111-1111-1111-dddddddddddd","name":"Invalid coordinates","url_resolved":"https://example.com/invalid","countrycode":"US","geo_lat":140,"geo_long":-74}
 ]'
 
+if [[ -n ${RADIO_ATLAS_TEST_CURL_PAYLOAD:-} ]]; then
+  payload=$(cat "$RADIO_ATLAS_TEST_CURL_PAYLOAD")
+fi
+
 if [[ -n ${RADIO_ATLAS_TEST_SEARCH_STATIONS:-} ]]; then
   payload=$(jq -c --arg field "$search_field" --arg query "$search_value" '
     if $field == "countrycode" then

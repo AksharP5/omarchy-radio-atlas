@@ -32,6 +32,8 @@ Item {
   property string mode: "world"
   property string activeCountryCode: ""
   property string activeCountryName: ""
+  property string browsedCountryCode: ""
+  property bool countryCacheLoaded: false
   property bool helpVisible: false
   property int selectedIndex: -1
   property var selectedStation: null
@@ -91,6 +93,9 @@ Item {
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
   readonly property string statePath: Qt.resolvedUrl("radio-state").toString().replace(/^file:\/\//, "")
   readonly property string runtimePath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas"
+  readonly property string countryCachePath:
+    (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache")
+      + "/omarchy-radio-atlas/countries"
   readonly property string statusPath: runtimePath + "/status.json"
   readonly property string playSelectionPath: runtimePath + "/play-selection.json"
   readonly property string favoriteSelectionPath: runtimePath + "/favorite-selection.json"
@@ -415,6 +420,9 @@ Item {
     if (!countryName) countryName = countryCode
     searchDebounce.stop()
     cancelPendingFetch()
+    if (mode !== "country" || browsedCountryCode !== countryCode)
+      countryCacheLoaded = false
+    browsedCountryCode = countryCode
     var cachedStations = RadioModel.stationsForCountry(worldStations, countryCode)
     worldStations = RadioModel.prioritizeStations(
       cachedStations, worldStations, worldStationLimit)
@@ -425,6 +433,37 @@ Item {
     searchField.text = countryName
     startFetch("country", countryCode)
     keyCatcher.forceActiveFocus()
+  }
+
+  function applyCountryStations(code, stations) {
+    if (mode !== "country" || code !== browsedCountryCode) return
+    var selectedUuid = selectedStation && selectedStation.uuid
+    var fromKeyboard = keyboardSelectionVisible
+    var countryStations = RadioModel.mergeStations(results, stations, 500)
+    worldStations = RadioModel.prioritizeStations(
+      countryStations, worldStations, worldStationLimit)
+    results = countryStations
+    var index = RadioModel.indexByUuid(countryStations, selectedUuid)
+    setSelection(index >= 0 ? index : (countryStations.length > 0 ? 0 : -1), fromKeyboard)
+  }
+
+  function applyCountryCache(raw) {
+    if (mode !== "country") return
+    try {
+      if (typeof raw !== "string" || raw.length > 4194304)
+        throw new Error("Country cache is too large")
+      var stations = JSON.parse(raw)
+      if (!Array.isArray(stations) || stations.length > 25)
+        throw new Error("Country cache is not a station list")
+      for (var i = 0; i < stations.length; i++) {
+        if (!stations[i] || stations[i].countryCode !== browsedCountryCode)
+          throw new Error("Country cache does not match this country")
+      }
+      countryCacheLoaded = true
+      applyCountryStations(browsedCountryCode, stations)
+    } catch (error) {
+      console.warn("Country cache could not be loaded:", error)
+    }
   }
 
   function tuneRandom() {
@@ -781,6 +820,16 @@ Item {
   }
 
   FileView {
+    id: countryCacheFile
+    path: root.mode === "country" && root.browsedCountryCode
+      ? root.countryCachePath + "/" + root.browsedCountryCode + ".json" : ""
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.applyCountryCache(text())
+  }
+
+  FileView {
     path: root.statusReady ? root.statusPath : ""
     watchChanges: true
     atomicWrites: true
@@ -895,10 +944,10 @@ Item {
       if (root.fetchAction === "world") {
         root.setStationList("world", root.worldStations)
       } else if (root.fetchAction === "country") {
-        var countryStations = RadioModel.mergeStations(root.results, stations, 500)
-        root.worldStations = RadioModel.prioritizeStations(
-          countryStations, root.worldStations, root.worldStationLimit)
-        root.setStationList("country", countryStations)
+        if (root.fetchValue !== root.browsedCountryCode) return
+        if (!root.countryCacheLoaded)
+          root.applyCountryStations(root.fetchValue, stations)
+        countryCacheFile.reload()
       } else if (root.fetchAction === "search") {
         root.setStationList("search", stations)
       } else if (root.fetchAction === "random") {
