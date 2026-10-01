@@ -53,6 +53,7 @@ Item {
 
   property bool playerRunning: false
   property bool playerPaused: false
+  property bool playerStopped: false
   property string streamError: ""
   property bool playerMuted: false
   property int playerVolume: 70
@@ -590,6 +591,7 @@ Item {
       var nextPlayingUuid = nextPlayingStation ? String(nextPlayingStation.uuid) : ""
       playerRunning = state.running === true
       playerPaused = state.paused === true
+      playerStopped = state.stopped === true
       streamError = String(state.error || "").replace(/[\r\n\t]+/g, " ").slice(0, 200)
       playerMuted = state.muted === true
       playerOutput = /^[A-Za-z0-9._:+-]{0,160}$/.test(String(state.output || ""))
@@ -1781,7 +1783,7 @@ Item {
               anchors.rightMargin: Style.spacing.xs
               anchors.top: parent.top
               anchors.topMargin: Style.spacing.md
-              text: root.playerRunning
+              text: root.playerRunning && !root.playerStopped
                 ? (root.playingStationName || root.playerTitle || "Unknown station")
                 : "Nothing playing"
               textFormat: Text.PlainText
@@ -1803,7 +1805,7 @@ Item {
                 : root.streamError ? root.streamError + ". Play to retry, or Next."
                 : (!root.playerRunning ? "Choose a signal to begin"
                 : (root.playingTrackTitle ? root.playingTrackTitle + "  ·  " : "")
-                  + (root.playerPaused ? "Paused" : "Live")
+                  + (root.playerStopped ? "Stopped" : root.playerPaused ? "Paused" : "Live")
                   + (root.playlistCount > 1 ? "  ·  " + root.playlistCount + " stations queued" : ""))
               textFormat: Text.PlainText
               color: root.playerError || root.streamError ? root.urgent : root.dim
@@ -1861,9 +1863,9 @@ Item {
                   onClicked: root.playerAction("previous")
                 }
                 Button {
-                  iconText: root.playerRunning && !root.playerPaused ? "\uf04c" : "\uf04b"
+                  iconText: root.playerRunning && !root.playerStopped && !root.playerPaused ? "\uf04c" : "\uf04b"
                   tooltipText: root.streamError ? "Retry station"
-                    : root.playerRunning && !root.playerPaused ? "Pause" : "Play"
+                    : root.playerRunning && !root.playerStopped && !root.playerPaused ? "Pause" : "Play"
                   enabled: !root.playerActionBusy
                   focusable: true
                   foreground: root.foreground

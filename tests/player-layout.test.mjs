@@ -30,8 +30,16 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-player-layo
 try {
   // Use the real shell controls and style; stub only process, filesystem and compositor IO.
   fs.symlinkSync(path.resolve(shellDirectory), path.join(directory, "qs"))
-  fs.symlinkSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
-    path.join(directory, "Quickshell"))
+  fs.cpSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
+    path.join(directory, "Quickshell"), { recursive: true })
+  for (const [name, property] of [
+    ["Process", "signal exited(int exitCode)"],
+    ["FileView", "property bool atomicWrites: false"],
+  ]) {
+    const target = path.join(directory, "Quickshell/Io", name + ".qml")
+    fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace(/}\s*$/, property + "\n}"))
+  }
+  fs.copyFileSync(new URL("../BarWidget.qml", import.meta.url), path.join(directory, "RadioBar.qml"))
   fs.writeFileSync(path.join(directory, "tst_player_layout.qml"), `
 import QtQuick
 import QtQuick.Layouts
@@ -44,9 +52,11 @@ TestCase {
   name: "PlayerLayout"
   width: 390
   height: 600
+  visible: true
   when: windowShown
   property bool playerRunning: true
   property bool playerPaused: false
+  property bool playerStopped: false
   property bool playerMuted: false
   property bool playerActionBusy: false
   property bool playPreparing: false
@@ -67,10 +77,15 @@ TestCase {
   property color dim: "gray"
   property color faint: "#333333"
   property color favoriteColor: "yellow"
+  property string lastAction: ""
   function isFavorite(uuid) { return false }
+  function playerAction(action) { lastAction = action }
+  function playSelected() { lastAction = "selected" }
   QtObject { id: stopProcess; property bool running: false }
   QtObject { id: playerActionProcess; property bool running: false }
   QtObject { id: outputProcess; property bool running: false }
+
+  RadioBar { id: barWidget; visible: false }
 
   ${panel}
 
@@ -151,6 +166,43 @@ TestCase {
         verify(control.width >= control.implicitWidth - 0.5, "The percentage must not clip")
     }
     verify(volumeSlider.width >= volumeSlider.knobSize * 2, "Keep a usable volume track")
+  }
+
+  function test_playerState_data() {
+    return [
+      { tag: "live", paused: false, stopped: false, error: "",
+        status: "Live", action: "Pause", icon: "\\uf04c", active: true, tooltip: "Playing:" },
+      { tag: "paused", paused: true, stopped: false, error: "",
+        status: "Paused", action: "Play", icon: "\\uf04b", active: false, tooltip: "Radio paused:" },
+      { tag: "external-stop", paused: false, stopped: true, error: "",
+        status: "Stopped", action: "Play", icon: "\\uf04b", active: false, tooltip: "Radio stopped" },
+      { tag: "stream-failed", paused: true, stopped: false, error: "Stream disconnected",
+        status: "Stream disconnected. Play to retry, or Next.", action: "Retry station",
+        icon: "\\uf04b", active: false, tooltip: "Stream disconnected:" }
+    ]
+  }
+
+  function test_playerState(data) {
+    playerRunning = true
+    playerPaused = data.paused
+    playerStopped = data.stopped
+    streamError = data.error
+    lastAction = ""
+    barWidget.applyPlayerState(JSON.stringify({
+      running: true, paused: data.paused, stopped: data.stopped, error: data.error,
+      title: playingStationName, volume: playerVolume
+    }))
+    var playButton = transportControls.children[1]
+    var barButton = barWidget.children.find(function(item) { return item instanceof WidgetButton })
+    verify(playerStatus.text.indexOf(data.status) >= 0)
+    compare(playButton.tooltipText, data.action)
+    compare(playButton.iconText, data.icon)
+    compare(barButton.active, data.active)
+    verify(barButton.tooltipText.indexOf(data.tooltip) === 0)
+    if (data.stopped) compare(nowPlaying.text, "Nothing playing")
+    else compare(nowPlaying.text, playingStationName)
+    mouseClick(playButton)
+    compare(lastAction, "toggle", "Play after external Stop must resume the existing player")
   }
 }
 `)

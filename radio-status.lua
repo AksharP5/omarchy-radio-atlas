@@ -88,6 +88,7 @@ local function current_status()
   last_output = clean_output(mp.get_property("audio-device", ""))
   return {
     running = true,
+    stopped = failure == nil and mp.get_property_bool("idle-active", false),
     paused = failure ~= nil or mp.get_property_bool("pause", false),
     muted = mp.get_property_bool("mute", false),
     title = clean_text(mp.get_property("media-title", ""), 512),
@@ -113,7 +114,7 @@ local function schedule_update()
 end
 
 for _, property in ipairs({
-  "pause", "mute", "media-title", "playlist-pos", "playlist-count", "volume", "audio-device"
+  "pause", "idle-active", "mute", "media-title", "playlist-pos", "playlist-count", "volume", "audio-device"
 }) do
   mp.observe_property(property, "native", schedule_update)
 end

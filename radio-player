@@ -165,6 +165,7 @@ status() {
       '{"command":["get_property","mute"],"request_id":6}' \
       '{"command":["get_property","audio-device"],"request_id":7}' \
       '{"command":["get_property","user-data/radio-atlas-failure"],"request_id":8}' \
+      '{"command":["get_property","idle-active"],"request_id":9}' \
       | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
       | head -c "$((max_ipc_bytes + 1))" || true
   )
@@ -212,6 +213,7 @@ status() {
   printf '%s\n' "$(jq -sc --argjson station "$station" --argjson loaded "$loaded" \
     --argjson failure "$failure" '{
     running: true,
+    stopped: ($failure == null and ([.[] | select(.request_id == 9) | .data][0] // false)),
     paused: ($failure != null or ([.[] | select(.request_id == 1) | .data][0] // false)),
     muted: ([.[] | select(.request_id == 6) | .data][0] // false),
     title: (([.[] | select(.request_id == 2) | .data][0] // "")
