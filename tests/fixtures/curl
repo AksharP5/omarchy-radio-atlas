@@ -9,6 +9,7 @@ limit=""
 request_url=""
 search_field=""
 search_value=""
+uuids=""
 while (( $# > 0 )); do
   case "$1" in
     --output)
@@ -22,6 +23,9 @@ while (( $# > 0 )); do
     --data-urlencode)
       if [[ ${2:-} == limit=* ]]; then
         limit=${2#limit=}
+      fi
+      if [[ ${2:-} == uuids=* ]]; then
+        uuids=${2#uuids=}
       fi
       case "${2:-}" in
         name=*|country=*|countrycode=*|tag=*)
@@ -56,6 +60,21 @@ payload='[
 
 if [[ -n ${RADIO_ATLAS_TEST_CURL_PAYLOAD:-} ]]; then
   payload=$(cat "$RADIO_ATLAS_TEST_CURL_PAYLOAD")
+fi
+
+if [[ $request_url == */json/stations/byuuid ]]; then
+  if [[ -n ${RADIO_ATLAS_TEST_RESOLVE_LOG:-} ]]; then
+    printf '%s\n' "$uuids" >> "$RADIO_ATLAS_TEST_RESOLVE_LOG"
+  fi
+  if [[ -n ${RADIO_ATLAS_TEST_RESOLVE_FAIL_UUID:-} \
+    && ,$uuids, == *",$RADIO_ATLAS_TEST_RESOLVE_FAIL_UUID,"* ]]; then
+    echo 'Station lookup failed' >&2
+    exit 7
+  fi
+  payload=$(jq -c --arg uuids "$uuids" '
+    ($uuids | split(",")) as $ids
+    | [.[] | select(.stationuuid as $id | $ids | index($id))]
+  ' <<< "$payload")
 fi
 
 if [[ -n ${RADIO_ATLAS_TEST_SEARCH_STATIONS:-} ]]; then
