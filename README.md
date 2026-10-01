@@ -207,7 +207,7 @@ Headless Qt processes also disable the desktop platform theme and automatic
 portal probes so a private test bus does not start desktop portal services.
 
 ```bash
-dbus-run-session -- ./tests/run
+python3 tests/headless.test.py
 python3 tests/audio-output.test.py --require-dependencies
 qmllint -I /usr/share/omarchy/shell BarWidget.qml Globe.qml RadioAtlas.qml
 ```

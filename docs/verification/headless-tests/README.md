@@ -30,3 +30,18 @@ Qt invocation rather than relying on a sanitized parent shell.
 
 [evidence.json](evidence.json) records the outcomes, Qt version, tested entry
 points, and hashes of the validated test files. No UI behavior changes here.
+
+Repeat the check from the repository root:
+
+```bash
+python3 tests/headless.test.py
+```
+
+The checker creates and removes its own bus configuration and fake portal
+service. It first requests the fake service and verifies that the activation
+marker was written. It then starts a fresh private bus, runs the full suite with
+the inherited GTK settings above, and rejects any portal activation attempt.
+CI runs this checker too. Real desktop service directories are excluded.
+
+The checker also rejected the unmodified keyboard test from the base commit,
+reporting two activation attempts even though its QML assertions passed.
