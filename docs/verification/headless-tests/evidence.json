@@ -22,6 +22,15 @@
       "portalActivationAttempts": 2
     },
     {
+      "case": "disable-desktop-theme-only",
+      "environment": {
+        "QT_NO_XDG_DESKTOP_PORTAL": "0",
+        "QT_QPA_PLATFORMTHEME": ""
+      },
+      "exitCode": 0,
+      "portalActivationAttempts": 0
+    },
+    {
       "case": "disable-probe-and-desktop-theme",
       "environment": {
         "QT_NO_XDG_DESKTOP_PORTAL": "1",

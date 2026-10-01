@@ -15,7 +15,12 @@ activation depended on its environment:
 | --- | ---: |
 | Inherited GTK theme, portal probe enabled | 2 |
 | Inherited GTK theme, `QT_NO_XDG_DESKTOP_PORTAL=1` | 2 |
+| Empty platform theme, portal probe enabled | 0 |
 | Empty platform theme, `QT_NO_XDG_DESKTOP_PORTAL=1` | 0 |
+
+Clearing the GTK platform theme eliminated the observed activation requests.
+The Qt flag also disables the automatic desktop-services portal probe in
+[Qt's source](https://github.com/qt/qtbase/blob/6.10/src/gui/platform/unix/qdesktopunixservices.cpp#L376-L389).
 
 After the patch, the full `tests/run` suite passed on the same private bus with
 zero portal activation attempts. The parent environment explicitly supplied
