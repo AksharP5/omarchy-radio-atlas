@@ -86,7 +86,8 @@ TestCase {
 }
 `)
   const result = spawnSync("/usr/lib/qt6/bin/qmltestrunner", ["-platform", "offscreen", "-input", directory], {
-    env: { ...process.env, QT_QUICK_BACKEND: "software" },
+    env: { ...process.env, QT_QUICK_BACKEND: "software",
+      QT_NO_XDG_DESKTOP_PORTAL: "1", QT_QPA_PLATFORMTHEME: "" },
     stdio: "inherit",
   })
   if (result.error) throw result.error

@@ -50,7 +50,7 @@ jobs:
       - name: Run tests
         env:
           OMARCHY_SHELL_DIR: ${{ github.workspace }}/.test-omarchy/shell
-        run: dbus-run-session -- ./tests/run
+        run: python3 tests/headless.test.py
 
       - name: Verify audio output recovery
         run: python3 tests/audio-output.test.py --require-dependencies

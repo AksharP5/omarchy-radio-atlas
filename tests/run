@@ -44,7 +44,8 @@ node "$project_dir/tests/player-layout.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
 python3 "$project_dir/tests/playback.test.py"
 python3 "$project_dir/tests/saved-stations.test.py"
-QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner \
+QT_QUICK_BACKEND=software QT_NO_XDG_DESKTOP_PORTAL=1 QT_QPA_PLATFORMTHEME= \
+  /usr/lib/qt6/bin/qmltestrunner \
   -platform offscreen -input "$project_dir/tests/qml"
 assert_no_match 'playerStatusProcess|refreshPlayerStatus' \
   "$project_dir/BarWidget.qml" "$project_dir/RadioAtlas.qml"

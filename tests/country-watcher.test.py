@@ -90,6 +90,7 @@ WATCHER
     environment = {**os.environ, 'XDG_RUNTIME_DIR': str(runtime),
                    'XDG_CACHE_HOME': str(directory / 'cache'),
                    'QT_QPA_PLATFORM': 'offscreen', 'QT_QUICK_BACKEND': 'software',
+                   'QT_NO_XDG_DESKTOP_PORTAL': '1',
                    'QT_QPA_PLATFORMTHEME': '', 'QT_QUICK_CONTROLS_STYLE': 'Basic'}
     environment.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
     log_path = directory / 'watcher.log'

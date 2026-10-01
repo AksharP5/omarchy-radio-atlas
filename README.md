@@ -203,9 +203,11 @@ Player layout tests use the real Omarchy UI components from
 `/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkout's `shell`
 directory to test another version. CI uses a pinned checkout and disables shell
 processes and theme-file access during these tests.
+Headless Qt processes also disable the desktop platform theme and automatic
+portal probes so a private test bus does not start desktop portal services.
 
 ```bash
-dbus-run-session -- ./tests/run
+python3 tests/headless.test.py
 python3 tests/audio-output.test.py --require-dependencies
 qmllint -I /usr/share/omarchy/shell BarWidget.qml Globe.qml RadioAtlas.qml
 ```
