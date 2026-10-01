@@ -81,6 +81,21 @@ class SavedStationsTest(unittest.TestCase):
         self.assertEqual(queue, rows)
         self.assertGreater(len(self.requests_file.read_text().splitlines()), 1)
 
+    def test_oversized_refresh_keeps_queue_readable_for_status_and_history(self):
+        rows = self.save_favorites(500)
+        fresh = json.loads(self.payload_file.read_text())
+        for row in fresh:
+            row.update(homepage="https://example.com/" + "漢" * 2000,
+                       favicon="https://example.com/" + "漢" * 2000)
+        self.payload_file.write_text(json.dumps(fresh, ensure_ascii=False))
+        state = self.run_action("radio-player", "play", rows[0]["uuid"], "favorites")
+        self.assertEqual(state["station"].get("uuid"), rows[0]["uuid"])
+        queue_file = self.runtime / "playlist.json"
+        self.assertEqual(json.loads(queue_file.read_text()), rows)
+        state = self.run_action("radio-state", "played", rows[0]["uuid"])
+        self.assertEqual(state["recent"], [rows[0]])
+        self.assertEqual(json.loads(queue_file.read_text()), rows)
+
     def test_played_uses_playlist_and_favorite_uses_selection(self):
         uuid = "12345678-1234-1234-1234-123456789abc"
         active = dict(uuid=uuid, name="Current station", url="https://example.com/current")

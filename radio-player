@@ -419,8 +419,10 @@ refresh_saved_stations() {
     ($refreshed | add | INDEX(.uuid)) as $byUuid
     | map($byUuid[.uuid] // .)
   ' "$source_file" > "$source_file.next"
-  mv "$source_file.next" "$source_file"
-  rm -f "$refreshed"
+  if valid_runtime_array "$source_file.next"; then
+    mv "$source_file.next" "$source_file"
+  fi
+  rm -f "$source_file.next" "$refreshed"
 }
 
 play_station() {
