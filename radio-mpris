@@ -3,6 +3,7 @@
 
 from collections import deque
 from dataclasses import dataclass
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -257,6 +258,88 @@ class Controls:
             self.changed()
 
 
+class VolumeWriter:
+    """Coalesce media volume changes under the same lock as UI changes."""
+
+    def __init__(self):
+        self.pending = None
+        self.process = None
+        self.lock = None
+        self.retry = None
+
+    def set(self, volume, reply, error):
+        callbacks = self.pending[1] if self.pending else []
+        callbacks.append((reply, error))
+        self.pending = (volume, callbacks)
+        if self.process is None and self.retry is None and self.flush():
+            self.retry = GLib.timeout_add(10, self.flush)
+
+    def flush(self):
+        if self.pending is None:
+            if self.lock is not None:
+                os.close(self.lock)
+                self.lock = None
+            self.retry = None
+            return False
+        callbacks = self.pending[1]
+        try:
+            if self.lock is None:
+                runtime = Path(os.environ["XDG_RUNTIME_DIR"]) / "omarchy-radio-atlas"
+                runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+                self.lock = os.open(runtime / "player.lock", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+                try:
+                    fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    os.close(self.lock)
+                    self.lock = None
+                    return True
+            launcher = Gio.SubprocessLauncher.new(
+                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
+            launcher.take_fd(os.dup(self.lock), 8)
+            # A zero deadline retains TERM forwarding without timing out lock waits.
+            self.process = launcher.spawnv([
+                "setpriv", "--pdeathsig", "TERM", "timeout", "--kill-after=1", "0",
+                str(Path(__file__).resolve().with_name("radio-player")),
+                "volume", str(self.pending[0]), "--locked"])
+        except (OSError, GLib.Error) as failure:
+            self.pending = None
+            for _, error in callbacks:
+                error(dbus.exceptions.DBusException(str(failure), name="org.freedesktop.DBus.Error.Failed"))
+            return self.flush()
+        self.pending = None
+        self.retry = None
+        self.process.communicate_utf8_async(None, None,
+            lambda process, result: self.finished(process, result, callbacks))
+        return False
+
+    def finished(self, process, result, callbacks):
+        if process is not self.process:
+            return
+        self.process = None
+        failure = None
+        try:
+            _, _, stderr = process.communicate_utf8_finish(result)
+            if not process.get_successful():
+                failure = stderr.strip() or "Could not change radio volume"
+        except GLib.Error as error:
+            failure = str(error)
+        for reply, error in callbacks:
+            if failure is None:
+                reply()
+            else:
+                error(dbus.exceptions.DBusException(failure, name="org.freedesktop.DBus.Error.Failed"))
+        self.flush()
+
+    def close(self):
+        if self.retry is not None:
+            GLib.source_remove(self.retry)
+        if self.process is not None:
+            self.process.send_signal(signal.SIGTERM)
+        if self.lock is not None:
+            os.close(self.lock)
+        self.process = self.lock = self.retry = self.pending = None
+
+
 class Mpris(dbus.service.Object):
     def __init__(self, bus, name, controls):
         super().__init__(dbus.service.BusName(name, bus=bus), OBJECT)
@@ -264,7 +347,7 @@ class Mpris(dbus.service.Object):
         self.controls = controls
         self.last_properties = {}
         self.change_source = None
-        self.volume_processes = set()
+        self.volume = VolumeWriter()
 
     def schedule_changed(self):
         if self.change_source is None:
@@ -321,39 +404,10 @@ class Mpris(dbus.service.Object):
         volume = float(value)
         if not 0 <= volume <= 1:
             raise dbus.exceptions.DBusException("Volume must be between 0 and 1", name="org.freedesktop.DBus.Error.InvalidArgs")
-        # Submit every request to the same CLI lock used by the bar and slider.
-        try:
-            process = Gio.Subprocess.new(
-                ["setpriv", "--pdeathsig", "TERM", "timeout", "--kill-after=1", "5",
-                 str(Path(__file__).resolve().with_name("radio-player")), "volume", str(int(volume * 100 + 0.5))],
-                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
-        except GLib.Error as failure:
-            error(dbus.exceptions.DBusException(str(failure), name="org.freedesktop.DBus.Error.Failed"))
-            return
-        self.volume_processes.add(process)
-
-        def finished(process, result):
-            if process not in self.volume_processes:
-                return
-            self.volume_processes.remove(process)
-            try:
-                _, _, stderr = process.communicate_utf8_finish(result)
-            except GLib.Error as failure:
-                error(dbus.exceptions.DBusException(str(failure), name="org.freedesktop.DBus.Error.Failed"))
-                return
-            if not process.get_successful():
-                error(dbus.exceptions.DBusException(
-                    stderr.strip() or "Could not change radio volume",
-                    name="org.freedesktop.DBus.Error.Failed"))
-                return
-            reply()
-
-        process.communicate_utf8_async(None, None, finished)
+        self.volume.set(int(volume * 100 + 0.5), reply, error)
 
     def close(self):
-        for process in self.volume_processes:
-            process.send_signal(signal.SIGTERM)
-        self.volume_processes.clear()
+        self.volume.close()
 
     @dbus.service.signal(PROPERTIES, signature="sa{sv}as")
     def PropertiesChanged(self, interface, changed, invalidated):

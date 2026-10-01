@@ -413,31 +413,129 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
             self.assertLess(pause_latency, 0.5)
             self.assertTrue(self.property("pause"))
             self.assertIsNone(pending.poll())
-            second = subprocess.Popen([*command[:-1], "<0.3>"], env=self.env,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            self.processes.append(second)
-            self.addCleanup(second.stdout.close)
-            self.addCleanup(second.stderr.close)
-            # Both media requests must reach the shared lock before the UI request.
-            lock_stat = (self.runtime / "player.lock").stat()
-            lock_identity = f"{os.major(lock_stat.st_dev):02x}:{os.minor(lock_stat.st_dev):02x}:{lock_stat.st_ino}"
-            self.wait(lambda: sum(f" {lock_identity} " in line
-                                 for line in Path("/proc/locks").read_text().splitlines()) >= 2)
+            properties, context = self.media_properties()
+            second_replies, second_errors = [], []
+            properties.Set("org.mpris.MediaPlayer2.Player", "Volume", 0.3,
+                           reply_handler=lambda: second_replies.append(True), error_handler=second_errors.append)
+            # This round trip on the same connection confirms Set was received.
+            properties.Get("org.mpris.MediaPlayer2.Player", "Rate")
             ui = subprocess.Popen([str(PROJECT / "radio-player"), "volume", "40"],
                                   env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self.processes.append(ui)
             self.addCleanup(ui.stdout.close)
             self.addCleanup(ui.stderr.close)
             fcntl.flock(lock, fcntl.LOCK_UN)
-        for process in (pending, second, ui):
+        for process in (pending, ui):
             _, error = process.communicate(timeout=5)
             self.assertEqual(process.returncode, 0, error)
+        deadline = time.monotonic() + 5
+        while not second_replies and not second_errors and time.monotonic() < deadline:
+            context.iteration(False)
+            time.sleep(0.001)
+        self.assertEqual(second_errors, [])
+        self.assertEqual(second_replies, [True])
         self.assertEqual(self.property("volume"), 40)
         saved = json.loads((self.root / "data/radio-atlas/state.json").read_text())["volume"]
         self.assertEqual(saved, 40)
         self.snapshot("overlapping media and UI controls", volume=self.property("volume"),
                       saved_volume=saved, pause_latency_seconds=round(pause_latency, 3),
                       requested_volumes=[20, 30, 40])
+
+    def media_properties(self):
+        import dbus
+        from dbus.mainloop.glib import DBusGMainLoop
+        from gi.repository import GLib
+
+        DBusGMainLoop(set_as_default=True)
+        bus = dbus.bus.BusConnection(self.env["DBUS_SESSION_BUS_ADDRESS"])
+        self.addCleanup(bus.close)
+        properties = dbus.Interface(bus.get_object(self.mpris_name(), "/org/mpris/MediaPlayer2"),
+                                    "org.freedesktop.DBus.Properties")
+        return properties, GLib.MainContext.default()
+
+    def test_rapid_media_volume_changes_survive_a_slow_state_lock(self):
+        if LEGACY_PLAYER:
+            self.skipTest("saved media volume belongs to the Radio Atlas MPRIS bridge")
+        self.call(str(PROJECT / "radio-state"), "volume", "40")
+        properties, context = self.media_properties()
+        replies, errors = [], []
+        for volume in [0.2, 0.8]:
+            properties.Set("org.mpris.MediaPlayer2.Player", "Volume", volume,
+                           reply_handler=lambda: replies.append(True), error_handler=errors.append)
+        deadline = time.monotonic() + 5
+        while len(replies) + len(errors) < 2 and time.monotonic() < deadline:
+            context.iteration(False)
+            time.sleep(0.001)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(replies), 2)
+        self.assertEqual(self.property("volume"), 80)
+        self.assertEqual(json.loads((self.root / "data/radio-atlas/state.json").read_text())["volume"], 80)
+        replies.clear()
+        started = time.monotonic()
+        with (self.root / "data/radio-atlas/state.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for index in range(200):
+                properties.Set("org.mpris.MediaPlayer2.Player", "Volume",
+                               (index % 100) / 100,
+                               reply_handler=lambda: replies.append(True), error_handler=errors.append,
+                               timeout=15)
+                deadline = started + (index + 1) / 60
+                while time.monotonic() < deadline:
+                    context.iteration(False)
+                    time.sleep(0.001)
+            # Lock contention must not cancel an update after changing live volume.
+            while time.monotonic() - started < 5.5:
+                context.iteration(False)
+                time.sleep(0.001)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        deadline = time.monotonic() + 10
+        while len(replies) + len(errors) < 200 and time.monotonic() < deadline:
+            context.iteration(False)
+            time.sleep(0.001)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(replies), 200)
+        saved = json.loads((self.root / "data/radio-atlas/state.json").read_text())["volume"]
+        self.assertEqual(self.property("volume"), 99)
+        self.assertEqual(saved, 99)
+        self.snapshot("rapid media volume changes", requests=200, requests_per_second=60,
+                      state_lock_seconds=5.5, volume=self.property("volume"), saved_volume=saved)
+
+    def test_stopping_bridge_cancels_blocked_volume_changes(self):
+        if LEGACY_PLAYER:
+            self.skipTest("volume workers belong to the Radio Atlas MPRIS bridge")
+        self.call(str(PROJECT / "radio-state"), "volume", "40")
+        properties, context = self.media_properties()
+        replies, errors = [], []
+        with (self.root / "data/radio-atlas/state.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for volume in [0.2, 0.3]:
+                properties.Set("org.mpris.MediaPlayer2.Player", "Volume", volume,
+                               reply_handler=lambda: replies.append(True), error_handler=errors.append)
+            properties.Get("org.mpris.MediaPlayer2.Player", "Rate")
+            self.player.terminate()
+            self.player.wait(timeout=3)
+            with (self.runtime / "player.lock").open("w") as player_lock:
+                def released():
+                    try:
+                        fcntl.flock(player_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        return False
+                    fcntl.flock(player_lock, fcntl.LOCK_UN)
+                    return True
+                self.wait(released)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        deadline = time.monotonic() + 5
+        while len(replies) + len(errors) < 2 and time.monotonic() < deadline:
+            context.iteration(False)
+            time.sleep(0.001)
+        self.assertEqual(replies, [])
+        self.assertEqual(len(errors), 2)
+        saved = json.loads((self.root / "data/radio-atlas/state.json").read_text())["volume"]
+        self.assertEqual(saved, 40)
+        result = dict(event="bridge stopped with pending volume changes", pending_requests=2,
+                      shared_lock_released=True, saved_volume=saved)
+        (self.root / "shutdown.json").write_text(json.dumps(result) + "\n")
+        print(json.dumps(result), flush=True)
 
 
 if __name__ == "__main__":
@@ -466,9 +564,16 @@ if __name__ == "__main__":
                  "repeated-pause": "test_mpris_pause_cancels_recovery_while_already_paused",
                  "pause-before-removal": "test_manual_pause_immediately_before_removal_is_preserved",
                  "rapid-reconnect": "test_rapid_output_changes_recover",
-                 "media-controls": "test_mpris_play_controls_restart_stopped_station",
-                 "volume": "test_mpris_volume_is_saved_for_the_next_player_session"}
-    suite = (unittest.defaultTestLoader.loadTestsFromTestCase(AudioOutputTest)
-             if options.scenario == "all" else unittest.TestSuite([AudioOutputTest(scenarios[options.scenario])]))
+                 "media-controls": "test_mpris_play_controls_restart_stopped_station"}
+    if options.scenario == "all":
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(AudioOutputTest)
+    elif options.scenario == "volume":
+        suite = unittest.TestSuite(AudioOutputTest(name) for name in [
+            "test_mpris_volume_is_saved_for_the_next_player_session",
+            "test_pending_mpris_volume_keeps_controls_responsive_and_serializes_with_ui",
+            "test_rapid_media_volume_changes_survive_a_slow_state_lock",
+            "test_stopping_bridge_cancels_blocked_volume_changes"])
+    else:
+        suite = unittest.TestSuite([AudioOutputTest(scenarios[options.scenario])])
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     raise SystemExit(not result.wasSuccessful())

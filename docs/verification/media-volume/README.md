@@ -21,11 +21,20 @@ The native check covers live volume, saved state, and startup through
 local tone, keeping the real session, sandbox, MPRIS bridge, and startup flags.
 
 A second native check holds the saved-state lock, verifies Pause still responds
-within half a second, and submits MPRIS 20%, MPRIS 30%, then UI 40% before releasing the lock. Both live volume and saved volume end at the UI's 40%. Every media request
-submits immediately to the same CLI lock as UI requests, which serializes each
-live update and save together.
+within half a second, and submits MPRIS 20%, MPRIS 30%, then UI 40% before
+releasing the lock. Both live volume and saved volume end at the UI's 40%.
+The bridge keeps one active worker and the latest pending media level. It holds
+the shared player lock across that burst, so UI writes cannot interleave with
+the live updates and saves. Writers follow lock ownership, rather than global
+request-arrival order.
+
+The focused command above runs all four volume checks. The third sends consecutive
+20% and 80% requests, then 200 changes at 60 requests per second while holding the
+state lock for 5.5 seconds. All requests succeed, and live and saved volume end at
+the last requested 99%. The fourth stops the bridge with one active and one
+pending volume change. Both requests fail, the shared lock is released, and the
+original saved 40% remains intact.
 
 Focused MPRIS tests cover integer rounding, numeric validation, preservation of
-other state fields, and save errors. The existing CLI checks cover rejected mpv
-updates. Stopping the bridge with two blocked media requests also terminated both
-workers without changing saved state.
+other state fields, save errors, and coalescing while a UI writer owns the lock.
+The CLI checks cover rejected mpv updates and missing inherited locks.

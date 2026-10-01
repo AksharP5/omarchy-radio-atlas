@@ -31,7 +31,7 @@
     {
       "event": "MPRIS volume changed",
       "paused": false,
-      "time": 0.394634,
+      "time": 0.401355,
       "output": "pipewire/atlas_selected",
       "devices": [
         "pipewire/atlas_selected"
@@ -42,7 +42,7 @@
     {
       "event": "player restarted",
       "paused": false,
-      "time": 0.125339,
+      "time": 0.122275,
       "output": "auto",
       "devices": [
         "pipewire/atlas_selected"
@@ -63,7 +63,7 @@
     ],
     "volume": 40.0,
     "saved_volume": 40,
-    "pause_latency_seconds": 0.007,
+    "pause_latency_seconds": 0.008,
     "requested_volumes": [
       20,
       30,
@@ -71,8 +71,23 @@
     ]
   },
   "shutdown_check": {
-    "blocked_media_requests": 2,
-    "workers_terminated": 2,
-    "saved_volume_preserved": 40
+    "event": "bridge stopped with pending volume changes",
+    "pending_requests": 2,
+    "shared_lock_released": true,
+    "saved_volume": 40
+  },
+  "rapid_changes": {
+    "event": "rapid media volume changes",
+    "paused": false,
+    "time": 6.297681,
+    "output": "pipewire/atlas_selected",
+    "devices": [
+      "pipewire/atlas_selected"
+    ],
+    "requests": 200,
+    "requests_per_second": 60,
+    "state_lock_seconds": 5.5,
+    "volume": 99.0,
+    "saved_volume": 99
   }
 }

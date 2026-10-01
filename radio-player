@@ -25,7 +25,13 @@ status_script="$script_dir/radio-status.lua"
 version=$(jq -r '.version' "$script_dir/manifest.json")
 user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
 install -d -m 700 "$runtime_dir" "$state_dir"
-exec 8>"$runtime_dir/player.lock"
+if [[ ${1:-} == volume && ${3:-} == --locked ]]; then
+  # The media bridge keeps this shared lock across coalesced volume changes.
+  [[ /proc/self/fd/8 -ef $runtime_dir/player.lock ]] \
+    || { echo 'Media volume requires the inherited player lock' >&2; exit 2; }
+else
+  exec 8>"$runtime_dir/player.lock"
+fi
 
 process_start_time() {
   local pid=$1

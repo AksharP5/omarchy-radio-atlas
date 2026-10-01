@@ -1,6 +1,7 @@
 """Protect source-aware output recovery at the media-control boundary."""
 import importlib.machinery
 import importlib.util
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -222,7 +223,8 @@ class PropertiesTest(unittest.TestCase):
         self.state_file = self.root / "data/radio-atlas/state.json"
 
     def set_property(self, server, name, value):
-        server.volume_processes = set()
+        server.volume = mpris.VolumeWriter()
+        self.addCleanup(server.close)
         replies, errors = [], []
         server.Set(mpris.PLAYER, name, value, lambda: replies.append(True), errors.append)
         deadline = time.monotonic() + 7
@@ -298,6 +300,34 @@ class PropertiesTest(unittest.TestCase):
         with self.assertRaisesRegex(mpris.dbus.DBusException, "saved state is invalid"):
             self.set_property(server, "Volume", mpris.dbus.Double(0.2))
         self.assertEqual(self.state_file.read_text(), original)
+
+    def test_volume_waits_for_ui_lock_and_saves_the_latest_request(self):
+        runtime = self.root / "runtime/omarchy-radio-atlas"
+        runtime.mkdir(parents=True)
+        server = mpris.Mpris.__new__(mpris.Mpris)
+        server.volume = mpris.VolumeWriter()
+        self.addCleanup(server.close)
+        replies, errors = [], []
+        context = mpris.GLib.MainContext.default()
+        with (runtime / "player.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for value in [0.2, 0.8]:
+                server.Set(mpris.PLAYER, "Volume", mpris.dbus.Double(value),
+                           lambda: replies.append(True), errors.append)
+            deadline = time.monotonic() + 0.05
+            while time.monotonic() < deadline:
+                context.iteration(False)
+                time.sleep(0.001)
+            self.assertEqual(replies, [])
+            self.assertFalse(self.state_file.exists())
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        deadline = time.monotonic() + 5
+        while len(replies) + len(errors) < 2 and time.monotonic() < deadline:
+            context.iteration(False)
+            time.sleep(0.001)
+        self.assertEqual(errors, [])
+        self.assertEqual(replies, [True, True])
+        self.assertEqual(json.loads(self.state_file.read_text())["volume"], 80)
 
 
 if __name__ == "__main__":
