@@ -16,7 +16,7 @@ import time
 import dbus
 import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
-from gi.repository import GLib
+from gi.repository import Gio, GLib
 
 
 PLAYER = "org.mpris.MediaPlayer2.Player"
@@ -264,6 +264,8 @@ class Mpris(dbus.service.Object):
         self.controls = controls
         self.last_properties = {}
         self.change_source = None
+        self.volume_requests = deque()
+        self.volume_process = None
 
     def schedule_changed(self):
         if self.change_source is None:
@@ -310,29 +312,62 @@ class Mpris(dbus.service.Object):
                         SupportedMimeTypes=dbus.Array([], signature="s"))
         raise dbus.exceptions.DBusException("Unknown interface", name="org.freedesktop.DBus.Error.InvalidArgs")
 
-    @dbus.service.method(PROPERTIES, in_signature="ssv")
-    def Set(self, interface, name, value):
+    @dbus.service.method(PROPERTIES, in_signature="ssv", async_callbacks=("reply", "error"))
+    def Set(self, interface, name, value, reply, error):
         if interface == PLAYER and name == "Rate" and value == 1:
+            reply()
             return
         if interface == PLAYER and name == "Volume" and isinstance(value, (dbus.Double, float, int)):
             volume = float(value)
             if not 0 <= volume <= 1:
                 raise dbus.exceptions.DBusException("Volume must be between 0 and 1", name="org.freedesktop.DBus.Error.InvalidArgs")
-            self.controls.ipc.command("set_property", "volume", volume * 100)
-            try:
-                saved = subprocess.run(
-                    ["timeout", "--kill-after=1", "5", str(Path(__file__).resolve().with_name("radio-state")),
-                     "volume", str(int(volume * 100 + 0.5))],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-            except OSError as error:
-                raise dbus.exceptions.DBusException(
-                    f"Could not save radio volume: {error}", name="org.freedesktop.DBus.Error.Failed") from error
-            if saved.returncode != 0:
-                raise dbus.exceptions.DBusException(
-                    saved.stderr.strip() or "Could not save radio volume",
-                    name="org.freedesktop.DBus.Error.Failed")
+            self.volume_requests.append((int(volume * 100 + 0.5), reply, error))
+            if self.volume_process is None:
+                self.start_volume_change()
             return
         raise dbus.exceptions.DBusException("Property is read-only", name="org.freedesktop.DBus.Error.PropertyReadOnly")
+
+    def start_volume_change(self):
+        if not self.volume_requests:
+            return
+        volume, reply, error = self.volume_requests[0]
+        # The CLI owns player.lock across the live update and atomic save.
+        try:
+            process = Gio.Subprocess.new(
+                ["setpriv", "--pdeathsig", "TERM", "timeout", "--kill-after=1", "5",
+                 str(Path(__file__).resolve().with_name("radio-player")), "volume", str(volume)],
+                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
+        except GLib.Error as failure:
+            self.volume_requests.popleft()
+            error(dbus.exceptions.DBusException(str(failure), name="org.freedesktop.DBus.Error.Failed"))
+            GLib.idle_add(self.start_volume_change)
+            return
+        self.volume_process = process
+
+        def finished(process, result):
+            if not self.volume_requests:
+                return
+            self.volume_requests.popleft()
+            self.volume_process = None
+            try:
+                _, _, stderr = process.communicate_utf8_finish(result)
+                if not process.get_successful():
+                    raise dbus.exceptions.DBusException(
+                        stderr.strip() or "Could not change radio volume",
+                        name="org.freedesktop.DBus.Error.Failed")
+            except (GLib.Error, dbus.DBusException) as failure:
+                error(failure)
+            else:
+                reply()
+            finally:
+                self.start_volume_change()
+
+        process.communicate_utf8_async(None, None, finished)
+
+    def close(self):
+        self.volume_requests.clear()
+        if self.volume_process is not None:
+            self.volume_process.send_signal(signal.SIGTERM)
 
     @dbus.service.signal(PROPERTIES, signature="sa{sv}as")
     def PropertiesChanged(self, interface, changed, invalidated):
@@ -400,6 +435,7 @@ def main():
     loop = GLib.MainLoop()
     child = subprocess.Popen(sys.argv[3:])
     ipc = None
+    mpris = None
     stopping = False
 
     def stop(*_):
@@ -433,6 +469,8 @@ def main():
             loop.run()
         return child.poll() or 0
     finally:
+        if mpris is not None:
+            mpris.close()
         if ipc is not None:
             ipc.close()
         if child.poll() is None:

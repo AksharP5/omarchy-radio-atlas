@@ -5,6 +5,7 @@ Pass --legacy-player --script to compare an older player and --artifacts to reta
 """
 import argparse
 import ast
+import fcntl
 import importlib.util
 import json
 import math
@@ -47,6 +48,8 @@ class AudioOutputTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory(prefix="atlas-audio-")
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
+        self.runtime = self.root / "omarchy-radio-atlas"
+        self.runtime.mkdir()
         if ARTIFACTS:
             destination = Path(tempfile.mkdtemp(prefix=self._testMethodName + "-", dir=ARTIFACTS))
             self.addCleanup(self.retain_artifacts, destination)
@@ -64,7 +67,7 @@ class AudioOutputTest(unittest.TestCase):
                         WIREPLUMBER_CONFIG_DIR="/usr/share/wireplumber",
                         PULSE_SERVER="unix:" + str(self.root / "pulse/native"),
                         RADIO_ATLAS_STATUS_FILE=str(self.root / "status.json"),
-                        RADIO_ATLAS_QUEUE_FILE=str(self.root / "queue.json"))
+                        RADIO_ATLAS_QUEUE_FILE=str(self.runtime / "playlist.json"))
         bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"],
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         self.processes.append(bus)
@@ -90,22 +93,22 @@ class AudioOutputTest(unittest.TestCase):
         command = ["mpv", "--no-config", "--load-scripts=no", "--no-video", "--idle=yes",
                    "--no-terminal", "--ao=pipewire", "--audio-device=pipewire/atlas_selected",
                    f"--script={SCRIPT}", f"--log-file={self.root / 'mpv-internal.log'}",
-                   f"--input-ipc-server={self.root / 'mpv.sock'}", str(tone)]
+                   f"--input-ipc-server={self.runtime / 'mpv.sock'}", str(tone)]
         if LEGACY_PLAYER:
             command.insert(-1, f"--script={PLUGIN}")
         else:
             command.insert(-1, "--audio-client-name=Radio Atlas")
             command = [sys.executable, str(PROJECT / "radio-mpris"),
-                       str(self.root / "mpv.sock"), "--", *command]
+                       str(self.runtime / "mpv.sock"), "--", *command]
         self.player = self.start(*command)
-        self.wait(lambda: (self.root / "mpv.sock").exists())
+        self.wait(lambda: (self.runtime / "mpv.sock").exists())
         self.wait(lambda: (self.property("time-pos") or 0) > 0.3)
         if not LEGACY_PLAYER:
             self.wait(lambda: self.property("user-data/radio-atlas-mpris-ready"))
         self.wait(self.mpris_name)
 
     def stop_processes(self):
-        if (self.root / "mpv.sock").exists():
+        if (self.runtime / "mpv.sock").exists():
             try:
                 self.ipc("quit")
             except (OSError, ValueError):
@@ -155,7 +158,7 @@ class AudioOutputTest(unittest.TestCase):
     def ipc(self, *command):
         with socket.socket(socket.AF_UNIX) as connection:
             connection.settimeout(3)
-            connection.connect(str(self.root / "mpv.sock"))
+            connection.connect(str(self.runtime / "mpv.sock"))
             connection.sendall((json.dumps(dict(command=command, request_id=1)) + "\n").encode())
             with connection.makefile("r") as replies:
                 for line in replies:
@@ -350,18 +353,79 @@ class AudioOutputTest(unittest.TestCase):
         saved = json.loads(state_file.read_text())
         self.snapshot("MPRIS volume changed", volume=self.property("volume"),
                       saved_volume=saved["volume"])
-        command = list(self.player.args)
         self.ipc("quit")
         self.player.wait(timeout=5)
-        (self.root / "mpv.sock").unlink(missing_ok=True)
-        command.insert(-1, f"--volume={saved['volume']}")
-        self.player = self.start(*command)
+        (self.runtime / "mpv.sock").unlink(missing_ok=True)
+        binary = self.root / "bin"
+        binary.mkdir()
+        wrapper = binary / "mpv"
+        wrapper.write_text('''#!/usr/bin/env python3
+import os
+import sys
+arguments = [argument for argument in sys.argv[1:] if not argument.startswith("--playlist=")]
+os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
+                          os.environ["RADIO_ATLAS_TEST_TONE"]])
+''')
+        wrapper.chmod(0o755)
+        self.env.update(PATH=f"{binary}:{PROJECT / 'tests/fixtures'}:{self.env['PATH']}",
+                        RADIO_ATLAS_TEST_TONE=str(self.root / "tone.wav"))
+        uuid = "12345678-1234-1234-1234-123456789abc"
+        (self.runtime / "play-selection.json").write_text(json.dumps([
+            dict(uuid=uuid, name="Test radio", url="https://example.com/test-radio")]))
+        self.addCleanup(self.call, str(PROJECT / "radio-player"), "stop")
+        self.call(str(PROJECT / "radio-player"), "play", uuid, "selection")
         self.wait(lambda: self.property("user-data/radio-atlas-mpris-ready"))
         self.wait(lambda: (self.property("time-pos") or 0) > 0.1)
         self.snapshot("player restarted", volume=self.property("volume"),
                       saved_volume=json.loads(state_file.read_text())["volume"])
         self.assertEqual(saved["volume"], 20)
         self.assertEqual(self.property("volume"), 20)
+
+    def test_pending_mpris_volume_keeps_controls_responsive_and_serializes_with_ui(self):
+        if LEGACY_PLAYER:
+            self.skipTest("asynchronous volume changes belong to the Radio Atlas MPRIS bridge")
+        self.call(str(PROJECT / "radio-state"), "volume", "40")
+        self.ipc("set_property", "volume", 40)
+        command = ["gdbus", "call", "--session", "--dest", self.mpris_name(),
+                   "--object-path", "/org/mpris/MediaPlayer2", "--method",
+                   "org.freedesktop.DBus.Properties.Set", "org.mpris.MediaPlayer2.Player",
+                   "Volume", "<0.2>"]
+        with (self.root / "data/radio-atlas/state.lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            pending = subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE, text=True)
+            self.processes.append(pending)
+            self.addCleanup(pending.stdout.close)
+            self.addCleanup(pending.stderr.close)
+            # Observe the child holding player.lock while its state read waits.
+            with (self.runtime / "player.lock").open("w") as player_lock:
+                def waiting_for_state():
+                    try:
+                        fcntl.flock(player_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError:
+                        return True
+                    fcntl.flock(player_lock, fcntl.LOCK_UN)
+                    return False
+                self.wait(waiting_for_state)
+            started = time.monotonic()
+            self.mpris_action("Pause")
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertTrue(self.property("pause"))
+            self.assertIsNone(pending.poll())
+            ui = subprocess.Popen([str(PROJECT / "radio-player"), "volume", "40"],
+                                  env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.processes.append(ui)
+            self.addCleanup(ui.stdout.close)
+            self.addCleanup(ui.stderr.close)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        for process in (pending, ui):
+            _, error = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 0, error)
+        self.assertEqual(self.property("volume"), 40)
+        saved = json.loads((self.root / "data/radio-atlas/state.json").read_text())["volume"]
+        self.assertEqual(saved, 40)
+        self.snapshot("overlapping media and UI controls", volume=self.property("volume"),
+                      saved_volume=saved)
 
 
 if __name__ == "__main__":

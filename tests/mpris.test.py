@@ -1,11 +1,13 @@
 """Protect source-aware output recovery at the media-control boundary."""
 import importlib.machinery
 import importlib.util
+from collections import deque
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -220,6 +222,20 @@ class PropertiesTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.state_file = self.root / "data/radio-atlas/state.json"
 
+    def set_property(self, server, name, value):
+        server.volume_requests = deque()
+        server.volume_process = None
+        replies, errors = [], []
+        server.Set(mpris.PLAYER, name, value, lambda: replies.append(True), errors.append)
+        deadline = time.monotonic() + 7
+        context = mpris.GLib.MainContext.default()
+        while not replies and not errors and time.monotonic() < deadline:
+            context.iteration(False)
+            time.sleep(0.005)
+        self.assertTrue(replies or errors, "Asynchronous Set did not reply")
+        if errors:
+            raise errors[0]
+
     def test_policy_sender_uses_executable_identity_even_after_an_upgrade(self):
         server = mpris.Mpris.__new__(mpris.Mpris)
         class Daemon:
@@ -253,14 +269,27 @@ class PropertiesTest(unittest.TestCase):
         self.assertFalse(playing["CanSeek"])
         server.controls.pause()
         self.assertEqual(server.Get(mpris.PLAYER, "PlaybackStatus"), "Paused")
-        server.Set(mpris.PLAYER, "Volume", mpris.dbus.Double(0.3))
-        self.assertEqual(ipc.properties["volume"], 30)
-        self.assertEqual(json.loads(self.state_file.read_text())["volume"], 30)
         ipc.properties["idle-active"] = True
         self.assertEqual(server.Get(mpris.PLAYER, "PlaybackStatus"), "Stopped")
         self.assertEqual(server.Get(mpris.PLAYER, "Metadata"), {})
         with self.assertRaises(mpris.dbus.DBusException):
             server.OpenUri("http://127.0.0.1/private")
+
+    def test_volume_saves_the_rounded_level_and_keeps_other_state(self):
+        self.state_file.parent.mkdir(parents=True)
+        original = dict(favorites=[dict(uuid="saved-favorite")], recent=[], volume=40)
+        self.state_file.write_text(json.dumps(original))
+        server = mpris.Mpris.__new__(mpris.Mpris)
+        self.set_property(server, "Volume", mpris.dbus.Double(0.305))
+        self.assertEqual(json.loads(self.state_file.read_text()), {**original, "volume": 31})
+
+    def test_async_set_keeps_rate_and_volume_validation(self):
+        server = mpris.Mpris.__new__(mpris.Mpris)
+        self.set_property(server, "Rate", mpris.dbus.Double(1))
+        for value in [-0.1, 1.1, float("nan"), float("inf")]:
+            with self.subTest(value=value), self.assertRaises(mpris.dbus.DBusException):
+                self.set_property(server, "Volume", mpris.dbus.Double(value))
+        self.assertFalse(self.state_file.exists())
 
     def test_volume_does_not_overwrite_invalid_state_or_hide_save_failure(self):
         self.state_file.parent.mkdir(parents=True)
@@ -269,18 +298,7 @@ class PropertiesTest(unittest.TestCase):
         server = mpris.Mpris.__new__(mpris.Mpris)
         server.controls = mpris.Controls(MPV(), lambda: None, lambda: None)
         with self.assertRaisesRegex(mpris.dbus.DBusException, "saved state is invalid"):
-            server.Set(mpris.PLAYER, "Volume", mpris.dbus.Double(0.2))
-        self.assertEqual(self.state_file.read_text(), original)
-
-    def test_rejected_mpv_volume_does_not_change_saved_volume(self):
-        self.state_file.parent.mkdir(parents=True)
-        original = '{"favorites":[],"recent":[],"volume":40}\n'
-        self.state_file.write_text(original)
-        server = mpris.Mpris.__new__(mpris.Mpris)
-        server.controls = mpris.Controls(MPV(), lambda: None, lambda: None)
-        with patch.object(server.controls.ipc, "command", side_effect=mpris.MPVError("rejected")):
-            with self.assertRaises(mpris.MPVError):
-                server.Set(mpris.PLAYER, "Volume", mpris.dbus.Double(0.2))
+            self.set_property(server, "Volume", mpris.dbus.Double(0.2))
         self.assertEqual(self.state_file.read_text(), original)
 
 

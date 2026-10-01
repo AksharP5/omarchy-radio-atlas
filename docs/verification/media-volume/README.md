@@ -16,5 +16,16 @@ Run the same check with:
 python3 tests/audio-output.test.py --scenario volume --require-dependencies
 ```
 
-The native check covers the live volume, saved state, and a restarted player.
-The focused MPRIS tests also cover rejected mpv updates and invalid saved state.
+The native check covers live volume, saved state, and startup through
+`radio-player play`. Its mpv wrapper replaces only the network playlist with a
+local tone, keeping the real session, sandbox, MPRIS bridge, and startup flags.
+
+A second native check holds the saved-state lock, verifies Pause still responds
+within half a second, and overlaps MPRIS and UI volume changes. Both live volume
+and saved volume end at the UI's 40%. The bridge processes its own requests in
+order and uses the existing CLI lock to coordinate with the UI.
+
+Focused MPRIS tests cover integer rounding, numeric validation, preservation of
+other state fields, and save errors. The existing CLI checks cover rejected mpv
+updates. Stopping the bridge during a blocked request also terminated its worker
+without changing saved state.
