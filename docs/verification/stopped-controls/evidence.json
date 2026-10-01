@@ -1,0 +1,199 @@
+{
+  "generated_at": "2026-10-01T04:40:16.399830+00:00",
+  "baseline_commit": "7f2d119cf6b9d351983b538e266f0637f3ccadec",
+  "candidate_base_commit": "7f2d119cf6b9d351983b538e266f0637f3ccadec",
+  "candidate_source_sha256": {
+    "radio-status.lua": "694e4d48ca768cf1133a8825e5c34b01d5548de6c244a7e60e5affc24619e757",
+    "radio-player": "ce9caaf9e5c7eec8505bb43f79e21e61527aeef4c4329dda8f97b52ac28e8cd9",
+    "radio-mpris": "0e193b8673e4341f9b35b5e44ed7630043539c79bdc28078222ab7528e7a78be",
+    "BarWidget.qml": "55fb5fc76cc7d5f708456614152a58116bdc9de3eb23d75997265d9758196fbc"
+  },
+  "mpv_version": "mpv v0.41.0 Copyright \u00a9 2000-2025 mpv/MPlayer/mplayer2 projects",
+  "isolation": "Separate temporary XDG directories, localhost HTTP fixtures, null audio, and private D-Bus for MPRIS. No host audio or player state used.",
+  "shared_initial_state": {
+    "queue": [
+      "station-0",
+      "station-1",
+      "station-2",
+      "station-3"
+    ],
+    "position": 2,
+    "loaded": true,
+    "paused": false,
+    "setup": "Start at first station; native Next twice. No --playlist-start override."
+  },
+  "shared_post_action_state": {
+    "running": true,
+    "loaded": true,
+    "stopped": false
+  },
+  "boundaries": {
+    "cli": "Real mpv IPC stop keep-playlist; wait for stopped status; run production radio-player next/previous. Every CLI exit code was 0.",
+    "mpris": "Production radio-mpris Stop and Next/Previous through private D-Bus; wait for stopped status. Every D-Bus call succeeded.",
+    "quick-ipc": "Single real mpv IPC batch: pause true, stop keep-playlist, production navigation payload. Parsed literal old CLI command or current navigate_player mapping. All three command replies succeeded; shell startup bypassed."
+  },
+  "stopped_navigation": [
+    {
+      "transport": "cli",
+      "action": "next",
+      "expected_position": 3,
+      "before": {
+        "position": 0,
+        "station": "station-0",
+        "paused": false,
+        "requested_stream": "/station-0"
+      },
+      "after": {
+        "position": 3,
+        "station": "station-3",
+        "paused": false,
+        "requested_stream": "/station-3"
+      }
+    },
+    {
+      "transport": "cli",
+      "action": "previous",
+      "expected_position": 1,
+      "before": {
+        "position": 3,
+        "station": "station-3",
+        "paused": false,
+        "requested_stream": "/station-3"
+      },
+      "after": {
+        "position": 1,
+        "station": "station-1",
+        "paused": false,
+        "requested_stream": "/station-1"
+      }
+    },
+    {
+      "transport": "mpris",
+      "action": "next",
+      "expected_position": 3,
+      "before": {
+        "position": 0,
+        "station": "station-0",
+        "paused": false,
+        "requested_stream": "/station-0"
+      },
+      "after": {
+        "position": 3,
+        "station": "station-3",
+        "paused": false,
+        "requested_stream": "/station-3"
+      }
+    },
+    {
+      "transport": "mpris",
+      "action": "previous",
+      "expected_position": 1,
+      "before": {
+        "position": 3,
+        "station": "station-3",
+        "paused": false,
+        "requested_stream": "/station-3"
+      },
+      "after": {
+        "position": 1,
+        "station": "station-1",
+        "paused": false,
+        "requested_stream": "/station-1"
+      }
+    },
+    {
+      "transport": "quick-ipc",
+      "action": "next",
+      "expected_position": 3,
+      "before": {
+        "position": 3,
+        "station": "station-3",
+        "paused": true,
+        "requested_stream": "/station-3"
+      },
+      "after": {
+        "position": 3,
+        "station": "station-3",
+        "paused": false,
+        "requested_stream": "/station-3"
+      }
+    },
+    {
+      "transport": "quick-ipc",
+      "action": "previous",
+      "expected_position": 1,
+      "before": {
+        "position": 1,
+        "station": "station-1",
+        "paused": true,
+        "requested_stream": "/station-1"
+      },
+      "after": {
+        "position": 1,
+        "station": "station-1",
+        "paused": false,
+        "requested_stream": "/station-1"
+      }
+    }
+  ],
+  "mixed_version": [
+    {
+      "action": "next",
+      "expected_position": 3,
+      "actual": {
+        "position": 3,
+        "station": "station-3",
+        "paused": false,
+        "requested_stream": "/station-3"
+      },
+      "passed": true
+    },
+    {
+      "action": "previous",
+      "expected_position": 1,
+      "actual": {
+        "position": 1,
+        "station": "station-1",
+        "paused": false,
+        "requested_stream": "/station-1"
+      },
+      "passed": true
+    }
+  ],
+  "mixed_version_boundary": "Candidate CLI against unchanged baseline Lua already playing the third station. No Stop. Both CLI exit codes were 0; fallback preserved native active navigation.",
+  "bar_dispatch": {
+    "boundary": "Qt mouseClick on unmodified copies of each version's production BarWidget.qml and real Omarchy WidgetButton; Process/FileView/compositor IO mocked. Assertions inspect dispatched Process.command[1] and running == true.",
+    "baseline_harness": "Candidate player-layout Qt harness with baseline production RadioAtlas.qml and BarWidget.qml; externally-stopped expected dispatch changed to baseline stop.",
+    "candidate_harness": "Unmodified tests/player-layout.test.mjs using candidate production QML.",
+    "candidate_test_sha256": "4626821f1bc3190d25ffbd1e5af510f046b838aeb6e131eb808000bfc21a10f9",
+    "cases": [
+      {
+        "state": "playing",
+        "before": "stop",
+        "after": "stop",
+        "passed": true
+      },
+      {
+        "state": "paused",
+        "before": "stop",
+        "after": "stop",
+        "passed": true
+      },
+      {
+        "state": "externally-stopped",
+        "before": "stop",
+        "after": "toggle",
+        "passed": true
+      },
+      {
+        "state": "player-exited",
+        "before": "resume",
+        "after": "resume",
+        "passed": true
+      }
+    ],
+    "before_suite_passes": 17,
+    "after_suite_passes": 17,
+    "failed": 0
+  }
+}

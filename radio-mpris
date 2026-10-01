@@ -353,11 +353,11 @@ class Mpris(dbus.service.Object):
 
     @dbus.service.method(PLAYER)
     def Next(self):
-        self.controls.action("playlist-next", "force")
+        self.controls.action("script-message", "radio-atlas-next")
 
     @dbus.service.method(PLAYER)
     def Previous(self):
-        self.controls.action("playlist-prev", "force")
+        self.controls.action("script-message", "radio-atlas-previous")
 
     @dbus.service.method(PLAYER, in_signature="x")
     def Seek(self, _offset):

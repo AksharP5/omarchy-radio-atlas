@@ -193,6 +193,19 @@ mp.register_script_message("radio-atlas-toggle", function()
   end
   toggle_playback()
 end)
+local function navigate(command)
+  if mp.get_property_bool("idle-active", false)
+      or mp.get_property_number("playlist-pos", -1) < 0 then
+    -- Stop clears mpv's cursor. Restore it before choosing a neighbor.
+    local position = failure and failure.position or station_position
+    if position >= 0 then mp.set_property_number("playlist-current-pos", position) end
+    mp.set_property_bool("pause", false)
+  end
+  mp.commandv(command, "force")
+end
+mp.register_script_message("radio-atlas-next", function() navigate("playlist-next") end)
+mp.register_script_message("radio-atlas-previous", function() navigate("playlist-prev") end)
+mp.set_property_bool("user-data/radio-atlas-navigation-ready", true)
 mp.register_event("shutdown", function()
   if update_timer then update_timer:kill() end
   write_status({
