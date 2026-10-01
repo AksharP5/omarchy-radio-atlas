@@ -59,6 +59,21 @@ try {
     assert.deepEqual(JSON.parse(result.stdout).map(station => station.uuid).sort(), [...expected].sort(), `remote: ${query}`)
   }
 
+  const resultsFile = path.join(env.XDG_RUNTIME_DIR, "omarchy-radio-atlas", "results.json")
+  for (const [query, failedField] of [["jazz", "tag"], ["USA", "countrycode"], ["jazz", "name"]]) {
+    const cached = JSON.stringify(model.searchStations(stations, query, 150, countryNames))
+    fs.writeFileSync(resultsFile, cached)
+    const result = spawnSync(path.join(project, "radio-fetch"), ["search", query], {
+      env: { ...env, RADIO_ATLAS_TEST_SEARCH_FAIL_FIELD: failedField },
+      encoding: "utf8",
+    })
+    assert.notEqual(result.status, 0, `${query}: ${failedField} failure must reject incomplete results`)
+    assert.equal(result.stdout, "", "Incomplete results must not replace the cached preview")
+    assert.match(result.stderr, /Station service is unavailable/)
+    assert.equal(fs.readFileSync(resultsFile, "utf8"), cached, "Keep runtime results unchanged on failure")
+    assert.deepEqual(fs.readdirSync(path.dirname(resultsFile)), ["results.json"], "Failed searches remove temporary files")
+  }
+
   const features = JSON.parse(fs.readFileSync(path.join(project, "assets/countries.json"))).features
   for (const { properties } of features)
     assert.equal(countryNames[properties.name.toLowerCase()], properties.code)
