@@ -64,7 +64,7 @@
     "tests/keyboard.test.mjs": "ba61f22635a51ba939fd49f037a75111d79c12d2d7aae6819cec001574fa05ba",
     "tests/pointer-selection.test.mjs": "29b7c347867c8f469852faf08854c784e0139433c0215b0e799964271fcc46c9",
     "tests/player-layout.test.mjs": "4ecd6dc241258ccee7ffa3ae12e6e3d14995ec1338c7661f45f9ff40495f1730",
-    "tests/headless.test.py": "67b0475d3d671758b739970a14f04849a292785cf3263ec0f164c15c95920e79",
+    "tests/headless.test.py": "3497a15c69508891f9b0b5062c7e1c4c83ce18e975bd04836aaaffe6e09e863a",
     ".github/workflows/ci.yml": "007247f744f07c02c240e4555d12f3571dc2342ee5165cae040b5428de2640fd"
   },
   "activationDetector": {
@@ -78,5 +78,38 @@
       "checkerExitCode": 0,
       "portalActivationAttempts": 0
     }
-  }
+  },
+  "checkerCleanup": [
+    {
+      "case": "timeout",
+      "checkerExitCode": 1,
+      "remainingTestProcesses": 0,
+      "remainingBusSocket": false,
+      "childIgnoredSigterm": true
+    },
+    {
+      "case": "interruption",
+      "checkerExitCode": -2,
+      "remainingTestProcesses": 0,
+      "remainingBusSocket": false,
+      "childIgnoredSigterm": true
+    }
+  ],
+  "optimizedPythonGuards": [
+    {
+      "case": "optimized-failed-command",
+      "exitCode": 1,
+      "outcome": "Headless tests exited with 1"
+    },
+    {
+      "case": "optimized-portal-request",
+      "exitCode": 1,
+      "outcome": "Headless tests attempted 2 desktop portal activations"
+    },
+    {
+      "case": "optimized-fixed-keyboard",
+      "exitCode": 0,
+      "outcome": "Headless tests passed; desktop portal activation attempts: 0"
+    }
+  ]
 }

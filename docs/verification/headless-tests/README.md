@@ -45,3 +45,8 @@ CI runs this checker too. Real desktop service directories are excluded.
 
 The checker also rejected the unmodified keyboard test from the base commit,
 reporting two activation attempts even though its QML assertions passed.
+
+Timeout and interruption checks left no test command, child process, private
+bus process, or socket behind, including with a child that ignored SIGTERM.
+The checker also rejected a failed command and the unmodified keyboard test
+with Python optimization enabled; the fixed keyboard test still passed.
