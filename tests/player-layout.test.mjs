@@ -85,7 +85,20 @@ TestCase {
   QtObject { id: playerActionProcess; property bool running: false }
   QtObject { id: outputProcess; property bool running: false }
 
-  RadioBar { id: barWidget; visible: false }
+  QtObject {
+    id: barHost
+    property bool vertical: false
+    property int barSize: 32
+    property string fontFamily: Style.font.family
+    property color barForeground: "white"
+    property color urgent: "red"
+    property bool foregroundAnimationEnabled: false
+    function showTooltip() {}
+    function hideTooltip() {}
+    function registerClickTarget() {}
+    function unregisterClickTarget() {}
+  }
+  RadioBar { id: barWidget; bar: barHost; visible: false; z: 10 }
 
   ${panel}
 
@@ -180,6 +193,35 @@ TestCase {
         status: "Stream disconnected. Play to retry, or Next.", action: "Retry station",
         icon: "\\uf04b", active: false, tooltip: "Stream disconnected:" }
     ]
+  }
+
+  function test_barRightClick_data() {
+    return [
+      { tag: "playing", running: true, paused: false, stopped: false, action: "stop" },
+      { tag: "paused", running: true, paused: true, stopped: false, action: "stop" },
+      { tag: "externally-stopped", running: true, paused: false, stopped: true, action: "toggle" },
+      { tag: "player-exited", running: false, paused: false, stopped: false, action: "resume" }
+    ]
+  }
+
+  function cleanup() {
+    for (var i = 0; i < barWidget.resources.length; i++) {
+      var resource = barWidget.resources[i]
+      if (resource.command !== undefined) resource.running = false
+    }
+    barWidget.visible = false
+  }
+
+  function test_barRightClick(data) {
+    barWidget.applyPlayerState(JSON.stringify(data))
+    barWidget.visible = true
+    var button = barWidget.children.find(function(item) { return item instanceof WidgetButton })
+    mouseClick(button, button.width / 2, button.height / 2, Qt.RightButton)
+    var process = barWidget.resources.find(function(item) {
+      return item.command && item.command[1] === data.action
+    })
+    verify(process !== undefined, "Right click must dispatch " + data.action)
+    compare(process.running, true)
   }
 
   function test_playerState(data) {

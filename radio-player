@@ -258,6 +258,16 @@ player_command() {
   status
 }
 
+navigate_player() {
+  local message=$1 native=$2
+  if send_command '{"command":["get_property","user-data/radio-atlas-navigation-ready"]}'; then
+    player_command "$(jq -cn --arg message "$message" '{command:["script-message",$message]}')"
+    return
+  fi
+  # Plugin updates leave existing players running with their original script.
+  player_command "$(jq -cn --arg native "$native" '{command:[$native,"force"]}')"
+}
+
 stop_player() {
   cancel_pending_plays
   if [[ ! -S $socket ]]; then
@@ -581,10 +591,10 @@ case "$action" in
     player_command '{"command":["script-message","radio-atlas-toggle"]}'
     ;;
   next)
-    player_command '{"command":["playlist-next","force"]}'
+    navigate_player radio-atlas-next playlist-next
     ;;
   previous)
-    player_command '{"command":["playlist-prev","force"]}'
+    navigate_player radio-atlas-previous playlist-prev
     ;;
   mute)
     player_command '{"command":["cycle","mute"]}'

@@ -307,7 +307,8 @@ class AudioOutputTest(unittest.TestCase):
             self.assert_playing_on_selected(f"rapid cycle {cycle + 1}: selected restored")
 
     def test_mpris_play_controls_restart_stopped_station(self):
-        self.ipc("loadfile", str(self.root / "tone.wav"), "append")
+        for _ in range(3):
+            self.ipc("loadfile", str(self.root / "tone.wav"), "append")
         self.ipc("playlist-play-index", 1)
         self.wait(lambda: self.property("playlist-pos") == 1 and
                   (self.property("time-pos") or 0) > 0.1)
@@ -327,6 +328,13 @@ class AudioOutputTest(unittest.TestCase):
             self.wait(lambda: not json.loads((self.root / "status.json").read_text()).get("stopped"))
             self.assertEqual(self.property("playlist-pos"), 1)
             self.assert_playing_on_selected(f"MPRIS Stop then {action}")
+        for action, position in [("Next", 2), ("Previous", 1)]:
+            self.mpris_action("Pause")
+            self.mpris_action("Stop")
+            self.mpris_action(action)
+            self.wait(lambda: (self.property("time-pos") or 0) > 0.1)
+            self.assertEqual(self.property("playlist-pos"), position)
+            self.assert_playing_on_selected(f"MPRIS paused then Stop then {action}")
 
 
 if __name__ == "__main__":

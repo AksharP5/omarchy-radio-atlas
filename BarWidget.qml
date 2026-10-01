@@ -148,6 +148,10 @@ BarWidget {
       if (!root.bar) return
       if (mouseButton === Qt.RightButton) {
         if (!root.playerStateReady) return
+        if (root.playerStopped) {
+          root.runPlayerAction("toggle")
+          return
+        }
         root.runPlayerAction(root.playerRunning ? "stop" : "resume")
         return
       }
