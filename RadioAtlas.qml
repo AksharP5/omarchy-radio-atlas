@@ -1635,7 +1635,9 @@ Item {
                 position = stationList.mapFromItem(null, position.x, position.y)
                 var row = stationList.itemAt(position.x + stationList.contentX,
                   position.y + stationList.contentY)
-                if (row && position.x < row.selectionWidth) root.setSelection(row.index)
+                if (row && position.x < row.selectionWidth
+                    && (row.index !== root.selectedIndex || root.keyboardSelectionVisible))
+                  root.setSelection(row.index)
               }
             }
 

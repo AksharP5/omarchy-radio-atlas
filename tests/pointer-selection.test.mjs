@@ -22,7 +22,9 @@ for (const token of source.slice(opening).matchAll(tokens)) {
 }
 assert.ok(closing > opening, "Could not find the end of the production station list")
 const list = source.slice(declaration.index, closing)
+// Count requests at the production ListView boundary without replacing its behavior.
 const selectionFunctions = source.match(/  function (?:setSelection|moveSelection)\([\s\S]*?\n  \}/g).join("\n")
+  .replace("stationList.positionViewAtIndex(", "viewPositionRequests++\n    stationList.positionViewAtIndex(")
 const shellDirectory = process.env.OMARCHY_SHELL_DIR || "/usr/share/omarchy/shell"
 assert.ok(fs.existsSync(path.join(shellDirectory, "Ui/Button.qml")),
   "Set OMARCHY_SHELL_DIR to an Omarchy checkout’s shell directory")
@@ -67,6 +69,7 @@ TestCase {
   property color dim: "gray"
   property color favoriteColor: "yellow"
   property int plays: 0
+  property int viewPositionRequests: 0
   function isFavorite(uuid) { return false }
   function toggleFavorite(uuid) {}
   function playSelected() { plays++ }
@@ -121,6 +124,25 @@ TestCase {
     compare(selectedStation.uuid, "row-6")
     compare(keyboardSelectionVisible, true)
     verify(stationList.contentY > 0, "Exercise rows moving under the stationary pointer")
+  }
+
+  function test_pointerMovementWithinSelectedRowDoesNotReposition() {
+    mouseMove(stationList, 50, 30)
+    var requests = viewPositionRequests
+    mouseMove(stationList, 51, 30)
+    mouseMove(stationList, 52, 30)
+    compare(viewPositionRequests, requests, "Moving within the selected row must not reposition the view")
+
+    keyClick(Qt.Key_Down)
+    compare(selectedIndex, 1)
+    compare(keyboardSelectionVisible, true)
+    requests = viewPositionRequests
+    mouseMove(stationList, 50, 94)
+    compare(selectedIndex, 1)
+    compare(keyboardSelectionVisible, false, "Pointer movement still takes over the keyboard-selected row")
+    compare(viewPositionRequests, requests + 1)
+    mouseMove(stationList, 51, 94)
+    compare(viewPositionRequests, requests + 1)
   }
 
   function test_pointerMovementAndClicksTakeOver() {
