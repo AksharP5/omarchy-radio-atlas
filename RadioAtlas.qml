@@ -1624,7 +1624,6 @@ Item {
 
             HoverHandler {
               parent: stationList
-              enabled: stationList.interactive
               property point lastPosition: Qt.point(-1, -1)
               onHoveredChanged: if (!hovered) lastPosition = Qt.point(-1, -1)
               onPointChanged: {
@@ -1636,7 +1635,7 @@ Item {
                 position = stationList.mapFromItem(null, position.x, position.y)
                 var row = stationList.itemAt(position.x + stationList.contentX,
                   position.y + stationList.contentY)
-                if (row && position.x < row.selectionWidth
+                if (stationList.interactive && row && position.x < row.selectionWidth
                     && (row.index !== root.selectedIndex || root.keyboardSelectionVisible))
                   root.setSelection(row.index)
               }

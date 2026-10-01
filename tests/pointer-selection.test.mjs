@@ -139,12 +139,29 @@ TestCase {
     compare(selectedIndex, 1, "Opening the output menu must block station selection behind its scrim")
     compare(keyboardSelectionVisible, true)
 
+    mouseMove(root, 300, 230)
     mouseClick(root, 300, 230)
     compare(outputMenuOpen, false)
     mouseMove(stationList, 50, 158)
     tryCompare(root, "selectedIndex", 2)
     compare(keyboardSelectionVisible, false)
     compare(plays, 0)
+  }
+
+  function test_keyboardOutputMenuTogglePreservesStationaryPointerSelection() {
+    mouseMove(stationList, 50, 30)
+    keyClick(Qt.Key_Down)
+    compare(selectedIndex, 1)
+    compare(keyboardSelectionVisible, true)
+    outputMenuOpen = true
+    wait(30)
+    outputMenuOpen = false
+    wait(30)
+    compare(selectedIndex, 1, "Closing the output menu must not treat a stationary pointer as movement")
+    compare(keyboardSelectionVisible, true)
+    mouseMove(stationList, 51, 30)
+    tryCompare(root, "selectedIndex", 0)
+    compare(keyboardSelectionVisible, false)
   }
 
   function test_pointerMovementWithinSelectedRowDoesNotReposition() {
