@@ -11,6 +11,7 @@ BarWidget {
 
   property bool playerRunning: false
   property bool playerPaused: false
+  property bool playerStopped: false
   property string streamError: ""
   property bool playerMuted: false
   property int playerVolume: 70
@@ -36,6 +37,7 @@ BarWidget {
       var state = JSON.parse(raw || "{}")
       root.playerRunning = state.running === true
       root.playerPaused = state.paused === true
+      root.playerStopped = state.stopped === true
       root.streamError = root.singleLineText(state.error || "", 200)
       root.playerMuted = state.muted === true
       var nextVolume = Math.round(Number(state.volume === undefined ? 70 : state.volume))
@@ -134,8 +136,9 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "\uf0ac"
-    active: root.playerRunning && !root.playerPaused
-    tooltipText: root.playerRunning
+    active: root.playerRunning && !root.playerStopped && !root.playerPaused
+    tooltipText: root.playerStopped ? "Radio stopped"
+      : root.playerRunning
       ? (root.streamError ? root.streamError + ": " : root.playerPaused ? "Radio paused: " : "Playing: ")
         + root.safeTooltipText(root.playerTitle)
         + "  ·  " + (root.playerMuted ? "muted" : root.playerVolume + "%")

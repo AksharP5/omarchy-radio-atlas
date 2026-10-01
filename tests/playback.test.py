@@ -129,6 +129,7 @@ class PlaybackTest(unittest.TestCase):
         self.assertEqual(state["station"]["uuid"], "station-0")
         self.assertFalse(state["loaded"])
         self.assertTrue(state["paused"])
+        self.assertFalse(state["stopped"])
         # Check the public status command too: it must not erase the Lua failure state.
         self.assertEqual(self.action("status")["error"], "Stream disconnected")
         self.assertEqual(self.requests, ["/short"])
@@ -172,6 +173,19 @@ class PlaybackTest(unittest.TestCase):
         self.wait_status(lambda s: s.get("loaded") and not s["paused"]
                          and s["station"]["uuid"] == "station-1")
         self.assertEqual(self.requests, ["/live", "/other"])
+
+    def test_native_stop_is_visible_in_event_and_public_status(self):
+        self.start(["/live"])
+        self.wait_status(lambda s: s.get("loaded"))
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(3)
+            connection.connect(str(self.runtime / "mpv.sock"))
+            connection.sendall(b'{"command":["stop","keep-playlist"]}\n')
+            connection.recv(4096)
+        stopped = self.wait_status(lambda s: s.get("stopped"))
+        self.assertTrue(stopped["running"])
+        self.assertFalse(stopped["loaded"])
+        self.assertTrue(self.action("status")["stopped"])
 
     def test_selecting_station_recovers_from_stream_failure(self):
         self.start(["/broken", "/live"])

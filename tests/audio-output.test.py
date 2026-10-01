@@ -311,12 +311,20 @@ class AudioOutputTest(unittest.TestCase):
         self.ipc("playlist-play-index", 1)
         self.wait(lambda: self.property("playlist-pos") == 1 and
                   (self.property("time-pos") or 0) > 0.1)
-        for action in ("Play", "PlayPause"):
+        for action in ("Play", "PlayPause", "UI"):
             self.mpris_action("Stop")
             self.wait(lambda: self.property("idle-active"))
+            self.wait(lambda: json.loads((self.root / "status.json").read_text()).get("stopped"))
+            stopped = json.loads((self.root / "status.json").read_text())
+            self.assertTrue(stopped["running"])
+            self.assertFalse(stopped["loaded"])
             self.mpris_action("Stop")
-            self.mpris_action(action)
+            if action == "UI":
+                self.ui_toggle()
+            else:
+                self.mpris_action(action)
             self.wait(lambda: (self.property("time-pos") or 0) > 0.1)
+            self.wait(lambda: not json.loads((self.root / "status.json").read_text()).get("stopped"))
             self.assertEqual(self.property("playlist-pos"), 1)
             self.assert_playing_on_selected(f"MPRIS Stop then {action}")
 

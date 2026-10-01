@@ -1,0 +1,119 @@
+{
+  "before-live": {
+    "paused": false,
+    "muted": false,
+    "title": "tone.wav",
+    "playlistPosition": 0,
+    "playlistCount": 1,
+    "station": {
+      "countryCode": "",
+      "uuid": "",
+      "country": "",
+      "name": ""
+    },
+    "errorDetail": "",
+    "output": "atlas_selected",
+    "loaded": true,
+    "error": "",
+    "volume": 100,
+    "running": true
+  },
+  "before-stopped": {
+    "paused": false,
+    "muted": false,
+    "title": "",
+    "playlistPosition": -1,
+    "playlistCount": 1,
+    "station": {
+      "countryCode": "",
+      "uuid": "",
+      "country": "",
+      "name": ""
+    },
+    "errorDetail": "",
+    "output": "atlas_selected",
+    "loaded": false,
+    "error": "",
+    "volume": 100,
+    "running": true
+  },
+  "before-resumed": {
+    "paused": false,
+    "muted": false,
+    "title": "tone.wav",
+    "playlistPosition": 0,
+    "playlistCount": 1,
+    "station": {
+      "countryCode": "",
+      "uuid": "",
+      "country": "",
+      "name": ""
+    },
+    "errorDetail": "",
+    "output": "atlas_selected",
+    "loaded": true,
+    "error": "",
+    "volume": 100,
+    "running": true
+  },
+  "after-live": {
+    "stopped": false,
+    "paused": false,
+    "muted": false,
+    "playlistCount": 1,
+    "title": "tone.wav",
+    "errorDetail": "",
+    "playlistPosition": 0,
+    "running": true,
+    "output": "atlas_selected",
+    "error": "",
+    "loaded": true,
+    "station": {
+      "countryCode": "",
+      "name": "",
+      "uuid": "",
+      "country": ""
+    },
+    "volume": 100
+  },
+  "after-stopped": {
+    "stopped": true,
+    "paused": false,
+    "muted": false,
+    "playlistCount": 1,
+    "title": "",
+    "errorDetail": "",
+    "playlistPosition": -1,
+    "running": true,
+    "output": "atlas_selected",
+    "error": "",
+    "loaded": false,
+    "station": {
+      "countryCode": "",
+      "name": "",
+      "uuid": "",
+      "country": ""
+    },
+    "volume": 100
+  },
+  "after-resumed": {
+    "stopped": false,
+    "paused": false,
+    "muted": false,
+    "playlistCount": 1,
+    "title": "tone.wav",
+    "errorDetail": "",
+    "playlistPosition": 0,
+    "running": true,
+    "output": "atlas_selected",
+    "error": "",
+    "loaded": true,
+    "station": {
+      "countryCode": "",
+      "name": "",
+      "uuid": "",
+      "country": ""
+    },
+    "volume": 100
+  }
+}

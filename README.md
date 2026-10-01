@@ -122,6 +122,9 @@ stations or outputs, a stream failure, and Stop also cancel recovery. "System
 default" does not identify the actual output, so it requires manual resume after
 a device-loss pause.
 
+External media-control Stop shows "Stopped" in Radio Atlas and clears the bar's
+playing indicator. Play resumes the stopped station while keeping its queue.
+
 AirPlay speakers appear in this list once PipeWire exposes them as RAOP sinks.
 On Arch Linux, the RAOP modules ship in the optional `pipewire-zeroconf`
 package. Install it, enable discovery, and restart the user services:
