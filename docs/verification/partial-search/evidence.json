@@ -1,0 +1,123 @@
+{
+  "baselineCommit": "7f2d119cf6b9d351983b538e266f0637f3ccadec",
+  "cases": [
+    {
+      "query": "jazz",
+      "failedField": "tag",
+      "cachedUuids": [
+        "00000001-1234-1234-1234-123456789abc"
+      ],
+      "before": {
+        "exitCode": 0,
+        "stdout": "[]",
+        "stderr": "Station search failed for tag",
+        "runtimeUuids": [],
+        "ui": {
+          "displayedUuids": [],
+          "error": "",
+          "fetching": false
+        }
+      },
+      "after": {
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "Station search failed for tag\nStation service is unavailable",
+        "runtimeUuids": [
+          "00000001-1234-1234-1234-123456789abc"
+        ],
+        "ui": {
+          "displayedUuids": [
+            "00000001-1234-1234-1234-123456789abc"
+          ],
+          "error": "Showing cached stations · Radio Browser is unavailable",
+          "fetching": false
+        }
+      }
+    },
+    {
+      "query": "USA",
+      "failedField": "countrycode",
+      "cachedUuids": [
+        "00000001-1234-1234-1234-123456789abc",
+        "00000002-1234-1234-1234-123456789abc",
+        "00000003-1234-1234-1234-123456789abc"
+      ],
+      "before": {
+        "exitCode": 0,
+        "stdout": "[{\"uuid\":\"00000002-1234-1234-1234-123456789abc\",\"name\":\"USA Radio\",\"url\":\"https://example.com/stream-2\",\"homepage\":\"\",\"favicon\":\"\",\"country\":\"Germany\",\"countryCode\":\"DE\",\"state\":\"\",\"language\":\"\",\"tags\":\"ambient\",\"codec\":\"\",\"bitrate\":0,\"votes\":0,\"clicks\":0,\"latitude\":40,\"longitude\":-74},{\"uuid\":\"00000003-1234-1234-1234-123456789abc\",\"name\":\"Overseas\",\"url\":\"https://example.com/stream-3\",\"homepage\":\"\",\"favicon\":\"\",\"country\":\"Germany\",\"countryCode\":\"DE\",\"state\":\"\",\"language\":\"\",\"tags\":\"usa\",\"codec\":\"\",\"bitrate\":0,\"votes\":0,\"clicks\":0,\"latitude\":40,\"longitude\":-74}]",
+        "stderr": "Station search failed for countrycode",
+        "runtimeUuids": [
+          "00000002-1234-1234-1234-123456789abc",
+          "00000003-1234-1234-1234-123456789abc"
+        ],
+        "ui": {
+          "displayedUuids": [
+            "00000002-1234-1234-1234-123456789abc",
+            "00000003-1234-1234-1234-123456789abc"
+          ],
+          "error": "",
+          "fetching": false
+        }
+      },
+      "after": {
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "Station search failed for countrycode\nStation service is unavailable",
+        "runtimeUuids": [
+          "00000001-1234-1234-1234-123456789abc",
+          "00000002-1234-1234-1234-123456789abc",
+          "00000003-1234-1234-1234-123456789abc"
+        ],
+        "ui": {
+          "displayedUuids": [
+            "00000001-1234-1234-1234-123456789abc",
+            "00000002-1234-1234-1234-123456789abc",
+            "00000003-1234-1234-1234-123456789abc"
+          ],
+          "error": "Showing cached stations · Radio Browser is unavailable",
+          "fetching": false
+        }
+      }
+    },
+    {
+      "query": "jazz",
+      "failedField": "name",
+      "cachedUuids": [
+        "00000001-1234-1234-1234-123456789abc",
+        "00000002-1234-1234-1234-123456789abc"
+      ],
+      "before": {
+        "exitCode": 0,
+        "stdout": "[{\"uuid\":\"00000001-1234-1234-1234-123456789abc\",\"name\":\"Blue Note\",\"url\":\"https://example.com/stream-1\",\"homepage\":\"\",\"favicon\":\"\",\"country\":\"United States\",\"countryCode\":\"US\",\"state\":\"\",\"language\":\"\",\"tags\":\"jazz\",\"codec\":\"\",\"bitrate\":0,\"votes\":0,\"clicks\":0,\"latitude\":40,\"longitude\":-74}]",
+        "stderr": "Station search failed for name",
+        "runtimeUuids": [
+          "00000001-1234-1234-1234-123456789abc"
+        ],
+        "ui": {
+          "displayedUuids": [
+            "00000001-1234-1234-1234-123456789abc"
+          ],
+          "error": "",
+          "fetching": false
+        }
+      },
+      "after": {
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "Station search failed for name\nStation service is unavailable",
+        "runtimeUuids": [
+          "00000001-1234-1234-1234-123456789abc",
+          "00000002-1234-1234-1234-123456789abc"
+        ],
+        "ui": {
+          "displayedUuids": [
+            "00000001-1234-1234-1234-123456789abc",
+            "00000002-1234-1234-1234-123456789abc"
+          ],
+          "error": "Showing cached stations · Radio Browser is unavailable",
+          "fetching": false
+        }
+      }
+    }
+  ]
+}
