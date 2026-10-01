@@ -50,6 +50,12 @@ done
   exit 2
 }
 
+if [[ -n ${RADIO_ATLAS_TEST_SEARCH_FAIL_FIELD:-} \
+  && $search_field == "$RADIO_ATLAS_TEST_SEARCH_FAIL_FIELD" ]]; then
+  echo "Station search failed for $search_field" >&2
+  exit 7
+fi
+
 payload='[
   {"stationuuid":"bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb","name":"First","url_resolved":"https://example.com/first\n","countrycode":"US","geo_lat":40,"geo_long":-74},
   {"stationuuid":"aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa","name":"Second","url_resolved":"http://example.com/second","countrycode":"CA","geo_lat":43,"geo_long":-79},

@@ -353,24 +353,12 @@ PY
     --data-urlencode 'limit=80' > "$search_dir/tag.json" &
   local tag_pid=$!
 
-  local successful=0
-  if wait "$name_pid"; then
-    successful=$((successful + 1))
-  else
-    printf '[]' > "$search_dir/name.json"
-  fi
-  if wait "$country_pid"; then
-    successful=$((successful + 1))
-  else
-    printf '[]' > "$search_dir/country.json"
-  fi
-  if wait "$tag_pid"; then
-    successful=$((successful + 1))
-  else
-    printf '[]' > "$search_dir/tag.json"
-  fi
+  local failed=0 pid
+  for pid in "$name_pid" "$country_pid" "$tag_pid"; do
+    if ! wait "$pid"; then failed=1; fi
+  done
 
-  if (( successful == 0 )); then
+  if (( failed )); then
     rm -rf "$search_dir"
     echo 'Station service is unavailable' >&2
     return 1
