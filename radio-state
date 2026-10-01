@@ -64,8 +64,11 @@ ensure_runtime_data() {
 find_station() {
   local uuid=$1
   local source station
-  for source in "$runtime_dir/favorite-selection.json" "$runtime_dir/playlist.json" \
-    "$runtime_dir/results.json" "$runtime_dir/world.json"; do
+  local -a sources=("$runtime_dir/playlist.json" "$runtime_dir/results.json" "$runtime_dir/world.json")
+  if [[ $2 == favorite ]]; then
+    sources=("$runtime_dir/favorite-selection.json" "${sources[@]}")
+  fi
+  for source in "${sources[@]}"; do
     station=$(jq -c --arg uuid "$uuid" \
       'first(.[] | select(.uuid == $uuid)) // empty' "$source" 2>/dev/null || true)
     if [[ -n $station ]]; then
@@ -127,7 +130,7 @@ case "$action" in
     ensure_runtime_data
     uuid=${2:-}
     [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
-    station=$(find_station "$uuid")
+    station=$(find_station "$uuid" "$action")
     [[ -n $station ]] || { echo 'Station is not in the current data set' >&2; exit 3; }
     write_state '
       if any(.favorites[]?; .uuid == $station.uuid)
@@ -140,7 +143,7 @@ case "$action" in
     ensure_runtime_data
     uuid=${2:-}
     [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
-    station=$(find_station "$uuid")
+    station=$(find_station "$uuid" "$action")
     [[ -n $station ]] || { echo 'Station is not in the current data set' >&2; exit 3; }
     write_state '.recent = ([$station] + [.recent[] | select(.uuid != $station.uuid)])[:30]' "$station"
     ;;

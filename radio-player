@@ -396,19 +396,33 @@ valid_runtime_array() {
 
 refresh_saved_stations() {
   local source_file=$1
-  local uuids refreshed
-  uuids=$(jq -r 'map(.uuid) | join(",")' "$source_file")
-  [[ -n $uuids ]] || return 0
+  local batches uuids refreshed
+  batches=$(jq -r '
+    reduce .[].uuid as $uuid ([""];
+      if .[-1] == "" then .[-1] = $uuid
+      elif ((.[-1] | length) + ($uuid | length) + 1) <= 4096
+      then .[-1] += "," + $uuid
+      else . + [$uuid]
+      end)
+    | .[] | select(length > 0)
+  ' "$source_file")
+  [[ -n $batches ]] || return 0
 
   refreshed=$(mktemp "$runtime_dir/refreshed.XXXXXX")
-  if "$fetch_path" resolve "$uuids" > "$refreshed"; then
-    jq -c --slurpfile refreshed "$refreshed" '
-      ($refreshed[0] | INDEX(.uuid)) as $byUuid
-      | map($byUuid[.uuid] // .)
-    ' "$source_file" > "$source_file.next"
+  while IFS= read -r uuids; do
+    if ! "$fetch_path" resolve "$uuids" >> "$refreshed"; then
+      rm -f "$refreshed"
+      return 0
+    fi
+  done <<< "$batches"
+  jq -c --slurpfile refreshed "$refreshed" '
+    ($refreshed | add | INDEX(.uuid)) as $byUuid
+    | map($byUuid[.uuid] // .)
+  ' "$source_file" > "$source_file.next"
+  if valid_runtime_array "$source_file.next"; then
     mv "$source_file.next" "$source_file"
   fi
-  rm -f "$refreshed"
+  rm -f "$source_file.next" "$refreshed"
 }
 
 play_station() {

@@ -42,6 +42,7 @@ node "$project_dir/tests/keyboard.test.mjs"
 node "$project_dir/tests/player-layout.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
 python3 "$project_dir/tests/playback.test.py"
+python3 "$project_dir/tests/saved-stations.test.py"
 QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner \
   -platform offscreen -input "$project_dir/tests/qml"
 assert_no_match 'playerStatusProcess|refreshPlayerStatus' \
