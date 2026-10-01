@@ -22,6 +22,8 @@ for (const token of source.slice(opening).matchAll(tokens)) {
 }
 assert.ok(closing > opening, "Could not find the end of the production station list")
 const list = source.slice(declaration.index, closing)
+const outputScrim = source.match(/          MouseArea \{\n            visible: root.outputMenuOpen[\s\S]*?\n          \}/)?.[0]
+assert.ok(outputScrim, "Could not find the production output menu scrim")
 // Count requests at the production ListView boundary without replacing its behavior.
 const selectionFunctions = source.match(/  function (?:setSelection|moveSelection)\([\s\S]*?\n  \}/g).join("\n")
   .replace("stationList.positionViewAtIndex(", "viewPositionRequests++\n    stationList.positionViewAtIndex(")
@@ -89,8 +91,10 @@ TestCase {
   Item { id: playerPanel; y: 192; height: 64 }
   ${selectionFunctions}
   ${list}
+  ${outputScrim}
 
   function init() {
+    outputMenuOpen = false
     mouseMove(root, 300, 230)
     displayStations = Array.from({ length: 20 }, function(_, i) {
       return { uuid: "row-" + i, name: "Station " + (i + 1) }
@@ -124,6 +128,23 @@ TestCase {
     compare(selectedStation.uuid, "row-6")
     compare(keyboardSelectionVisible, true)
     verify(stationList.contentY > 0, "Exercise rows moving under the stationary pointer")
+  }
+
+  function test_outputMenuBlocksPointerSelection() {
+    keyClick(Qt.Key_Down)
+    compare(selectedIndex, 1)
+    outputMenuOpen = true
+    mouseMove(stationList, 50, 30)
+    mouseMove(stationList, 50, 158)
+    compare(selectedIndex, 1, "Opening the output menu must block station selection behind its scrim")
+    compare(keyboardSelectionVisible, true)
+
+    mouseClick(root, 300, 230)
+    compare(outputMenuOpen, false)
+    mouseMove(stationList, 50, 158)
+    tryCompare(root, "selectedIndex", 2)
+    compare(keyboardSelectionVisible, false)
+    compare(plays, 0)
   }
 
   function test_pointerMovementWithinSelectedRowDoesNotReposition() {

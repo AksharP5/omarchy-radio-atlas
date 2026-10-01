@@ -1624,6 +1624,7 @@ Item {
 
             HoverHandler {
               parent: stationList
+              enabled: stationList.interactive
               property point lastPosition: Qt.point(-1, -1)
               onHoveredChanged: if (!hovered) lastPosition = Qt.point(-1, -1)
               onPointChanged: {
