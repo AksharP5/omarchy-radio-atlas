@@ -97,7 +97,7 @@ class AudioOutputTest(unittest.TestCase):
             command.insert(-1, "--audio-client-name=Radio Atlas")
             command = [sys.executable, str(PROJECT / "radio-mpris"),
                        str(self.root / "mpv.sock"), "--", *command]
-        self.start(*command)
+        self.player = self.start(*command)
         self.wait(lambda: (self.root / "mpv.sock").exists())
         self.wait(lambda: (self.property("time-pos") or 0) > 0.3)
         if not LEGACY_PLAYER:
@@ -336,6 +336,33 @@ class AudioOutputTest(unittest.TestCase):
             self.assertEqual(self.property("playlist-pos"), position)
             self.assert_playing_on_selected(f"MPRIS paused then Stop then {action}")
 
+    def test_mpris_volume_is_saved_for_the_next_player_session(self):
+        if LEGACY_PLAYER:
+            self.skipTest("volume persistence belongs to the Radio Atlas MPRIS bridge")
+        self.call(str(PROJECT / "radio-state"), "volume", "40")
+        self.ipc("set_property", "volume", 40)
+        self.call("gdbus", "call", "--session", "--dest", self.mpris_name(),
+                  "--object-path", "/org/mpris/MediaPlayer2",
+                  "--method", "org.freedesktop.DBus.Properties.Set",
+                  "org.mpris.MediaPlayer2.Player", "Volume", "<0.2>")
+        self.assertEqual(self.property("volume"), 20)
+        state_file = self.root / "data/radio-atlas/state.json"
+        saved = json.loads(state_file.read_text())
+        self.snapshot("MPRIS volume changed", volume=self.property("volume"),
+                      saved_volume=saved["volume"])
+        command = list(self.player.args)
+        self.ipc("quit")
+        self.player.wait(timeout=5)
+        (self.root / "mpv.sock").unlink(missing_ok=True)
+        command.insert(-1, f"--volume={saved['volume']}")
+        self.player = self.start(*command)
+        self.wait(lambda: self.property("user-data/radio-atlas-mpris-ready"))
+        self.wait(lambda: (self.property("time-pos") or 0) > 0.1)
+        self.snapshot("player restarted", volume=self.property("volume"),
+                      saved_volume=json.loads(state_file.read_text())["volume"])
+        self.assertEqual(saved["volume"], 20)
+        self.assertEqual(self.property("volume"), 20)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
@@ -345,7 +372,7 @@ if __name__ == "__main__":
     parser.add_argument("--require-dependencies", action="store_true")
     parser.add_argument("--scenario", choices=("all", "reconnect", "mpris-pause", "ui-pause", "ui-cancel",
                                               "repeated-pause", "pause-before-removal", "rapid-reconnect",
-                                              "media-controls"),
+                                              "media-controls", "volume"),
                         default="all")
     options = parser.parse_args()
     SCRIPT = options.script.resolve()
@@ -363,7 +390,8 @@ if __name__ == "__main__":
                  "repeated-pause": "test_mpris_pause_cancels_recovery_while_already_paused",
                  "pause-before-removal": "test_manual_pause_immediately_before_removal_is_preserved",
                  "rapid-reconnect": "test_rapid_output_changes_recover",
-                 "media-controls": "test_mpris_play_controls_restart_stopped_station"}
+                 "media-controls": "test_mpris_play_controls_restart_stopped_station",
+                 "volume": "test_mpris_volume_is_saved_for_the_next_player_session"}
     suite = (unittest.defaultTestLoader.loadTestsFromTestCase(AudioOutputTest)
              if options.scenario == "all" else unittest.TestSuite([AudioOutputTest(scenarios[options.scenario])]))
     result = unittest.TextTestRunner(verbosity=2).run(suite)

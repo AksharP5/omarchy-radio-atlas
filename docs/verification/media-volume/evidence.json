@@ -1,0 +1,54 @@
+{
+  "baseline_commit": "311dbda74b2d698be31bfad31aeb0cb091473ed7",
+  "setup": "Private D-Bus and PipeWire, synthetic audio output, locally generated tone",
+  "initial_volume": 40,
+  "requested_mpris_volume": 0.2,
+  "before": [
+    {
+      "event": "MPRIS volume changed",
+      "paused": false,
+      "time": 0.366409,
+      "output": "pipewire/atlas_selected",
+      "devices": [
+        "pipewire/atlas_selected"
+      ],
+      "volume": 20.0,
+      "saved_volume": 40
+    },
+    {
+      "event": "player restarted",
+      "paused": false,
+      "time": 0.126875,
+      "output": "pipewire/atlas_selected",
+      "devices": [
+        "pipewire/atlas_selected"
+      ],
+      "volume": 40.0,
+      "saved_volume": 40
+    }
+  ],
+  "after": [
+    {
+      "event": "MPRIS volume changed",
+      "paused": false,
+      "time": 0.391832,
+      "output": "pipewire/atlas_selected",
+      "devices": [
+        "pipewire/atlas_selected"
+      ],
+      "volume": 20.0,
+      "saved_volume": 20
+    },
+    {
+      "event": "player restarted",
+      "paused": false,
+      "time": 0.111879,
+      "output": "pipewire/atlas_selected",
+      "devices": [
+        "pipewire/atlas_selected"
+      ],
+      "volume": 20.0,
+      "saved_volume": 20
+    }
+  ]
+}

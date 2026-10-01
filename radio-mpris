@@ -319,6 +319,18 @@ class Mpris(dbus.service.Object):
             if not 0 <= volume <= 1:
                 raise dbus.exceptions.DBusException("Volume must be between 0 and 1", name="org.freedesktop.DBus.Error.InvalidArgs")
             self.controls.ipc.command("set_property", "volume", volume * 100)
+            try:
+                saved = subprocess.run(
+                    ["timeout", "--kill-after=1", "5", str(Path(__file__).resolve().with_name("radio-state")),
+                     "volume", str(int(volume * 100 + 0.5))],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            except OSError as error:
+                raise dbus.exceptions.DBusException(
+                    f"Could not save radio volume: {error}", name="org.freedesktop.DBus.Error.Failed") from error
+            if saved.returncode != 0:
+                raise dbus.exceptions.DBusException(
+                    saved.stderr.strip() or "Could not save radio volume",
+                    name="org.freedesktop.DBus.Error.Failed")
             return
         raise dbus.exceptions.DBusException("Property is read-only", name="org.freedesktop.DBus.Error.PropertyReadOnly")
 

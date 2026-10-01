@@ -1,8 +1,11 @@
 """Protect source-aware output recovery at the media-control boundary."""
 import importlib.machinery
 import importlib.util
+import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -207,6 +210,16 @@ class RecoveryTest(unittest.TestCase):
 
 
 class PropertiesTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="atlas-mpris-properties-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        patcher = patch.dict(os.environ, XDG_RUNTIME_DIR=str(self.root / "runtime"),
+                             XDG_DATA_HOME=str(self.root / "data"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.state_file = self.root / "data/radio-atlas/state.json"
+
     def test_policy_sender_uses_executable_identity_even_after_an_upgrade(self):
         server = mpris.Mpris.__new__(mpris.Mpris)
         class Daemon:
@@ -242,11 +255,33 @@ class PropertiesTest(unittest.TestCase):
         self.assertEqual(server.Get(mpris.PLAYER, "PlaybackStatus"), "Paused")
         server.Set(mpris.PLAYER, "Volume", mpris.dbus.Double(0.3))
         self.assertEqual(ipc.properties["volume"], 30)
+        self.assertEqual(json.loads(self.state_file.read_text())["volume"], 30)
         ipc.properties["idle-active"] = True
         self.assertEqual(server.Get(mpris.PLAYER, "PlaybackStatus"), "Stopped")
         self.assertEqual(server.Get(mpris.PLAYER, "Metadata"), {})
         with self.assertRaises(mpris.dbus.DBusException):
             server.OpenUri("http://127.0.0.1/private")
+
+    def test_volume_does_not_overwrite_invalid_state_or_hide_save_failure(self):
+        self.state_file.parent.mkdir(parents=True)
+        original = '{"favorites":"invalid","recent":[],"volume":40}\n'
+        self.state_file.write_text(original)
+        server = mpris.Mpris.__new__(mpris.Mpris)
+        server.controls = mpris.Controls(MPV(), lambda: None, lambda: None)
+        with self.assertRaisesRegex(mpris.dbus.DBusException, "saved state is invalid"):
+            server.Set(mpris.PLAYER, "Volume", mpris.dbus.Double(0.2))
+        self.assertEqual(self.state_file.read_text(), original)
+
+    def test_rejected_mpv_volume_does_not_change_saved_volume(self):
+        self.state_file.parent.mkdir(parents=True)
+        original = '{"favorites":[],"recent":[],"volume":40}\n'
+        self.state_file.write_text(original)
+        server = mpris.Mpris.__new__(mpris.Mpris)
+        server.controls = mpris.Controls(MPV(), lambda: None, lambda: None)
+        with patch.object(server.controls.ipc, "command", side_effect=mpris.MPVError("rejected")):
+            with self.assertRaises(mpris.MPVError):
+                server.Set(mpris.PLAYER, "Volume", mpris.dbus.Double(0.2))
+        self.assertEqual(self.state_file.read_text(), original)
 
 
 if __name__ == "__main__":
