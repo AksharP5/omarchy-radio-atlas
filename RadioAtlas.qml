@@ -1622,10 +1622,30 @@ Item {
 
             QQC.ScrollBar.vertical: QQC.ScrollBar {}
 
+            HoverHandler {
+              parent: stationList
+              property point lastPosition: Qt.point(-1, -1)
+              onHoveredChanged: if (!hovered) lastPosition = Qt.point(-1, -1)
+              onPointChanged: {
+                // Scrolling changes local hover coordinates without moving the pointer.
+                var position = point.scenePosition
+                if (!hovered || (position.x === lastPosition.x
+                    && position.y === lastPosition.y)) return
+                lastPosition = position
+                position = stationList.mapFromItem(null, position.x, position.y)
+                var row = stationList.itemAt(position.x + stationList.contentX,
+                  position.y + stationList.contentY)
+                if (stationList.interactive && row && position.x < row.selectionWidth
+                    && (row.index !== root.selectedIndex || root.keyboardSelectionVisible))
+                  root.setSelection(row.index)
+              }
+            }
+
             delegate: Rectangle {
               id: stationRow
               required property var modelData
               required property int index
+              readonly property real selectionWidth: rowMouse.width
 
               width: stationList.width
               height: Style.space(64)
@@ -1717,7 +1737,6 @@ Item {
                 anchors.bottom: parent.bottom
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onEntered: root.setSelection(stationRow.index)
                 onClicked: {
                   root.setSelection(stationRow.index)
                   root.playSelected()
