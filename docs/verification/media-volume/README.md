@@ -21,11 +21,11 @@ The native check covers live volume, saved state, and startup through
 local tone, keeping the real session, sandbox, MPRIS bridge, and startup flags.
 
 A second native check holds the saved-state lock, verifies Pause still responds
-within half a second, and overlaps MPRIS and UI volume changes. Both live volume
-and saved volume end at the UI's 40%. The bridge processes its own requests in
-order and uses the existing CLI lock to coordinate with the UI.
+within half a second, and submits MPRIS 20%, MPRIS 30%, then UI 40% before releasing the lock. Both live volume and saved volume end at the UI's 40%. Every media request
+submits immediately to the same CLI lock as UI requests, which serializes each
+live update and save together.
 
 Focused MPRIS tests cover integer rounding, numeric validation, preservation of
 other state fields, and save errors. The existing CLI checks cover rejected mpv
-updates. Stopping the bridge during a blocked request also terminated its worker
-without changing saved state.
+updates. Stopping the bridge with two blocked media requests also terminated both
+workers without changing saved state.

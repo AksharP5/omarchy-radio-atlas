@@ -1,7 +1,6 @@
 """Protect source-aware output recovery at the media-control boundary."""
 import importlib.machinery
 import importlib.util
-from collections import deque
 import json
 import os
 from pathlib import Path
@@ -223,8 +222,7 @@ class PropertiesTest(unittest.TestCase):
         self.state_file = self.root / "data/radio-atlas/state.json"
 
     def set_property(self, server, name, value):
-        server.volume_requests = deque()
-        server.volume_process = None
+        server.volume_processes = set()
         replies, errors = [], []
         server.Set(mpris.PLAYER, name, value, lambda: replies.append(True), errors.append)
         deadline = time.monotonic() + 7

@@ -409,23 +409,35 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
                 self.wait(waiting_for_state)
             started = time.monotonic()
             self.mpris_action("Pause")
-            self.assertLess(time.monotonic() - started, 0.5)
+            pause_latency = time.monotonic() - started
+            self.assertLess(pause_latency, 0.5)
             self.assertTrue(self.property("pause"))
             self.assertIsNone(pending.poll())
+            second = subprocess.Popen([*command[:-1], "<0.3>"], env=self.env,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.processes.append(second)
+            self.addCleanup(second.stdout.close)
+            self.addCleanup(second.stderr.close)
+            # Both media requests must reach the shared lock before the UI request.
+            lock_stat = (self.runtime / "player.lock").stat()
+            lock_identity = f"{os.major(lock_stat.st_dev):02x}:{os.minor(lock_stat.st_dev):02x}:{lock_stat.st_ino}"
+            self.wait(lambda: sum(f" {lock_identity} " in line
+                                 for line in Path("/proc/locks").read_text().splitlines()) >= 2)
             ui = subprocess.Popen([str(PROJECT / "radio-player"), "volume", "40"],
                                   env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self.processes.append(ui)
             self.addCleanup(ui.stdout.close)
             self.addCleanup(ui.stderr.close)
             fcntl.flock(lock, fcntl.LOCK_UN)
-        for process in (pending, ui):
+        for process in (pending, second, ui):
             _, error = process.communicate(timeout=5)
             self.assertEqual(process.returncode, 0, error)
         self.assertEqual(self.property("volume"), 40)
         saved = json.loads((self.root / "data/radio-atlas/state.json").read_text())["volume"]
         self.assertEqual(saved, 40)
         self.snapshot("overlapping media and UI controls", volume=self.property("volume"),
-                      saved_volume=saved)
+                      saved_volume=saved, pause_latency_seconds=round(pause_latency, 3),
+                      requested_volumes=[20, 30, 40])
 
 
 if __name__ == "__main__":
