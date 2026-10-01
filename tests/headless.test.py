@@ -16,7 +16,8 @@ def stop_on_termination(signum, frame):
     raise SystemExit(128 + signum)
 
 
-signal.signal(signal.SIGTERM, stop_on_termination)
+for stop_signal in (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT):
+    signal.signal(stop_signal, stop_on_termination)
 
 
 def stop_process_group(process):
@@ -71,13 +72,13 @@ exit 1
                    'QT_NO_XDG_DESKTOP_PORTAL': '0'}
     bus = ['dbus-run-session', '--config-file', str(config), '--']
 
-    def run_on_bus(command, *, capture_output=False):
+    def run_on_bus(command, *, timeout, capture_output=False):
         process = subprocess.Popen(bus + command, cwd=project, env=environment,
                                    start_new_session=True, text=True,
                                    stdout=subprocess.PIPE if capture_output else None,
                                    stderr=subprocess.PIPE if capture_output else None)
         try:
-            stdout, stderr = process.communicate()
+            stdout, stderr = process.communicate(timeout=timeout)
             return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
         finally:
             stop_process_group(process)
@@ -86,13 +87,13 @@ exit 1
     control = run_on_bus(['dbus-send', '--session', '--print-reply',
                              '--dest=org.freedesktop.portal.Desktop',
                              '/org/freedesktop/portal/desktop', 'org.freedesktop.DBus.Peer.Ping'],
-                             capture_output=True)
+                             capture_output=True, timeout=10)
     if not marker.exists() or marker.read_text().splitlines() != ['portal requested']:
         raise RuntimeError(f'Fake portal activation detector failed:\n{control.stderr}')
     marker.unlink()
 
     command = sys.argv[1:] or ['./tests/run']
-    result = run_on_bus(command)
+    result = run_on_bus(command, timeout=240)
     if result.returncode != 0:
         raise RuntimeError(f'Headless tests exited with {result.returncode}')
     requests = marker.read_text().splitlines() if marker.exists() else []
