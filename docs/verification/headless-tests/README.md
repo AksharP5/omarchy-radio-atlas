@@ -46,7 +46,10 @@ CI runs this checker too. Real desktop service directories are excluded.
 The checker also rejected the unmodified keyboard test from the base commit,
 reporting two activation attempts even though its QML assertions passed.
 
-Timeout and interruption checks left no test command, child process, private
-bus process, or socket behind, including with a child that ignored SIGTERM.
+Terminal SIGINT, SIGTERM, and external-timeout checks left no test command,
+detached child, private bus process, or socket behind. Native cleanup handlers
+finished. The checker keeps the suite in the foreground and relies on CI's
+existing job timeout. Its socket lives in an owned short directory under `/tmp`,
+so a long caller `TMPDIR` does not exceed the Unix socket-path limit.
 The checker also rejected a failed command and the unmodified keyboard test
 with Python optimization enabled; the fixed keyboard test still passed.
