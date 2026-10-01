@@ -3,7 +3,6 @@
 
 from collections import deque
 from dataclasses import dataclass
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -259,58 +258,38 @@ class Controls:
 
 
 class VolumeWriter:
-    """Coalesce media volume changes under the same lock as UI changes."""
+    """Keep one active CLI write and only the latest pending media level."""
 
     def __init__(self):
         self.pending = None
         self.process = None
-        self.lock = None
-        self.retry = None
 
     def set(self, volume, reply, error):
         callbacks = self.pending[1] if self.pending else []
         callbacks.append((reply, error))
         self.pending = (volume, callbacks)
-        if self.process is None and self.retry is None and self.flush():
-            self.retry = GLib.timeout_add(10, self.flush)
+        if self.process is None:
+            self.flush()
 
     def flush(self):
         if self.pending is None:
-            if self.lock is not None:
-                os.close(self.lock)
-                self.lock = None
-            self.retry = None
-            return False
+            return
         callbacks = self.pending[1]
         try:
-            if self.lock is None:
-                runtime = Path(os.environ["XDG_RUNTIME_DIR"]) / "omarchy-radio-atlas"
-                runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
-                self.lock = os.open(runtime / "player.lock", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
-                try:
-                    fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    os.close(self.lock)
-                    self.lock = None
-                    return True
-            launcher = Gio.SubprocessLauncher.new(
-                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
-            launcher.take_fd(os.dup(self.lock), 8)
             # A zero deadline retains TERM forwarding without timing out lock waits.
-            self.process = launcher.spawnv([
+            self.process = Gio.Subprocess.new([
                 "setpriv", "--pdeathsig", "TERM", "timeout", "--kill-after=1", "0",
                 str(Path(__file__).resolve().with_name("radio-player")),
-                "volume", str(self.pending[0]), "--locked"])
-        except (OSError, GLib.Error) as failure:
+                "volume", str(self.pending[0])],
+                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
+        except GLib.Error as failure:
             self.pending = None
             for _, error in callbacks:
                 error(dbus.exceptions.DBusException(str(failure), name="org.freedesktop.DBus.Error.Failed"))
-            return self.flush()
+            return
         self.pending = None
-        self.retry = None
         self.process.communicate_utf8_async(None, None,
             lambda process, result: self.finished(process, result, callbacks))
-        return False
 
     def finished(self, process, result, callbacks):
         if process is not self.process:
@@ -331,13 +310,9 @@ class VolumeWriter:
         self.flush()
 
     def close(self):
-        if self.retry is not None:
-            GLib.source_remove(self.retry)
         if self.process is not None:
             self.process.send_signal(signal.SIGTERM)
-        if self.lock is not None:
-            os.close(self.lock)
-        self.process = self.lock = self.retry = self.pending = None
+        self.process = self.pending = None
 
 
 class Mpris(dbus.service.Object):

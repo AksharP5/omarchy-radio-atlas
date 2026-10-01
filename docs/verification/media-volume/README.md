@@ -22,19 +22,23 @@ local tone, keeping the real session, sandbox, MPRIS bridge, and startup flags.
 
 A second native check holds the saved-state lock, verifies Pause still responds
 within half a second, and submits MPRIS 20%, MPRIS 30%, then UI 40% before
-releasing the lock. Both live volume and saved volume end at the UI's 40%.
-The bridge keeps one active worker and the latest pending media level. It holds
-the shared player lock across that burst, so UI writes cannot interleave with
-the live updates and saves. Writers follow lock ownership, rather than global
-request-arrival order.
+releasing the lock. Live and saved volume agree after all requests finish.
+The bridge keeps one active worker and the latest pending media level. Each CLI
+write holds the shared player lock for its live update and save, then releases
+it so UI changes can get a turn. MPRIS changes preserve their order. Overlapping
+requests from different controls follow lock ownership, so the final level can
+be 30% or 40%; the earlier MPRIS 20% cannot win.
 
-The focused command above runs all four volume checks. The third sends consecutive
+The focused command above runs all five volume checks. The third sends consecutive
 20% and 80% requests, then 200 changes at 60 requests per second while holding the
 state lock for 5.5 seconds. All requests succeed, and live and saved volume end at
 the last requested 99%. The fourth stops the bridge with one active and one
 pending volume change. Both requests fail, the shared lock is released, and the
-original saved 40% remains intact.
+original saved 40% remains intact. The fifth submits a UI change during a
+continuous 200-request media burst. The UI change finishes within half a second
+while media input continues, and the later media requests finish at 99% in both
+playback and saved state.
 
 Focused MPRIS tests cover integer rounding, numeric validation, preservation of
 other state fields, save errors, and coalescing while a UI writer owns the lock.
-The CLI checks cover rejected mpv updates and missing inherited locks.
+The existing CLI checks cover rejected mpv updates.

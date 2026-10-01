@@ -434,10 +434,11 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
             time.sleep(0.001)
         self.assertEqual(second_errors, [])
         self.assertEqual(second_replies, [True])
-        self.assertEqual(self.property("volume"), 40)
+        final_volume = self.property("volume")
+        self.assertIn(final_volume, [30, 40])
         saved = json.loads((self.root / "data/radio-atlas/state.json").read_text())["volume"]
-        self.assertEqual(saved, 40)
-        self.snapshot("overlapping media and UI controls", volume=self.property("volume"),
+        self.assertEqual(saved, final_volume)
+        self.snapshot("overlapping media and UI controls", volume=final_volume,
                       saved_volume=saved, pause_latency_seconds=round(pause_latency, 3),
                       requested_volumes=[20, 30, 40])
 
@@ -537,6 +538,48 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
         (self.root / "shutdown.json").write_text(json.dumps(result) + "\n")
         print(json.dumps(result), flush=True)
 
+    def test_ui_volume_can_finish_during_an_ongoing_media_burst(self):
+        if LEGACY_PLAYER:
+            self.skipTest("volume workers belong to the Radio Atlas MPRIS bridge")
+        properties, context = self.media_properties()
+        replies, errors = [], []
+        ui = None
+        ui_latency = None
+        started = time.monotonic()
+        for index in range(200):
+            properties.Set("org.mpris.MediaPlayer2.Player", "Volume", (index % 100) / 100,
+                           reply_handler=lambda: replies.append(True), error_handler=errors.append,
+                           timeout=10)
+            if index == 30:
+                ui_started = time.monotonic()
+                ui = subprocess.Popen([str(PROJECT / "radio-player"), "volume", "40"],
+                                      env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.processes.append(ui)
+                self.addCleanup(ui.stdout.close)
+                self.addCleanup(ui.stderr.close)
+            if ui is not None and ui.poll() is not None and ui_latency is None:
+                ui_latency = time.monotonic() - ui_started
+            deadline = started + (index + 1) / 60
+            while time.monotonic() < deadline:
+                context.iteration(False)
+                time.sleep(0.001)
+        output, error = ui.communicate(timeout=5)
+        self.assertEqual(ui.returncode, 0, error)
+        self.assertEqual(json.loads(output)["volume"], 40)
+        self.assertIsNotNone(ui_latency, "UI volume waited for the entire media burst")
+        self.assertLess(ui_latency, 0.5)
+        deadline = time.monotonic() + 5
+        while len(replies) + len(errors) < 200 and time.monotonic() < deadline:
+            context.iteration(False)
+            time.sleep(0.001)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(replies), 200)
+        saved = json.loads((self.root / "data/radio-atlas/state.json").read_text())["volume"]
+        self.assertEqual(self.property("volume"), 99)
+        self.assertEqual(saved, 99)
+        self.snapshot("UI volume during ongoing media changes", requests=200, requests_per_second=60,
+                      ui_latency_seconds=round(ui_latency, 3), volume=self.property("volume"), saved_volume=saved)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
@@ -572,7 +615,8 @@ if __name__ == "__main__":
             "test_mpris_volume_is_saved_for_the_next_player_session",
             "test_pending_mpris_volume_keeps_controls_responsive_and_serializes_with_ui",
             "test_rapid_media_volume_changes_survive_a_slow_state_lock",
-            "test_stopping_bridge_cancels_blocked_volume_changes"])
+            "test_stopping_bridge_cancels_blocked_volume_changes",
+            "test_ui_volume_can_finish_during_an_ongoing_media_burst"])
     else:
         suite = unittest.TestSuite([AudioOutputTest(scenarios[options.scenario])])
     result = unittest.TextTestRunner(verbosity=2).run(suite)

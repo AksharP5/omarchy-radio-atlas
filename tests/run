@@ -623,11 +623,6 @@ done
 "$project_dir/radio-player" volume-down \
   | jq -e '.running == false and .volume == 81' >/dev/null
 jq -e '.volume == 81' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
-if "$project_dir/radio-player" volume 50 --locked 8<&- >/dev/null 2>&1; then
-  echo 'Media volume accepted a missing inherited player lock' >&2
-  exit 1
-fi
-jq -e '.volume == 81' "$XDG_DATA_HOME/radio-atlas/state.json" >/dev/null
 
 if RADIO_ATLAS_TEST_PACTL_MODE=json PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" outputs > "$test_root/outputs.json"; then
