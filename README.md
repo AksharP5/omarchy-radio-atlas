@@ -74,7 +74,8 @@ Favorites, listening history, volume, and the selected audio output remain in
 
 On the bar, left click opens Radio Atlas, middle click tunes randomly, right
 click stops its player or resumes the most recently played station when stopped,
-and the mouse wheel adjusts radio volume. If there is no listening history,
+and the mouse wheel adjusts radio volume. Volume changes through system media
+controls are saved for the next player session too. If there is no listening history,
 right click does nothing.
 
 Search accepts country names, two-letter country codes, and aliases such as
