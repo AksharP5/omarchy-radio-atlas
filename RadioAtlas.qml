@@ -1535,7 +1535,7 @@ Item {
               height: Style.space(34)
               iconText: "\uf067"
               tooltipText: "Zoom in"
-              focusable: false
+              focusable: true
               foreground: globe.canZoomIn ? root.foreground : root.dim
               accent: root.accent
               opacity: globe.canZoomIn ? 1.0 : 0.4
@@ -1571,7 +1571,7 @@ Item {
               anchors.bottom: parent.bottom
               iconText: "\uf068"
               tooltipText: "Zoom out"
-              focusable: false
+              focusable: true
               foreground: globe.canZoomOut ? root.foreground : root.dim
               accent: root.accent
               opacity: globe.canZoomOut ? 1.0 : 0.4

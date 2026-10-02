@@ -164,8 +164,8 @@ Item {
     var currentTarget = zoomAnimation.running ? zoomAnimation.to : globeScale
     var targetScale = RadioModel.clamp(
       currentTarget * factor, minimumScale, maximumScale)
-    if (Math.abs(targetScale - globeScale) < 0.001) return
     zoomAnimation.stop()
+    if (Math.abs(targetScale - globeScale) < 0.001) return
     zoomAnimation.from = globeScale
     zoomAnimation.to = targetScale
     zoomAnimation.start()
