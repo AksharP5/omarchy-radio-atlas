@@ -1527,6 +1527,12 @@ Item {
             Accessible.role: Accessible.Pane
             Accessible.name: "Zoom controls"
 
+            // Keep disabled controls from passing clicks to stations underneath.
+            MouseArea {
+              anchors.fill: parent
+              acceptedButtons: Qt.LeftButton
+            }
+
             Button {
               id: zoomInButton
               anchors.top: parent.top
@@ -1548,6 +1554,7 @@ Item {
               verticalPadding: 0
               Accessible.role: Accessible.Button
               Accessible.name: "Zoom in"
+              Accessible.onPressAction: if (enabled) clicked()
               onClicked: {
                 globe.zoomIn()
                 keyCatcher.forceActiveFocus()
@@ -1584,6 +1591,7 @@ Item {
               verticalPadding: 0
               Accessible.role: Accessible.Button
               Accessible.name: "Zoom out"
+              Accessible.onPressAction: if (enabled) clicked()
               onClicked: {
                 globe.zoomOut()
                 keyCatcher.forceActiveFocus()

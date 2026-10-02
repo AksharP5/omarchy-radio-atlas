@@ -651,6 +651,7 @@ Item {
       root.interactionStarted()
       var caughtKineticRotation = kineticAnimation.running
       root.stopKineticRotation(true)
+      root.stopZoomAnimation()
       root.suppressNextTap = caughtKineticRotation
       root.hoveredStation = null
     }

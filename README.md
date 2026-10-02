@@ -205,7 +205,7 @@ removing it.
 
 The native QML tests require Qt 6.5 or newer for the globe's drag-event API.
 CI runs them on Ubuntu 26.04 with Qt 6.10.
-Player layout tests use the real Omarchy UI components from
+Player layout and zoom control tests use the real Omarchy UI components from
 `/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkout's `shell`
 directory to test another version. CI uses a pinned checkout and disables shell
 processes and theme-file access during these tests.

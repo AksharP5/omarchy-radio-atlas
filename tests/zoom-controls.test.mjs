@@ -25,6 +25,7 @@ import QtQuick
 import QtTest
 import qs.Ui
 import qs.Commons
+import "RadioModel.js" as RadioModel
 
 TestCase {
   id: root
@@ -54,10 +55,16 @@ TestCase {
 
   ${controls}
 
+  SignalSpy { id: stationActivation; target: globe; signalName: "stationActivated" }
+
   function init() {
     globe.stopZoomAnimation()
     globe.stopKineticRotation(true)
     globe.globeScale = 1
+    globe.centreLatitude = 0
+    globe.centreLongitude = 0
+    globe.stations = []
+    stationActivation.clear()
     keyCatcher.forceActiveFocus()
     waitForRendering(globe)
   }
@@ -85,6 +92,7 @@ TestCase {
     tryCompare(globe, "globeScale", 1.5)
     mouseClick(zoomOutButton)
     tryCompare(globe, "globeScale", 1)
+    globe.stopZoomAnimation()
     globe.globeScale = globe.maximumScale
     verify(!zoomInButton.enabled)
     mouseClick(zoomInButton)
@@ -93,6 +101,39 @@ TestCase {
     verify(!zoomOutButton.enabled)
     mouseClick(zoomOutButton)
     compare(globe.globeScale, globe.minimumScale)
+  }
+
+  function test_accessibleActivation() {
+    zoomInButton.Accessible.pressAction()
+    tryCompare(globe, "globeScale", 1.5)
+    zoomOutButton.Accessible.pressAction()
+    tryCompare(globe, "globeScale", 1)
+    globe.stopZoomAnimation()
+    globe.globeScale = globe.maximumScale
+    zoomInButton.Accessible.pressAction()
+    wait(250)
+    compare(globe.globeScale, globe.maximumScale)
+    globe.globeScale = globe.minimumScale
+    zoomOutButton.Accessible.pressAction()
+    wait(250)
+    compare(globe.globeScale, globe.minimumScale)
+  }
+
+  function test_disabledButtonBlocksStationClicks() {
+    globe.globeScale = globe.maximumScale
+    var point = zoomInButton.mapToItem(globe, zoomInButton.width / 2, zoomInButton.height / 2)
+    var coordinate = RadioModel.unproject(
+      (point.x - globe.width / 2) / globe.radius(),
+      (globe.height / 2 - point.y) / globe.radius(),
+      globe.centreLatitude, globe.centreLongitude)
+    verify(coordinate)
+    globe.stations = [{ uuid: "under-button", latitude: coordinate.latitude, longitude: coordinate.longitude }]
+    waitForRendering(globe)
+    verify(globe.stationUnderPointer(point.x, point.y) !== null)
+    verify(!zoomInButton.enabled)
+    mouseClick(zoomInButton)
+    compare(stationActivation.count, 0, "A disabled zoom button must not play a station underneath it")
+    compare(globe.globeScale, globe.maximumScale)
   }
 
   function test_rapidCommands_data() {
@@ -122,7 +163,10 @@ TestCase {
   }
 }
 `)
-  const result = spawnSync("/usr/lib/qt6/bin/qmltestrunner",
+  const runner = process.env.QMLTESTRUNNER
+    || (fs.existsSync("/usr/lib/qt6/bin/qmltestrunner")
+      ? "/usr/lib/qt6/bin/qmltestrunner" : "qmltestrunner")
+  const result = spawnSync(runner,
     ["-platform", "offscreen", "-import", directory, "-input", directory], {
       env: { ...process.env, QT_QUICK_BACKEND: "software",
         QT_NO_XDG_DESKTOP_PORTAL: "1", QT_QPA_PLATFORMTHEME: "" },
