@@ -41,6 +41,7 @@ node "$project_dir/tests/selection.test.mjs"
 node "$project_dir/tests/keyboard.test.mjs"
 node "$project_dir/tests/pointer-selection.test.mjs"
 node "$project_dir/tests/player-layout.test.mjs"
+node "$project_dir/tests/zoom-controls.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
 python3 "$project_dir/tests/playback.test.py"
 python3 "$project_dir/tests/saved-stations.test.py"
@@ -125,6 +126,13 @@ sed -n '/id: mapHint/,/^          }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'anchors.right: signalCount.left'
 sed -n '/id: mapHint/,/^          }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'elide: Text.ElideRight'
+rg -q 'id: zoomControls' "$project_dir/RadioAtlas.qml"
+rg -q 'id: zoomInButton' "$project_dir/RadioAtlas.qml"
+rg -q 'id: zoomOutButton' "$project_dir/RadioAtlas.qml"
+sed -n '/id: zoomControls/,/^          }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'anchors.right: parent.right'
+sed -n '/id: zoomControls/,/^          }/p' "$project_dir/RadioAtlas.qml" \
+  | rg -Fq 'anchors.bottom: signalCount.top'
 rg -q 'rowMouse.containsMouse' "$project_dir/RadioAtlas.qml"
 assert_no_match 'selectedIndex === index.*Style.selectedFillFor' "$project_dir/RadioAtlas.qml"
 assert_no_match 'send_command .*\|\| true' "$project_dir/radio-player"

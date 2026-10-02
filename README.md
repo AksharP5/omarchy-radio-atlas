@@ -15,7 +15,7 @@ pause, previous, and next controls.
 
 ## Features
 
-- Kinetic drag rotation that highlights a nearby station when it settles, plus deep wheel zoom on a theme-aware globe
+- Kinetic drag rotation that highlights a nearby station when it settles, plus deep wheel and button zoom on a theme-aware globe
 - A fast cached world view that progressively adds thousands of stations and keeps the session catalog when closed
 - Country stations stay on the session globe and take priority over background signals
 - Country-level map estimates when a station has no published coordinates
@@ -62,6 +62,7 @@ Favorites, listening history, volume, and the selected audio output remain in
 | --- | --- |
 | Drag or flick globe | Rotate; a flick coasts and highlights a nearby station |
 | Wheel over globe | Zoom |
+| Globe + / − buttons | Zoom |
 | Click signal | Play station |
 | Click country | Browse country |
 | `/` | Focus search |
@@ -204,7 +205,7 @@ removing it.
 
 The native QML tests require Qt 6.5 or newer for the globe's drag-event API.
 CI runs them on Ubuntu 26.04 with Qt 6.10.
-Player layout tests use the real Omarchy UI components from
+Player layout and zoom control tests use the real Omarchy UI components from
 `/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkout's `shell`
 directory to test another version. CI uses a pinned checkout and disables shell
 processes and theme-file access during these tests.

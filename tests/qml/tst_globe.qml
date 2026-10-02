@@ -56,6 +56,7 @@ TestCase {
   }
 
   function init() {
+    globe.stopZoomAnimation()
     globe.stopKineticRotation(true)
     markerCanvas.visible = false
     globe.centreLatitude = 0
@@ -71,6 +72,7 @@ TestCase {
   }
 
   function cleanup() {
+    globe.stopZoomAnimation()
     globe.stopKineticRotation(true)
   }
 
@@ -150,6 +152,55 @@ TestCase {
     globe.centreLongitude = 180
     globe.paintSignals(context)
     compare(globe.stationUnderPointer(globe.width / 2, globe.height / 2).uuid, "back")
+  }
+
+  function test_zoomControls() {
+    globe.globeScale = 1
+    verify(globe.canZoomIn)
+    verify(globe.canZoomOut)
+
+    globe.zoomIn(2)
+    tryCompare(globe, "globeScale", 2)
+    verify(globe.canZoomIn)
+    verify(globe.canZoomOut)
+
+    globe.zoomOut(2)
+    tryCompare(globe, "globeScale", 1)
+
+    globe.stopZoomAnimation()
+    globe.globeScale = globe.maximumScale
+    verify(!globe.canZoomIn)
+    verify(globe.canZoomOut)
+    globe.zoomIn(2)
+    compare(globe.globeScale, globe.maximumScale)
+
+    globe.globeScale = globe.minimumScale
+    verify(globe.canZoomIn)
+    verify(!globe.canZoomOut)
+    globe.zoomOut(2)
+    compare(globe.globeScale, globe.minimumScale)
+  }
+
+  function test_signalClickStopsButtonZoom() {
+    globe.stations = [{ uuid: "clicked", latitude: 0, longitude: 48 }]
+    waitForRendering(globe)
+    globe.zoomIn()
+    wait(30)
+    globe.paintSignals({
+      beginPath: function() {}, arc: function() {},
+      fill: function() {}, stroke: function() {}
+    })
+    var point = globe.preparedStations[0]
+    verify(point.visible)
+    var x = point.screenX
+    var y = point.screenY
+    mousePress(globe, x, y, Qt.LeftButton, Qt.NoModifier, 0)
+    var pressedScale = globe.globeScale
+    wait(250)
+    compare(globe.globeScale, pressedScale, "Zoom must stop when the pointer presses the map")
+    mouseRelease(globe, x, y, Qt.LeftButton, Qt.NoModifier, 0)
+    compare(activations.count, 1, "The pressed signal must remain under the pointer")
+    compare(activations.signalArguments[0][0].uuid, "clicked")
   }
 
   function test_markerColorsAreConvertedOncePerPaint() {
