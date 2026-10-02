@@ -7,6 +7,9 @@ output=""
 max_filesize=""
 limit=""
 request_url=""
+search_field=""
+search_value=""
+uuids=""
 while (( $# > 0 )); do
   case "$1" in
     --output)
@@ -21,6 +24,15 @@ while (( $# > 0 )); do
       if [[ ${2:-} == limit=* ]]; then
         limit=${2#limit=}
       fi
+      if [[ ${2:-} == uuids=* ]]; then
+        uuids=${2#uuids=}
+      fi
+      case "${2:-}" in
+        name=*|country=*|countrycode=*|tag=*)
+          search_field=${2%%=*}
+          search_value=${2#*=}
+          ;;
+      esac
       shift 2
       ;;
     https://*)
@@ -38,6 +50,12 @@ done
   exit 2
 }
 
+if [[ -n ${RADIO_ATLAS_TEST_SEARCH_FAIL_FIELD:-} \
+  && $search_field == "$RADIO_ATLAS_TEST_SEARCH_FAIL_FIELD" ]]; then
+  echo "Station search failed for $search_field" >&2
+  exit 7
+fi
+
 payload='[
   {"stationuuid":"bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb","name":"First","url_resolved":"https://example.com/first\n","countrycode":"US","geo_lat":40,"geo_long":-74},
   {"stationuuid":"aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa","name":"Second","url_resolved":"http://example.com/second","countrycode":"CA","geo_lat":43,"geo_long":-79},
@@ -45,6 +63,36 @@ payload='[
   {"stationuuid":"cccccccc-1111-1111-1111-cccccccccccc","name":"Unsafe","url_resolved":"file:///etc/passwd","countrycode":"US","geo_lat":40,"geo_long":-74},
   {"stationuuid":"dddddddd-1111-1111-1111-dddddddddddd","name":"Invalid coordinates","url_resolved":"https://example.com/invalid","countrycode":"US","geo_lat":140,"geo_long":-74}
 ]'
+
+if [[ -n ${RADIO_ATLAS_TEST_CURL_PAYLOAD:-} ]]; then
+  payload=$(cat "$RADIO_ATLAS_TEST_CURL_PAYLOAD")
+fi
+
+if [[ $request_url == */json/stations/byuuid ]]; then
+  if [[ -n ${RADIO_ATLAS_TEST_RESOLVE_LOG:-} ]]; then
+    printf '%s\n' "$uuids" >> "$RADIO_ATLAS_TEST_RESOLVE_LOG"
+  fi
+  if [[ -n ${RADIO_ATLAS_TEST_RESOLVE_FAIL_UUID:-} \
+    && ,$uuids, == *",$RADIO_ATLAS_TEST_RESOLVE_FAIL_UUID,"* ]]; then
+    echo 'Station lookup failed' >&2
+    exit 7
+  fi
+  payload=$(jq -c --arg uuids "$uuids" '
+    ($uuids | split(",")) as $ids
+    | [.[] | select(.stationuuid as $id | $ids | index($id))]
+  ' <<< "$payload")
+fi
+
+if [[ -n ${RADIO_ATLAS_TEST_SEARCH_STATIONS:-} ]]; then
+  payload=$(jq -c --arg field "$search_field" --arg query "$search_value" '
+    if $field == "countrycode" then
+      [.[] | select(.countrycode == $query)]
+    else
+      (if $field == "tag" then "tags" else $field end) as $key
+      | [.[] | select(.[$key] | ascii_downcase | contains($query | ascii_downcase))]
+    end
+  ' "$RADIO_ATLAS_TEST_SEARCH_STATIONS")
+fi
 
 if [[ ${RADIO_ATLAS_TEST_CURL_UNKNOWN_LOCATION:-0} == 1 ]]; then
   payload=$(jq -c '. + [{

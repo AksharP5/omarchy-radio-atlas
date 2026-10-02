@@ -1,9 +1,13 @@
 # Radio Atlas
 
+**Radio Atlas won the [first-ever Omarchy plugin competition](https://omarchy.org/news/2026/08/the-first-plugin-competition-winners/).**
+See [DHH’s announcement on X](https://x.com/dhh/status/2093443941236388051).
+It’s also featured on the [official Omarchy website](https://omarchy.org/).
+
 Explore live radio on a rotatable globe from the Omarchy bar. Click a station
 signal to play it, or click a country to browse its stations. Playback runs in
-Omarchy's existing `mpv` and `mpv-mpris` setup, so `omarchy.media` provides the
-usual play, pause, previous, and next controls.
+`mpv`, with a dedicated MPRIS bridge so `omarchy.media` provides the usual play,
+pause, previous, and next controls.
 
 [View Radio Atlas on the Omarchy Plugin Marketplace](https://omarchyplugins.com/plugin.html?id=akshar.radio-atlas)
 
@@ -34,9 +38,10 @@ omarchy plugin add https://github.com/AksharP5/omarchy-radio-atlas.git --enable
 ```
 
 Radio Atlas uses `bubblewrap`, `curl`, `iproute2`, `jq`, `mpv`, `python`,
-`socat`, `coreutils`, and `util-linux`. These packages ship with Omarchy.
-`mpv-mpris` connects playback to `omarchy.media` and is also part of the
-standard Omarchy installation.
+`python-dbus`, `python-gobject`, `socat`, `coreutils`, and `util-linux`. These
+packages ship with Omarchy, including `python-dbus` through `uwsm`. Radio Atlas
+provides its own MPRIS controls and disables automatic mpv script loading for
+this player instance.
 
 ## Remove
 
@@ -72,7 +77,17 @@ Favorites, listening history, volume, and the selected audio output remain in
 | Escape | Hide controls, clear search, or close |
 
 On the bar, left click opens Radio Atlas, middle click tunes randomly, right
-click stops its player, and the mouse wheel adjusts radio volume.
+click stops its player or resumes the most recently played station when stopped,
+and the mouse wheel adjusts radio volume. Volume changes through system media
+controls are saved for the next player session too. If there is no listening history,
+right click does nothing.
+
+Search accepts country names, two-letter country codes, and aliases such as
+`USA` and `UK`. Recognized countries match by code while station-name and tag
+searches still run. Other queries retain country-name substring matching.
+The bundled country lookup also works in the instant local preview.
+If any directory search request fails, cached matches remain visible with a
+service-unavailable warning.
 
 If a station disconnects or cannot be played, Radio Atlas keeps it selected and
 shows the failure. Click the play button to retry that station, or Next/Previous
@@ -81,10 +96,19 @@ stations. A repeated opening clip can come from the station's stream server;
 retrying may play that same clip again. Radio Browser supplies station listings,
 not the audio streams.
 
-Fresh world and country caches load without DNS lookups. The globe skips
-off-screen station markers when zoomed in, and player-status updates for the
-same station preserve the landing highlight without repainting the globe.
-Track-title, volume, and pause updates also preserve your station-list selection.
+For M3U and PLS station playlists, Radio Atlas plays the first stream and keeps
+Next/Previous moving between stations. Empty playlists show a playback failure
+without switching stations.
+
+Fresh world and country caches load without DNS lookups.
+Country browsing picks up completed background refreshes in the open list,
+preserving the selected station and ignoring updates for other countries.
+The globe skips off-screen station markers when zoomed in, and player-status
+updates for the same station preserve the landing highlight without repainting
+the globe.
+Search and world refreshes also preserve your selected station when it remains
+in the results, including its keyboard highlight. Track-title, volume, and pause
+updates preserve your station-list selection.
 Theme colors update the globe immediately. Background station expansion stops
 after three consecutive attempts add no stations, including failed requests;
 reopening Radio Atlas allows expansion to try again.
@@ -95,9 +119,20 @@ The speaker button next to the volume slider chooses where radio plays. It lists
 every PipeWire output device through `pactl`, which ships with Omarchy's
 PipeWire setup. "System default" follows the desktop's current output, the
 choice is saved alongside the volume in `~/.local/share/radio-atlas/state.json`,
-and switching while playing takes effect immediately. If the chosen device
-disappears, mpv may pause and will not always resume when it returns. Choose
-"System default" or another available output, then resume playback.
+and switching while playing takes effect immediately. When a selected output
+disappears during playback, WirePlumber may pause the player through MPRIS.
+Radio Atlas distinguishes that automatic pause from a deliberate media-control
+pause and resumes once when the same selected output returns. Playback already
+paused before removal stays paused. A manual Pause, including another Pause while
+already paused, cancels recovery. Unrelated outputs do not trigger it. Changing
+stations or outputs, a stream failure, and Stop also cancel recovery. "System
+default" does not identify the actual output, so it requires manual resume after
+a device-loss pause.
+
+External media-control Stop shows "Stopped" in Radio Atlas and clears the bar's
+playing indicator. Play or bar right-click resumes the stopped station while
+keeping its queue. Next/Previous plays its neighboring station, including after
+stopping paused playback.
 
 AirPlay speakers appear in this list once PipeWire exposes them as RAOP sinks.
 On Arch Linux, the RAOP modules ship in the optional `pipewire-zeroconf`
@@ -167,7 +202,17 @@ removing it.
 
 ## Development
 
+The native QML tests require Qt 6.5 or newer for the globe's drag-event API.
+CI runs them on Ubuntu 26.04 with Qt 6.10.
+Player layout tests use the real Omarchy UI components from
+`/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkout's `shell`
+directory to test another version. CI uses a pinned checkout and disables shell
+processes and theme-file access during these tests.
+Headless Qt processes also disable the desktop platform theme and automatic
+portal probes so a private test bus does not start desktop portal services.
+
 ```bash
-./tests/run
+python3 tests/headless.test.py
+python3 tests/audio-output.test.py --require-dependencies
 qmllint -I /usr/share/omarchy/shell BarWidget.qml Globe.qml RadioAtlas.qml
 ```

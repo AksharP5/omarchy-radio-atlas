@@ -165,6 +165,7 @@ status() {
       '{"command":["get_property","mute"],"request_id":6}' \
       '{"command":["get_property","audio-device"],"request_id":7}' \
       '{"command":["get_property","user-data/radio-atlas-failure"],"request_id":8}' \
+      '{"command":["get_property","idle-active"],"request_id":9}' \
       | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
       | head -c "$((max_ipc_bytes + 1))" || true
   )
@@ -212,6 +213,7 @@ status() {
   printf '%s\n' "$(jq -sc --argjson station "$station" --argjson loaded "$loaded" \
     --argjson failure "$failure" '{
     running: true,
+    stopped: ($failure == null and ([.[] | select(.request_id == 9) | .data][0] // false)),
     paused: ($failure != null or ([.[] | select(.request_id == 1) | .data][0] // false)),
     muted: ([.[] | select(.request_id == 6) | .data][0] // false),
     title: (([.[] | select(.request_id == 2) | .data][0] // "")
@@ -254,6 +256,16 @@ player_command() {
     exit 4
   fi
   status
+}
+
+navigate_player() {
+  local message=$1 native=$2
+  if send_command '{"command":["get_property","user-data/radio-atlas-navigation-ready"]}'; then
+    player_command "$(jq -cn --arg message "$message" '{command:["script-message",$message]}')"
+    return
+  fi
+  # Plugin updates leave existing players running with their original script.
+  player_command "$(jq -cn --arg native "$native" '{command:[$native,"force"]}')"
 }
 
 stop_player() {
@@ -396,19 +408,33 @@ valid_runtime_array() {
 
 refresh_saved_stations() {
   local source_file=$1
-  local uuids refreshed
-  uuids=$(jq -r 'map(.uuid) | join(",")' "$source_file")
-  [[ -n $uuids ]] || return 0
+  local batches uuids refreshed
+  batches=$(jq -r '
+    reduce .[].uuid as $uuid ([""];
+      if .[-1] == "" then .[-1] = $uuid
+      elif ((.[-1] | length) + ($uuid | length) + 1) <= 4096
+      then .[-1] += "," + $uuid
+      else . + [$uuid]
+      end)
+    | .[] | select(length > 0)
+  ' "$source_file")
+  [[ -n $batches ]] || return 0
 
   refreshed=$(mktemp "$runtime_dir/refreshed.XXXXXX")
-  if "$fetch_path" resolve "$uuids" > "$refreshed"; then
-    jq -c --slurpfile refreshed "$refreshed" '
-      ($refreshed[0] | INDEX(.uuid)) as $byUuid
-      | map($byUuid[.uuid] // .)
-    ' "$source_file" > "$source_file.next"
+  while IFS= read -r uuids; do
+    if ! "$fetch_path" resolve "$uuids" >> "$refreshed"; then
+      rm -f "$refreshed"
+      return 0
+    fi
+  done <<< "$batches"
+  jq -c --slurpfile refreshed "$refreshed" '
+    ($refreshed | add | INDEX(.uuid)) as $byUuid
+    | map($byUuid[.uuid] // .)
+  ' "$source_file" > "$source_file.next"
+  if valid_runtime_array "$source_file.next"; then
     mv "$source_file.next" "$source_file"
   fi
-  rm -f "$refreshed"
+  rm -f "$source_file.next" "$refreshed"
 }
 
 play_station() {
@@ -478,6 +504,7 @@ play_station() {
       --no-video
       --force-window=no
       --audio-display=no
+      --audio-client-name="Radio Atlas"
       --idle=yes
       --loop-playlist=inf
       --cache-secs=20
@@ -485,6 +512,7 @@ play_station() {
       --demuxer-max-back-bytes=2MiB
       --network-timeout=30
       --load-unsafe-playlists=no
+      --load-scripts=no
       --volume="$(configured_volume)"
       --volume-max=100
       --input-ipc-server="$socket"
@@ -527,6 +555,8 @@ play_station() {
     mv "$temporary_playlist" "$playlist"
     send_command '{"command":["script-message","radio-atlas-reload"]}' \
       || { echo 'Radio player could not refresh its station queue' >&2; exit 4; }
+    send_command '{"command":["set_property","pause",false]}' \
+      || { echo 'Radio player could not resume playback' >&2; exit 4; }
   fi
 
   if [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]]; then
@@ -538,20 +568,33 @@ play_station() {
   status
 }
 
+resume_last() {
+  local uuid
+  uuid=$("$state_path" get | jq -r '.recent[0].uuid // empty')
+  if [[ -z $uuid ]]; then
+    echo 'No station has been played yet' >&2
+    exit 3
+  fi
+  play_station "$uuid" recent
+}
+
 action=${1:-status}
-[[ $action == play || $action == outputs ]] || flock -x 8
+[[ $action == play || $action == resume || $action == outputs ]] || flock -x 8
 case "$action" in
   play)
     play_station "${2:-}" "${3:-results}"
+    ;;
+  resume)
+    resume_last
     ;;
   toggle)
     player_command '{"command":["script-message","radio-atlas-toggle"]}'
     ;;
   next)
-    player_command '{"command":["playlist-next","force"]}'
+    navigate_player radio-atlas-next playlist-next
     ;;
   previous)
-    player_command '{"command":["playlist-prev","force"]}'
+    navigate_player radio-atlas-previous playlist-prev
     ;;
   mute)
     player_command '{"command":["cycle","mute"]}'

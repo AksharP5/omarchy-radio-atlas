@@ -1,0 +1,505 @@
+#!/usr/bin/python3
+"""Own Radio Atlas media controls so device-loss pauses remain distinguishable."""
+
+from collections import deque
+from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+import select
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+import dbus
+import dbus.service
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import Gio, GLib
+
+
+PLAYER = "org.mpris.MediaPlayer2.Player"
+ROOT = "org.mpris.MediaPlayer2"
+PROPERTIES = "org.freedesktop.DBus.Properties"
+OBJECT = "/org/mpris/MediaPlayer2"
+
+
+class MPVError(Exception):
+    pass
+
+
+class IPC:
+    """Keep one mpv connection; defer events received inside a command reply."""
+
+    def __init__(self, path):
+        self.socket = socket.socket(socket.AF_UNIX)
+        self.socket.connect(path)
+        self.buffer = b""
+        self.events = deque()
+        self.request_id = 0
+        self.dispatch = None
+        self.idle_source = None
+        self.watch = GLib.io_add_watch(
+            self.socket.fileno(), GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR, self.readable)
+
+    def receive(self):
+        chunk = self.socket.recv(65536)
+        if not chunk:
+            raise EOFError("mpv IPC closed")
+        self.buffer += chunk
+        if len(self.buffer) > 4_194_304:
+            raise ValueError("mpv IPC message exceeds limit")
+        messages = []
+        while b"\n" in self.buffer:
+            line, self.buffer = self.buffer.split(b"\n", 1)
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise ValueError("invalid mpv IPC message")
+            messages.append(value)
+        return messages
+
+    def defer(self, event):
+        self.events.append(event)
+        if self.idle_source is None:
+            self.idle_source = GLib.idle_add(self.flush, priority=GLib.PRIORITY_DEFAULT)
+
+    def flush(self):
+        try:
+            while self.events:
+                self.dispatch(self.events.popleft())
+        except (OSError, EOFError, ValueError, TimeoutError, MPVError) as error:
+            print(f"radio-mpris: {error}", file=sys.stderr)
+            self.dispatch(dict(event="shutdown"))
+        self.idle_source = None
+        return False
+
+    def command(self, *command):
+        self.request_id += 1
+        request_id = self.request_id
+        self.socket.sendall((json.dumps(dict(command=command, request_id=request_id)) + "\n").encode())
+        deadline = time.monotonic() + 2
+        response = None
+        while response is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([self.socket], [], [], remaining)[0]:
+                raise TimeoutError("mpv command timed out")
+            for message in self.receive():
+                if message.get("request_id") == request_id:
+                    response = message
+                elif "event" in message:
+                    self.defer(message)
+        if response.get("error") != "success":
+            raise MPVError(response.get("error", "missing command result"))
+        return response.get("data")
+
+    def get(self, name, default=None):
+        try:
+            return self.command("get_property", name)
+        except MPVError:
+            return default
+
+    def readable(self, _source, condition):
+        try:
+            if condition & GLib.IO_IN:
+                for message in self.receive():
+                    if "event" in message:
+                        self.defer(message)
+            if condition & (GLib.IO_HUP | GLib.IO_ERR):
+                self.watch = None
+                self.defer(dict(event="shutdown"))
+                return False
+            return True
+        except (OSError, EOFError, ValueError) as error:
+            print(f"radio-mpris: {error}", file=sys.stderr)
+            self.watch = None
+            self.defer(dict(event="shutdown"))
+            return False
+
+    def close(self):
+        if self.idle_source is not None:
+            GLib.source_remove(self.idle_source)
+        if self.watch is not None:
+            GLib.source_remove(self.watch)
+        self.socket.close()
+
+
+@dataclass
+class Recovery:
+    device: str
+
+
+class Controls:
+    def __init__(self, ipc, changed, quit_loop):
+        self.ipc = ipc
+        self.changed = changed
+        self.quit_loop = quit_loop
+        self.recovery = None
+        self.resume_source = None
+        self.selected = ipc.get("audio-device", "auto")
+        self.stopped_position = None
+
+    def cancel(self):
+        if self.resume_source is not None:
+            GLib.source_remove(self.resume_source)
+        self.resume_source = None
+        self.recovery = None
+
+    def active(self):
+        return (not self.ipc.get("idle-active", True)
+                and self.ipc.get("user-data/radio-atlas-failure") is None)
+
+    def pause(self, policy=False):
+        paused = self.ipc.get("pause", False)
+        if not policy:
+            self.cancel()
+        elif not paused:
+            device = self.ipc.get("audio-device", "auto")
+            self.cancel()
+            if isinstance(device, str) and device.startswith("pipewire/") and self.active():
+                # WirePlumber's source-confirmed policy Pause proves output loss.
+                # Device-list snapshots can coalesce a rapid removal and return.
+                self.recovery = Recovery(device)
+        self.ipc.command("set_property", "pause", True)
+        self.check_return()
+
+    def toggle(self):
+        if self.ipc.get("idle-active", True):
+            self.play()
+            return
+        self.cancel()
+        self.ipc.command("script-message", "radio-atlas-perform-toggle")
+
+    def play(self):
+        self.cancel()
+        if self.ipc.get("user-data/radio-atlas-failure") is not None:
+            self.stopped_position = None
+            self.ipc.command("script-message", "radio-atlas-perform-toggle")
+            return
+        if self.ipc.get("idle-active", True):
+            position = self.stopped_position if self.stopped_position is not None else "current"
+            self.ipc.command("playlist-play-index", position)
+        self.stopped_position = None
+        self.ipc.command("set_property", "pause", False)
+
+    def stop(self):
+        self.cancel()
+        position = self.ipc.get("playlist-pos", -1)
+        if isinstance(position, int) and position >= 0:
+            # Native Stop later clears its current entry, so retain the station
+            # until Play or navigation takes over.
+            self.stopped_position = position
+        self.ipc.command("stop", "keep-playlist")
+
+    def action(self, *command):
+        self.cancel()
+        self.stopped_position = None
+        self.ipc.command(*command)
+
+    @staticmethod
+    def device_names(devices):
+        if not isinstance(devices, list):
+            return set()
+        return {device["name"] for device in devices
+                if isinstance(device, dict) and isinstance(device.get("name"), str)}
+
+    def check_return(self):
+        loss = self.recovery
+        if loss is None:
+            return
+        names = self.device_names(self.ipc.get("audio-device-list", []))
+        if loss.device not in names:
+            if self.resume_source is not None:
+                GLib.source_remove(self.resume_source)
+                self.resume_source = None
+            return
+        if self.resume_source is None:
+            self.resume_source = GLib.timeout_add(200, self.resume, loss)
+
+    def resume(self, loss):
+        if self.recovery is not loss:
+            return False
+        self.resume_source = None
+        if (not self.active() or not self.ipc.get("pause", False)
+                or self.ipc.get("audio-device", "auto") != loss.device):
+            self.cancel()
+            return False
+        if loss.device not in self.device_names(self.ipc.get("audio-device-list", [])):
+            return False
+        self.cancel()
+        self.ipc.command("set_property", "pause", False)
+        return False
+
+    def event(self, event):
+        kind = event.get("event")
+        if kind in {"start-file", "end-file", "idle", "shutdown"}:
+            self.cancel()
+            if kind == "start-file":
+                self.stopped_position = None
+            if kind == "shutdown":
+                self.quit_loop()
+                return
+        elif kind == "client-message" and event.get("args") == ["radio-atlas-ui-toggle"]:
+            self.toggle()
+        elif kind == "property-change":
+            name, value = event.get("name"), event.get("data")
+            if name == "audio-device" and value != self.selected:
+                self.cancel()
+                self.selected = value
+            elif name == "audio-device-list":
+                self.check_return()
+            elif name == "pause" and value is False and not self.ipc.get("pause", False):
+                self.cancel()
+        if kind in {"start-file", "file-loaded", "end-file", "idle"} or (
+                kind == "property-change" and event.get("name") in {
+                    "pause", "idle-active", "volume", "media-title", "playlist-pos",
+                    "user-data/radio-atlas-failure"}):
+            self.changed()
+
+
+class VolumeWriter:
+    """Keep one active CLI write and only the latest pending media level."""
+
+    def __init__(self):
+        self.pending = None
+        self.process = None
+
+    def set(self, volume, reply, error):
+        callbacks = self.pending[1] if self.pending else []
+        callbacks.append((reply, error))
+        self.pending = (volume, callbacks)
+        if self.process is None:
+            self.flush()
+
+    def flush(self):
+        if self.pending is None:
+            return
+        callbacks = self.pending[1]
+        try:
+            # A zero deadline retains TERM forwarding without timing out lock waits.
+            self.process = Gio.Subprocess.new([
+                "setpriv", "--pdeathsig", "TERM", "timeout", "--kill-after=1", "0",
+                str(Path(__file__).resolve().with_name("radio-player")),
+                "volume", str(self.pending[0])],
+                Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
+        except GLib.Error as failure:
+            self.pending = None
+            for _, error in callbacks:
+                error(dbus.exceptions.DBusException(str(failure), name="org.freedesktop.DBus.Error.Failed"))
+            return
+        self.pending = None
+        self.process.communicate_utf8_async(None, None,
+            lambda process, result: self.finished(process, result, callbacks))
+
+    def finished(self, process, result, callbacks):
+        if process is not self.process:
+            return
+        self.process = None
+        failure = None
+        try:
+            _, _, stderr = process.communicate_utf8_finish(result)
+            if not process.get_successful():
+                failure = stderr.strip() or "Could not change radio volume"
+        except GLib.Error as error:
+            failure = str(error)
+        for reply, error in callbacks:
+            if failure is None:
+                reply()
+            else:
+                error(dbus.exceptions.DBusException(failure, name="org.freedesktop.DBus.Error.Failed"))
+        self.flush()
+
+    def close(self):
+        if self.process is not None:
+            self.process.send_signal(signal.SIGTERM)
+        self.process = self.pending = None
+
+
+class Mpris(dbus.service.Object):
+    def __init__(self, bus, name, controls):
+        super().__init__(dbus.service.BusName(name, bus=bus), OBJECT)
+        self.bus = bus
+        self.controls = controls
+        self.last_properties = {}
+        self.change_source = None
+        self.volume = VolumeWriter()
+
+    def schedule_changed(self):
+        if self.change_source is None:
+            self.change_source = GLib.idle_add(self.changed)
+
+    def policy_sender(self, sender):
+        try:
+            daemon = self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
+            pid = daemon.GetConnectionUnixProcessID(sender, dbus_interface="org.freedesktop.DBus")
+            return Path(os.readlink(f"/proc/{int(pid)}/exe").removesuffix(" (deleted)")).name == "wireplumber"
+        except (dbus.DBusException, OSError, ValueError):
+            return False
+
+    def player_properties(self):
+        ipc = self.controls.ipc
+        stopped = not self.controls.active()
+        title = ipc.get("media-title", "")
+        position = ipc.get("playlist-pos", -1)
+        metadata = dbus.Dictionary({}, signature="sv")
+        if not stopped:
+            metadata["mpris:trackid"] = dbus.ObjectPath(f"{OBJECT}/track/{max(position, 0)}")
+            metadata["xesam:title"] = dbus.String(title if isinstance(title, str) else "")
+        return dict(
+            PlaybackStatus="Stopped" if stopped else "Paused" if ipc.get("pause", False) else "Playing",
+            Rate=dbus.Double(1), Metadata=metadata,
+            Volume=dbus.Double(ipc.get("volume", 0) / 100), Position=dbus.Int64(0),
+            MinimumRate=dbus.Double(1), MaximumRate=dbus.Double(1), CanGoNext=True,
+            CanGoPrevious=True, CanPlay=True, CanPause=True, CanSeek=False, CanControl=True)
+
+    @dbus.service.method(PROPERTIES, in_signature="ss", out_signature="v")
+    def Get(self, interface, name):
+        properties = self.GetAll(interface)
+        if name not in properties:
+            raise dbus.exceptions.DBusException("Unknown property", name="org.freedesktop.DBus.Error.InvalidArgs")
+        return properties[name]
+
+    @dbus.service.method(PROPERTIES, in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface):
+        if interface == PLAYER:
+            return self.player_properties()
+        if interface == ROOT:
+            return dict(CanQuit=False, CanRaise=False, HasTrackList=False, Identity="Radio Atlas",
+                        DesktopEntry="", SupportedUriSchemes=dbus.Array([], signature="s"),
+                        SupportedMimeTypes=dbus.Array([], signature="s"))
+        raise dbus.exceptions.DBusException("Unknown interface", name="org.freedesktop.DBus.Error.InvalidArgs")
+
+    @dbus.service.method(PROPERTIES, in_signature="ssv", async_callbacks=("reply", "error"))
+    def Set(self, interface, name, value, reply, error):
+        if interface == PLAYER and name == "Rate" and value == 1:
+            reply()
+            return
+        if interface != PLAYER or name != "Volume" or not isinstance(value, (dbus.Double, float, int)):
+            raise dbus.exceptions.DBusException("Property is read-only", name="org.freedesktop.DBus.Error.PropertyReadOnly")
+        volume = float(value)
+        if not 0 <= volume <= 1:
+            raise dbus.exceptions.DBusException("Volume must be between 0 and 1", name="org.freedesktop.DBus.Error.InvalidArgs")
+        self.volume.set(int(volume * 100 + 0.5), reply, error)
+
+    def close(self):
+        self.volume.close()
+
+    @dbus.service.signal(PROPERTIES, signature="sa{sv}as")
+    def PropertiesChanged(self, interface, changed, invalidated):
+        pass
+
+    def changed(self):
+        self.change_source = None
+        properties = self.player_properties()
+        changed = {key: value for key, value in properties.items() if self.last_properties.get(key) != value}
+        self.last_properties = properties
+        if changed:
+            self.PropertiesChanged(PLAYER, changed, [])
+        return False
+
+    @dbus.service.method(PLAYER, sender_keyword="sender")
+    def Pause(self, sender=None):
+        self.controls.pause(self.policy_sender(sender))
+
+    @dbus.service.method(PLAYER)
+    def Play(self):
+        self.controls.play()
+
+    @dbus.service.method(PLAYER)
+    def PlayPause(self):
+        self.controls.toggle()
+
+    @dbus.service.method(PLAYER)
+    def Stop(self):
+        self.controls.stop()
+
+    @dbus.service.method(PLAYER)
+    def Next(self):
+        self.controls.action("script-message", "radio-atlas-next")
+
+    @dbus.service.method(PLAYER)
+    def Previous(self):
+        self.controls.action("script-message", "radio-atlas-previous")
+
+    @dbus.service.method(PLAYER, in_signature="x")
+    def Seek(self, _offset):
+        pass
+
+    @dbus.service.method(PLAYER, in_signature="ox")
+    def SetPosition(self, _track, _position):
+        pass
+
+    @dbus.service.method(PLAYER, in_signature="s")
+    def OpenUri(self, _uri):
+        raise dbus.exceptions.DBusException("Select a station in Radio Atlas", name="org.freedesktop.DBus.Error.NotSupported")
+
+    @dbus.service.method(ROOT)
+    def Raise(self):
+        pass
+
+    @dbus.service.method(ROOT)
+    def Quit(self):
+        pass
+
+
+def main():
+    if len(sys.argv) < 4 or sys.argv[2] != "--":
+        raise SystemExit("Usage: radio-mpris SOCKET -- COMMAND...")
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    loop = GLib.MainLoop()
+    child = subprocess.Popen(sys.argv[3:])
+    ipc = None
+    mpris = None
+    stopping = False
+
+    def stop(*_):
+        nonlocal stopping
+        stopping = True
+        loop.quit()
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    try:
+        deadline = time.monotonic() + 10
+        while not Path(sys.argv[1]).is_socket():
+            if stopping:
+                return 0
+            if child.poll() is not None:
+                return child.returncode
+            if time.monotonic() > deadline:
+                raise TimeoutError("mpv IPC socket did not appear")
+            time.sleep(0.02)
+        ipc = IPC(sys.argv[1])
+        controls = Controls(ipc, lambda: mpris.schedule_changed(), loop.quit)
+        mpris = Mpris(bus, f"{ROOT}.mpv.radio_atlas.instance{os.getpid()}", controls)
+        ipc.dispatch = controls.event
+        for index, property_name in enumerate([
+                "pause", "idle-active", "audio-device", "audio-device-list", "volume",
+                "media-title", "playlist-pos", "user-data/radio-atlas-failure"]):
+            ipc.command("observe_property", index, property_name)
+        ipc.command("script-message", "radio-atlas-mpris-ready")
+        mpris.changed()
+        if not stopping:
+            loop.run()
+        return child.poll() or 0
+    finally:
+        if mpris is not None:
+            mpris.close()
+        if ipc is not None:
+            ipc.close()
+        if child.poll() is None:
+            child.terminate()
+        try:
+            child.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait()
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, EOFError, TimeoutError, MPVError, dbus.DBusException) as error:
+        print(f"radio-mpris: {error}", file=sys.stderr)
+        sys.exit(1)

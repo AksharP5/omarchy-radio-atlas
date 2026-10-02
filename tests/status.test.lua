@@ -9,6 +9,7 @@ package.preload["mp"] = function()
     end,
     get_property_number = function(_, default) return default end,
     get_property_bool = function(_, default) return default end,
+    set_property_bool = function() end,
     add_timeout = function(_, callback)
       callback()
       return { kill = function() end }

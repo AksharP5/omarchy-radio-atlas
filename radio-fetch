@@ -314,6 +314,18 @@ fetch_world() {
 
 fetch_search() {
   local query=$1
+  local country_code country_filter
+  country_code=$(python3 - "$script_dir/assets/country-search.json" "$query" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as source:
+    countries = json.load(source)
+print(countries.get(sys.argv[2].strip().lower(), ""))
+PY
+  ) || country_code=""
+  country_filter="country=$query"
+  [[ -z $country_code ]] || country_filter="countrycode=$country_code"
   load_bases
   search_dir=$(mktemp -d "$runtime_dir/search.XXXXXX")
 
@@ -326,7 +338,7 @@ fetch_search() {
   local name_pid=$!
 
   request 80 '/json/stations/search' \
-    --data-urlencode "country=$query" \
+    --data-urlencode "$country_filter" \
     --data-urlencode 'hidebroken=true' \
     --data-urlencode 'order=clickcount' \
     --data-urlencode 'reverse=true' \
@@ -341,24 +353,12 @@ fetch_search() {
     --data-urlencode 'limit=80' > "$search_dir/tag.json" &
   local tag_pid=$!
 
-  local successful=0
-  if wait "$name_pid"; then
-    successful=$((successful + 1))
-  else
-    printf '[]' > "$search_dir/name.json"
-  fi
-  if wait "$country_pid"; then
-    successful=$((successful + 1))
-  else
-    printf '[]' > "$search_dir/country.json"
-  fi
-  if wait "$tag_pid"; then
-    successful=$((successful + 1))
-  else
-    printf '[]' > "$search_dir/tag.json"
-  fi
+  local failed=0 pid
+  for pid in "$name_pid" "$country_pid" "$tag_pid"; do
+    if ! wait "$pid"; then failed=1; fi
+  done
 
-  if (( successful == 0 )); then
+  if (( failed )); then
     rm -rf "$search_dir"
     echo 'Station service is unavailable' >&2
     return 1
