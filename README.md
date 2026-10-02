@@ -1,5 +1,9 @@
 # Radio Atlas
 
+**Radio Atlas won the [first-ever Omarchy plugin competition](https://omarchy.org/news/2026/08/the-first-plugin-competition-winners/).**
+See [DHH’s announcement on X](https://x.com/dhh/status/2093443941236388051).
+It’s also featured on the [official Omarchy website](https://omarchy.org/).
+
 Explore live radio on a rotatable globe from the Omarchy bar. Click a station
 signal to play it, or click a country to browse its stations. Playback runs in
 `mpv`, with a dedicated MPRIS bridge so `omarchy.media` provides the usual play,
