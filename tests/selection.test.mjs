@@ -66,6 +66,7 @@ function refreshSession(mode) {
     startFetch(action, query) { requestedQuery = query },
     scheduleWorldExpansion() {},
     playStation(station) { played = station.uuid },
+    keyCatcher: { forceActiveFocus() {} },
   })
   run.root = run
   Object.defineProperty(run, "displayStations", { get() { return run.results } })
@@ -116,4 +117,41 @@ const newQuery = refreshSession("search")
 newQuery.run.setStationList("search", newQuery.rows)
 assert.equal(newQuery.run.selectedStation.uuid, "first", "A new query starts a new selection")
 assert.equal(newQuery.run.keyboardSelectionVisible, false)
-console.log("Station selection tests passed, including search/world refresh and Enter playback")
+
+const localFunctions = source.match(/  function (?:applyLocalState|refreshLocalSelection|setSelection|playSelected|playlistScope)\([\s\S]*?\n  \}/g).join("\n")
+for (const mode of ["favorites", "recent"]) {
+  let played
+  const rows = [{ uuid: "first" }, { uuid: "chosen" }]
+  const run = vm.createContext({
+    RadioModel: model, mode, favorites: rows, recent: rows,
+    selectedStation: null, selectedIndex: -1, keyboardSelectionVisible: false,
+    playingStationUuid: "first", ListView: { Contain: 0 },
+    stationList: { currentIndex: -1, positionViewAtIndex() {} },
+    playStation(station, scope) { played = [station.uuid, scope] },
+  })
+  Object.defineProperty(run, "displayStations", { get: () => run[mode] })
+  vm.runInContext(localFunctions, run)
+  run.setSelection(1, true)
+  const updated = { uuid: "chosen", name: "Updated saved station" }
+  run.applyLocalState(JSON.stringify({ favorites: [updated, rows[0]], recent: [updated, rows[0]] }))
+  run.refreshLocalSelection()
+  assert.equal(run.selectedStation.uuid, "chosen", `${mode} reload follows the chosen station`)
+  assert.equal(run.selectedStation.name, updated.name)
+  assert.equal(run.selectedIndex, 0)
+  assert.equal(run.keyboardSelectionVisible, true, `${mode} reload keeps its keyboard outline`)
+  run.playSelected()
+  assert.deepEqual(played, ["chosen", mode])
+
+  run[mode] = [rows[0]]
+  run.refreshLocalSelection()
+  assert.equal(run.selectedStation.uuid, "first", "Removing the selected saved station selects its neighbor")
+  assert.equal(run.keyboardSelectionVisible, true)
+  run.setSelection(0)
+  run.refreshLocalSelection()
+  assert.equal(run.keyboardSelectionVisible, false, "Pointer selections do not gain a keyboard outline")
+  run[mode] = []
+  run.refreshLocalSelection()
+  assert.equal(run.selectedStation, null)
+  assert.equal(run.selectedIndex, -1)
+}
+console.log("Station selection tests passed, including remote/saved refresh and Enter playback")
