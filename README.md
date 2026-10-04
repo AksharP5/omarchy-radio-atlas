@@ -176,12 +176,10 @@ click-count endpoint. Favorites and history stay in
 Station metadata and stream URLs are community supplied. Labels are rendered
 as plain text. Playback runs in an isolated network namespace and reaches
 stations through a bounded proxy that rejects private and effectively local
-destinations, including after redirects. Hostnames that a fake-IP DNS setup
-(mihomo, Clash, sing-box) resolves into `198.18.0.0/15`, `2001:2::/48`, or
-`fdfe:dcba:9876::/64` are allowed when they do not route locally. Remote
-metadata and local JSON are size- and record-limited before they reach the
-shell. Radio Atlas still connects directly to third-party stations; HTTP
-streams are unencrypted. Only play stations you trust.
+destinations, including after redirects. Remote metadata and local JSON are
+size- and record-limited before they reach the shell. Radio Atlas still connects
+directly to third-party stations; HTTP streams are unencrypted. Only play
+stations you trust.
 
 Map geometry comes from public-domain Natural Earth data.
 
@@ -194,6 +192,17 @@ closed a connection. They omit URLs, hostnames, and raw error messages and are
 capped at 200 lines per player session. Stopping and starting playback begins
 a new session and replaces those logs. A connection closing is not necessarily
 an error; it also happens when changing stations or stopping playback.
+
+If a VPN or proxy uses fake-IP DNS, it can return synthetic station addresses
+such as `198.18.x.x` instead of real public addresses. Radio Atlas rejects these
+with `stage=connect outcome=rejected error=ProxyError status=403` because it
+cannot check the destination hidden behind the mapping. Configure the DNS
+setup to return real addresses for station streams, playlist entries, and
+redirect targets. In mihomo/Clash, use `dns.enhanced-mode: redir-host`, or add
+those hostnames to `dns.fake-ip-filter` in `blacklist` mode. Preserve existing
+filter entries and check both IPv4 and IPv6 answers. See the
+[mihomo DNS settings](https://wiki.metacubex.one/en/config/dns/#enhanced-mode).
+Other fake-IP clients need the equivalent real-address DNS setting.
 
 If saved state is malformed, oversized, or contains too many entries, Radio Atlas
 refuses to overwrite it and reports

@@ -60,6 +60,36 @@ class ProxyTests(unittest.TestCase):
             with self.assertRaises(radio_proxy.ProxyError):
                 radio_proxy.public_endpoints("station.example", 80)
 
+    def test_fake_ip_answers_cannot_connect_over_a_nonlocal_route(self):
+        for address in ("198.18.0.166", "2001:2::110", "fdfe:dcba:9876::a2"):
+            for answers in (self.resolve(address), self.resolve("93.184.216.34", address)):
+                with (
+                    self.subTest(answers=answers),
+                    patch.object(radio_proxy.socket, "getaddrinfo", return_value=answers),
+                    patch.object(radio_proxy, "route_is_local", return_value=False),
+                    patch.object(radio_proxy.socket, "socket") as upstream,
+                ):
+                    with self.assertRaises(radio_proxy.ProxyError) as error:
+                        radio_proxy.connect_public("station.example", 80)
+                    self.assertEqual(error.exception.status, b"403 Forbidden")
+                    upstream.assert_not_called()
+
+    def test_alternate_numeric_fake_ip_hosts_are_rejected(self):
+        # These are numeric addresses to libc, despite not parsing with ipaddress.
+        for host in ("0xc61200a6", "198.18.166", "0306.022.0.0246"):
+            for request in (f"GET http://{host}/live HTTP/1.1\r\n\r\n",
+                            f"CONNECT {host}:443 HTTP/1.1\r\n\r\n"):
+                with (
+                    self.subTest(request=request),
+                    patch.object(radio_proxy, "route_is_local", return_value=False),
+                    patch.object(radio_proxy.socket, "socket") as upstream,
+                ):
+                    _, target, port, _ = radio_proxy.parse_request(request.encode())
+                    with self.assertRaises(radio_proxy.ProxyError) as error:
+                        radio_proxy.connect_public(target, port)
+                    self.assertEqual(error.exception.status, b"403 Forbidden")
+                    upstream.assert_not_called()
+
     def test_excessive_dns_answers_are_rejected_before_route_checks(self):
         answers = self.resolve(*(f"93.184.216.{index}" for index in range(1, 18)))
         with (
@@ -80,47 +110,6 @@ class ProxyTests(unittest.TestCase):
                 with self.assertRaises(radio_proxy.ProxyError):
                     radio_proxy.public_endpoints("station.example", 80)
                 route_check.assert_called_once_with(radio_proxy.ipaddress.ip_address(address))
-
-    def test_fake_ip_answers_for_names_are_allowed(self):
-        answers = self.resolve("198.18.0.166", "2001:2::110", "fdfe:dcba:9876::a2")
-        with (
-            patch.object(radio_proxy.socket, "getaddrinfo", return_value=answers),
-            patch.object(radio_proxy, "route_is_local", return_value=False),
-        ):
-            endpoints = radio_proxy.public_endpoints("station.example", 443)
-        self.assertEqual(
-            [endpoint[3][0] for endpoint in endpoints],
-            ["198.18.0.166", "2001:2::110", "fdfe:dcba:9876::a2"],
-        )
-
-    def test_literal_fake_ip_destinations_are_rejected(self):
-        for literal in ("198.18.0.166", "2001:2::110", "[fdfe:dcba:9876::a2]"):
-            with (
-                self.subTest(literal=literal),
-                patch.object(
-                    radio_proxy.socket, "getaddrinfo", return_value=self.resolve(literal.strip("[]"))
-                ),
-                patch.object(radio_proxy, "route_is_local", return_value=False),
-            ):
-                with self.assertRaises(radio_proxy.ProxyError):
-                    radio_proxy.public_endpoints(literal, 80)
-
-    def test_effectively_local_fake_ip_answer_is_rejected(self):
-        with (
-            patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve("198.18.0.1")),
-            patch.object(radio_proxy, "route_is_local", return_value=True),
-        ):
-            with self.assertRaises(radio_proxy.ProxyError):
-                radio_proxy.public_endpoints("station.example", 80)
-
-    def test_mixed_fake_ip_and_private_answers_are_rejected(self):
-        answers = self.resolve("198.18.0.166", "192.168.1.10")
-        with (
-            patch.object(radio_proxy.socket, "getaddrinfo", return_value=answers),
-            patch.object(radio_proxy, "route_is_local", return_value=False),
-        ):
-            with self.assertRaises(radio_proxy.ProxyError):
-                radio_proxy.public_endpoints("station.example", 80)
 
     def test_kernel_local_route_is_detected(self):
         result = radio_proxy.subprocess.CompletedProcess(
