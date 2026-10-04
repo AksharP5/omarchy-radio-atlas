@@ -12,6 +12,9 @@ const context = vm.createContext({
   RadioModel: model,
   displayStations: stations,
   playingStationUuid: "",
+  playerRunning: false,
+  playerStopped: false,
+  localStopStatusPending: false,
   recordedStationUuid: "",
   pendingVolume: -1,
   playerError: "",
@@ -154,4 +157,17 @@ for (const mode of ["favorites", "recent"]) {
   assert.equal(run.selectedStation, null)
   assert.equal(run.selectedIndex, -1)
 }
+
+for (const stopped of [{ running: false }, { ...playing, stopped: true }]) {
+  context.applyPlayerState(JSON.stringify(playing))
+  context.randomPlaybackPending = true
+  context.applyPlayerState(JSON.stringify(stopped))
+  assert.equal(context.randomPlaybackPending, false,
+    "A stop from the bar or media controls cancels pending random playback")
+  context.randomPlaybackPending = true
+  context.applyPlayerState(JSON.stringify(stopped))
+  assert.equal(context.randomPlaybackPending, true,
+    "Repeated stopped status must not cancel a new Random request")
+}
+
 console.log("Station selection tests passed, including remote/saved refresh and Enter playback")

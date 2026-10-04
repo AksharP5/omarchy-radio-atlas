@@ -61,6 +61,7 @@ TestCase {
   property bool playerActionBusy: false
   property bool playPreparing: false
   property bool playCancellationRequested: false
+  property bool randomPlaybackPending: false
   property int playerVolume: 100
   property int playlistCount: 20
   property string playingStationUuid: "station"
@@ -81,6 +82,7 @@ TestCase {
   function isFavorite(uuid) { return false }
   function playerAction(action) { lastAction = action }
   function playSelected() { lastAction = "selected" }
+  function stopPlayer() { lastAction = "stop"; randomPlaybackPending = false }
   QtObject { id: stopProcess; property bool running: false }
   QtObject { id: playerActionProcess; property bool running: false }
   QtObject { id: outputProcess; property bool running: false }
@@ -193,6 +195,21 @@ TestCase {
         status: "Stream disconnected. Play to retry, or Next.", action: "Retry station",
         icon: "\\uf04b", active: false, tooltip: "Stream disconnected:" }
     ]
+  }
+
+  function test_stopCanCancelRandomBeforePlaybackStarts() {
+    playerRunning = false
+    playPreparing = false
+    randomPlaybackPending = false
+    var stopButton = transportControls.children[3]
+    compare(stopButton.enabled, false)
+    randomPlaybackPending = true
+    compare(stopButton.enabled, true)
+    lastAction = ""
+    mouseClick(stopButton)
+    compare(lastAction, "stop")
+    compare(randomPlaybackPending, false)
+    compare(stopButton.enabled, false)
   }
 
   function test_barRightClick_data() {
