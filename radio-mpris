@@ -3,6 +3,7 @@
 
 from collections import deque
 from dataclasses import dataclass
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 import dbus
@@ -23,6 +25,23 @@ PLAYER = "org.mpris.MediaPlayer2.Player"
 ROOT = "org.mpris.MediaPlayer2"
 PROPERTIES = "org.freedesktop.DBus.Properties"
 OBJECT = "/org/mpris/MediaPlayer2"
+
+
+def cancel_pending_plays(runtime):
+    generation = runtime / "player.generation"
+    try:
+        with generation.open() as stream:
+            value = stream.readline().strip()
+    except FileNotFoundError:
+        value = ""
+    current = int(value) if value.isascii() and value.isdecimal() else 0
+    descriptor, temporary = tempfile.mkstemp(prefix="generation.", dir=runtime)
+    try:
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(f"{current + 1}\n")
+        os.replace(temporary, generation)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 class MPVError(Exception):
@@ -184,12 +203,17 @@ class Controls:
 
     def stop(self):
         self.cancel()
-        position = self.ipc.get("playlist-pos", -1)
-        if isinstance(position, int) and position >= 0:
-            # Native Stop later clears its current entry, so retain the station
-            # until Play or navigation takes over.
-            self.stopped_position = position
-        self.ipc.command("stop", "keep-playlist")
+        runtime = Path(os.environ["XDG_RUNTIME_DIR"]) / "omarchy-radio-atlas"
+        # Serialize Stop with the CLI's generation check and playlist commit.
+        with (runtime / "player.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            cancel_pending_plays(runtime)
+            position = self.ipc.get("playlist-pos", -1)
+            if isinstance(position, int) and position >= 0:
+                # Native Stop later clears its current entry, so retain the station
+                # until Play or navigation takes over.
+                self.stopped_position = position
+            self.ipc.command("stop", "keep-playlist")
 
     def action(self, *command):
         self.cancel()

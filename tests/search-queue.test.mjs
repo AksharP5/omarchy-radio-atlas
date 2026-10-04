@@ -3,9 +3,10 @@ import fs from "node:fs"
 import vm from "node:vm"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
-const functions = source.match(/  function (?:applyPlayerState|cancelPendingFetch|cancelPendingPlay|stopPlayer|tuneRandom|startFetch|showWorld|showFavorites|previewSearch|search|browseCountry|setStationList)\([\s\S]*?\n  \}/g).join("\n")
+const functions = source.match(/  function (?:applyPlayerState|playerGeneration|playSelected|playlistScope|playStation|playPendingStation|cancelPendingFetch|cancelPendingPlay|stopPlayer|tuneRandom|startFetch|showWorld|showFavorites|previewSearch|search|browseCountry|setStationList)\([\s\S]*?\n  \}/g).join("\n")
 const complete = source.match(/id: fetchProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const stopComplete = source.match(/id: stopProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
+const playerComplete = source.match(/id: playerActionProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const edit = source.match(/id: searchField[\s\S]*?onTextEdited: \{([\s\S]*?)\n          \}/)[1]
 const debounce = source.match(/id: searchDebounce[\s\S]*?onTriggered: ([^\n]+)/)[1]
 const model = vm.createContext({})
@@ -40,6 +41,7 @@ function session() {
     fetchStderr: "",
     fetching: false,
     randomPlaybackPending: false,
+    randomPlayGeneration: "0",
     playerRunning: false,
     playerStopped: false,
     playingStationUuid: "",
@@ -48,11 +50,27 @@ function session() {
     playerError: "",
     playPreparing: false,
     playCancellationRequested: false,
+    activePlayGeneration: "0",
+    pendingPlayStation: null,
+    pendingPlayScope: "",
+    pendingPlayStations: [],
+    pendingPlayGeneration: "",
+    playerGenerationFile: {
+      value: "0", reload() {}, waitForJob() {}, text() { return this.value },
+    },
     localStopStatusPending: false,
-    playerActionProcess: { running: false },
+    playerActionProcess: {
+      action: "", command: [],
+      get running() { return this.active || false },
+      set running(value) {
+        this.active = value
+        if (value && this.action === "play") played.push(this.command[2])
+      },
+    },
     stopProcess: { running: false, command: [], output: "" },
     playerPath: "/radio-player",
-    playSelected() { played.push(this.results[0].uuid) },
+    playSelectionFile: {},
+    writeSelection() { return true },
     searchField: { text: "" },
     searchDebounce: {
       running: false,
@@ -67,10 +85,9 @@ function session() {
         if (value) requests.push(Array.from(this.command).slice(1))
       },
     },
-    setSelection() {},
+    setSelection(index) { context.selectedStation = context.results[index] || null },
     highlightStationCountry() {},
     recordPlayed() {},
-    playPendingStation() {},
     keyCatcher: { forceActiveFocus() {} },
     restorePlayingCountry() {},
     scheduleWorldExpansion() {},
@@ -79,9 +96,13 @@ function session() {
   })
   context.root = context
   Object.defineProperty(context, "displayStations", { get: () => context.results })
+  Object.defineProperty(context, "playerActionBusy", {
+    get: () => context.playerActionProcess.running || context.stopProcess.running,
+  })
   vm.runInContext(`${functions}
     function complete(exitCode) {${complete}}
     function stopComplete(exitCode) {${stopComplete}}
+    function playerComplete(exitCode) {${playerComplete}}
     function editText(text) {${edit}}
     function debounce() {${debounce}}`, context)
   return {
@@ -102,10 +123,21 @@ function session() {
       context.fetchOutput = JSON.stringify(rows)
       context.complete(exitCode)
     },
-    finishStop(state, exitCode = 0) {
+    finishStop(state, exitCode = 0, acknowledgment) {
       context.stopProcess.running = false
-      context.stopProcess.output = JSON.stringify(state)
+      if (exitCode === 0 && !acknowledgment) {
+        const canceledGeneration = context.playerGenerationFile.value
+        const stopGeneration = String(Number(canceledGeneration) + 1)
+        context.playerGenerationFile.value = stopGeneration
+        acknowledgment = { canceledGeneration, stopGeneration }
+      }
+      context.stopProcess.output = JSON.stringify({ ...state, ...acknowledgment })
       context.stopComplete(exitCode)
+    },
+    finishPlayer(exitCode) {
+      context.playerActionProcess.running = false
+      context.playPreparing = false
+      context.playerComplete(exitCode)
     },
     flush() {
       while (callbacks.length) callbacks.shift()()
@@ -269,6 +301,7 @@ for (const initiallyRunning of [false, true]) {
   assert.deepEqual(run.played, ["requested-after-stop"])
   run.context.applyPlayerState(JSON.stringify(playing))
   run.context.tuneRandom()
+  run.context.playerGenerationFile.value = "2"
   run.context.applyPlayerState(JSON.stringify(stopped))
   run.finish([{ uuid: "canceled-by-external-stop" }])
   assert.deepEqual(run.played, ["requested-after-stop"],
@@ -281,8 +314,139 @@ failedStop.context.stopPlayer()
 failedStop.context.tuneRandom()
 failedStop.finishStop({}, 1)
 assert.equal(failedStop.context.playerError, "Could not stop the player")
+failedStop.context.playerGenerationFile.value = "1"
 failedStop.context.applyPlayerState(JSON.stringify(stopped))
 failedStop.finish([{ uuid: "canceled-after-failed-stop" }])
 assert.deepEqual(failedStop.played, [], "A failed local Stop must not hide an external Stop")
+
+const queuedPlay = session()
+queuedPlay.context.applyPlayerState(JSON.stringify(playing))
+queuedPlay.context.playerActionProcess.running = true
+queuedPlay.context.playPreparing = true
+queuedPlay.context.pendingPlayStation = { uuid: "queued-before-stop" }
+queuedPlay.context.pendingPlayScope = "results"
+queuedPlay.context.pendingPlayStations = [queuedPlay.context.pendingPlayStation]
+queuedPlay.context.pendingPlayGeneration = "0"
+queuedPlay.context.playerGenerationFile.value = "1"
+queuedPlay.context.applyPlayerState(JSON.stringify({ running: true, stopped: true }))
+queuedPlay.context.playerActionProcess.running = false
+queuedPlay.context.playPendingStation()
+assert.deepEqual(queuedPlay.played, [], "External Stop must discard a queued playback request")
+assert.equal(queuedPlay.context.playCancellationRequested, true,
+  "Preparation canceled by external Stop must not report a playback failure")
+
+for (const localStop of [true, false]) {
+  const afterStop = session()
+  afterStop.context.applyPlayerState(JSON.stringify(playing))
+  afterStop.context.playerActionProcess.running = true
+  afterStop.context.playPreparing = true
+  if (localStop) afterStop.context.stopPlayer()
+  else afterStop.context.applyPlayerState(JSON.stringify({ running: true, stopped: true }))
+  afterStop.context.playStation({ uuid: "requested-after-stop" }, "results", [])
+  if (localStop) afterStop.finishStop(stopped)
+  afterStop.context.playerActionProcess.running = false
+  afterStop.context.playPendingStation()
+  afterStop.flush()
+  assert.deepEqual(afterStop.played, ["requested-after-stop"],
+    "A new selection after Stop must still play when preparation finishes")
+}
+
+for (const requestAfterStop of [false, true]) {
+  const repeatedStop = session()
+  repeatedStop.context.applyPlayerState(JSON.stringify({ running: true, stopped: true }))
+  repeatedStop.context.playerActionProcess.running = true
+  repeatedStop.context.playerActionProcess.action = "play"
+  repeatedStop.context.playPreparing = true
+  repeatedStop.context.activePlayGeneration = "1"
+  repeatedStop.context.pendingPlayStation = { uuid: "queued-selection" }
+  repeatedStop.context.pendingPlayGeneration = requestAfterStop ? "2" : "1"
+  repeatedStop.context.playerGenerationFile.value = "2"
+  repeatedStop.context.applyPlayerState(JSON.stringify({ running: true, stopped: true }))
+  repeatedStop.finishPlayer(4)
+  repeatedStop.flush()
+  assert.deepEqual(repeatedStop.played, requestAfterStop ? ["queued-selection"] : [],
+    "A repeated Stop discards older queued playback and allows a later selection")
+  assert.equal(repeatedStop.context.playerError, "", "Intentional cancellation is not a playback failure")
+}
+
+for (const phase of ["active", "queued", "deferred"]) {
+  const repeatedStop = session()
+  repeatedStop.context.applyPlayerState(JSON.stringify({ running: true, stopped: true }))
+  repeatedStop.context.playerGenerationFile.value = "1"
+  if (phase !== "active") repeatedStop.context.startFetch("world", "")
+  repeatedStop.context.tuneRandom()
+  if (phase === "deferred") repeatedStop.finish([])
+  repeatedStop.context.playerGenerationFile.value = "2"
+  repeatedStop.context.applyPlayerState(JSON.stringify({ running: true, stopped: true }))
+  if (phase === "queued") repeatedStop.finish([])
+  repeatedStop.flush()
+  if (phase === "active") repeatedStop.finish([{ uuid: "canceled-random" }])
+  assert.deepEqual(repeatedStop.played, [], `${phase} random tuning must respect repeated Stop`)
+  assert.equal(repeatedStop.context.randomPlaybackPending, false)
+  if (phase !== "active") assert.deepEqual(repeatedStop.requests, [["world"]])
+}
+
+const delayedExternalStatus = session()
+delayedExternalStatus.context.applyPlayerState(JSON.stringify(playing))
+delayedExternalStatus.context.playerGenerationFile.value = "1"
+delayedExternalStatus.context.tuneRandom()
+delayedExternalStatus.context.applyPlayerState(JSON.stringify({ running: true, stopped: true }))
+delayedExternalStatus.finish([{ uuid: "requested-after-external-stop" }])
+assert.deepEqual(delayedExternalStatus.played, ["requested-after-external-stop"],
+  "A delayed external Stop notification must preserve newer Random intent")
+
+for (const phase of ["active", "queued", "deferred"]) {
+  const duringStop = session()
+  if (phase !== "active") duringStop.context.startFetch("world", "")
+  duringStop.context.stopPlayer()
+  duringStop.context.tuneRandom()
+  if (phase === "deferred") duringStop.finish([])
+  duringStop.context.playerGenerationFile.value = "1"
+  if (phase === "queued") duringStop.finish([])
+  duringStop.flush()
+  duringStop.finish([{ uuid: "requested-during-stop" }])
+  assert.deepEqual(duringStop.played, [], "Playback waits for the panel Stop to finish")
+  duringStop.finishStop(stopped, 0, { canceledGeneration: "0", stopGeneration: "1" })
+  duringStop.flush()
+  assert.deepEqual(duringStop.played, ["requested-during-stop"],
+    `${phase} Random requested during local Stop must survive an early fetch completion`)
+}
+
+for (const phase of ["active", "queued", "deferred", "result"]) {
+  for (const requestAfterExternalStop of [false, true]) {
+    const overlap = session()
+    if (phase === "queued" || phase === "deferred") overlap.context.startFetch("world", "")
+    overlap.context.stopPlayer()
+    if (requestAfterExternalStop) overlap.context.playerGenerationFile.value = "1"
+    overlap.context.tuneRandom()
+    if (!requestAfterExternalStop) overlap.context.playerGenerationFile.value = "1"
+    if (phase === "deferred") overlap.finish([])
+    overlap.context.playerGenerationFile.value = "2"
+    if (phase === "queued") overlap.finish([])
+    overlap.flush()
+    if (phase === "result") overlap.finish([{ uuid: "overlap-random" }])
+    overlap.finishStop(stopped, 0, { canceledGeneration: "1", stopGeneration: "2" })
+    overlap.flush()
+    if (phase !== "result") overlap.finish([{ uuid: "overlap-random" }])
+    assert.deepEqual(overlap.played, requestAfterExternalStop ? ["overlap-random"] : [],
+      `${phase} Random must respect the later media Stop during a panel Stop`)
+    assert.equal(overlap.context.playerError, "")
+  }
+}
+
+for (const externalStopAfterCommit of [false, true]) {
+  const overlap = session()
+  overlap.context.stopPlayer()
+  overlap.context.pendingPlayStation = { uuid: "queued-during-stop" }
+  overlap.context.pendingPlayScope = "results"
+  overlap.context.pendingPlayStations = [overlap.context.pendingPlayStation]
+  overlap.context.pendingPlayGeneration = "0"
+  overlap.context.playerGenerationFile.value = "2"
+  overlap.finishStop(stopped, 0, externalStopAfterCommit
+    ? { canceledGeneration: "0", stopGeneration: "1" }
+    : { canceledGeneration: "1", stopGeneration: "2" })
+  overlap.flush()
+  assert.deepEqual(overlap.played, [], "A panel Stop acknowledgment cannot revive a canceled selection")
+}
 
 console.log("Search, country, and random queue tests passed")

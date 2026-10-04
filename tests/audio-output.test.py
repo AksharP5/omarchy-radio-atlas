@@ -212,7 +212,8 @@ class AudioOutputTest(unittest.TestCase):
 
     def snapshot(self, event, **extra):
         result = dict(event=event, paused=self.property("pause"),
-                      time=self.property("time-pos"), output=self.property("audio-device"),
+                      time=None if self.property("idle-active") else self.property("time-pos"),
+                      output=self.property("audio-device"),
                       devices=sorted(name for name in self.devices() if name.startswith("pipewire/")), **extra)
         with (self.root / "evidence.jsonl").open("a") as output:
             output.write(json.dumps(result) + "\n")
@@ -339,6 +340,45 @@ class AudioOutputTest(unittest.TestCase):
             self.assertEqual(self.property("playlist-pos"), position)
             self.assert_playing_on_selected(f"MPRIS paused then Stop then {action}")
 
+    def test_mpris_stop_cancels_saved_station_preparation(self):
+        if LEGACY_PLAYER:
+            self.skipTest("playback cancellation belongs to the Radio Atlas MPRIS bridge")
+        ready = self.root / "fetch-ready"
+        release = self.root / "fetch-release"
+        row = dict(uuid="12345678-1234-1234-1234-123456789abc", name="Pending station",
+                   url="http://127.0.0.1:9/unreachable")
+        state = self.root / "data/radio-atlas/state.json"
+        state.parent.mkdir(parents=True)
+        state.write_text(json.dumps(dict(favorites=[row], recent=[], volume=70)))
+        fetch = self.root / "gated-fetch"
+        fetch.write_text("#!/usr/bin/python3\nimport time\nfrom pathlib import Path\nPath("
+                         + repr(str(ready)) + ").touch()\nwhile not Path(" + repr(str(release))
+                         + ").exists(): time.sleep(.01)\nprint(" + repr(json.dumps([row])) + ")\n")
+        fetch.chmod(0o700)
+        binary = self.root / "bin"
+        binary.mkdir()
+        curl = binary / "curl"
+        curl.write_text("#!/bin/sh\nexit 0\n")
+        curl.chmod(0o700)
+        environment = {**self.env, "RADIO_ATLAS_FETCH_PATH": str(fetch),
+                       "PATH": f"{binary}:{self.env['PATH']}"}
+        pending = subprocess.Popen([str(PROJECT / "radio-player"), "play", row["uuid"], "favorites"],
+                                   env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True)
+        self.processes.append(pending)
+        self.addCleanup(pending.stdout.close)
+        self.addCleanup(pending.stderr.close)
+        self.addCleanup(release.touch)
+        self.wait(ready.exists)
+        self.mpris_action("Stop")
+        self.wait(lambda: self.property("idle-active"))
+        release.touch()
+        _, error = pending.communicate(timeout=5)
+        self.assertEqual(pending.returncode, 4, error)
+        self.assertIn("canceled", error)
+        self.assertTrue(self.property("idle-active"), "Preparation must not undo media-control Stop")
+        self.assertEqual(self.property("playlist-count"), 1, "Stop must keep the existing queue")
+
     def test_mpris_volume_is_saved_for_the_next_player_session(self):
         if LEGACY_PLAYER:
             self.skipTest("volume persistence belongs to the Radio Atlas MPRIS bridge")
@@ -397,14 +437,14 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
             self.processes.append(pending)
             self.addCleanup(pending.stdout.close)
             self.addCleanup(pending.stderr.close)
-            # Observe the child holding player.lock while its state read waits.
-            with (self.runtime / "player.lock").open("w") as player_lock:
+            # Observe the volume operation waiting on state without blocking Stop.
+            with (self.runtime / "settings.lock").open("w") as settings_lock:
                 def waiting_for_state():
                     try:
-                        fcntl.flock(player_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(settings_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError:
                         return True
-                    fcntl.flock(player_lock, fcntl.LOCK_UN)
+                    fcntl.flock(settings_lock, fcntl.LOCK_UN)
                     return False
                 self.wait(waiting_for_state)
             started = time.monotonic()
@@ -413,6 +453,12 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
             self.assertLess(pause_latency, 0.5)
             self.assertTrue(self.property("pause"))
             self.assertIsNone(pending.poll())
+            self.mpris_action("Play")
+            started = time.monotonic()
+            self.mpris_action("Stop")
+            stop_latency = time.monotonic() - started
+            self.assertLess(stop_latency, 0.5)
+            self.assertTrue(self.property("idle-active"))
             properties, context = self.media_properties()
             second_replies, second_errors = [], []
             properties.Set("org.mpris.MediaPlayer2.Player", "Volume", 0.3,
@@ -440,6 +486,7 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
         self.assertEqual(saved, final_volume)
         self.snapshot("overlapping media and UI controls", volume=final_volume,
                       saved_volume=saved, pause_latency_seconds=round(pause_latency, 3),
+                      stop_latency_seconds=round(stop_latency, 3),
                       requested_volumes=[20, 30, 40])
 
     def media_properties(self):
@@ -515,13 +562,13 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
             properties.Get("org.mpris.MediaPlayer2.Player", "Rate")
             self.player.terminate()
             self.player.wait(timeout=3)
-            with (self.runtime / "player.lock").open("w") as player_lock:
+            with (self.runtime / "settings.lock").open("w") as settings_lock:
                 def released():
                     try:
-                        fcntl.flock(player_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(settings_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError:
                         return False
-                    fcntl.flock(player_lock, fcntl.LOCK_UN)
+                    fcntl.flock(settings_lock, fcntl.LOCK_UN)
                     return True
                 self.wait(released)
             fcntl.flock(lock, fcntl.LOCK_UN)
@@ -589,7 +636,7 @@ if __name__ == "__main__":
     parser.add_argument("--require-dependencies", action="store_true")
     parser.add_argument("--scenario", choices=("all", "reconnect", "mpris-pause", "ui-pause", "ui-cancel",
                                               "repeated-pause", "pause-before-removal", "rapid-reconnect",
-                                              "media-controls", "volume"),
+                                              "media-controls", "stop-preparation", "volume"),
                         default="all")
     options = parser.parse_args()
     SCRIPT = options.script.resolve()
@@ -607,7 +654,8 @@ if __name__ == "__main__":
                  "repeated-pause": "test_mpris_pause_cancels_recovery_while_already_paused",
                  "pause-before-removal": "test_manual_pause_immediately_before_removal_is_preserved",
                  "rapid-reconnect": "test_rapid_output_changes_recover",
-                 "media-controls": "test_mpris_play_controls_restart_stopped_station"}
+                 "media-controls": "test_mpris_play_controls_restart_stopped_station",
+                 "stop-preparation": "test_mpris_stop_cancels_saved_station_preparation"}
     if options.scenario == "all":
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(AudioOutputTest)
     elif options.scenario == "volume":

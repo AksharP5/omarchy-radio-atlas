@@ -134,9 +134,11 @@ default" does not identify the actual output, so it requires manual resume after
 a device-loss pause.
 
 External media-control Stop shows "Stopped" in Radio Atlas and clears the bar's
-playing indicator. Play or bar right-click resumes the stopped station while
-keeping its queue. Next/Previous plays its neighboring station, including after
-stopping paused playback.
+playing indicator. It also cancels pending tuning and saved-station playback
+preparation, including when already stopped or a panel Stop is still completing.
+New playback requests after Stop still work. Play or bar right-click resumes the
+stopped station while keeping its queue. Next/Previous plays its neighboring
+station, including after stopping paused playback.
 
 AirPlay speakers appear in this list once PipeWire exposes them as RAOP sinks.
 On Arch Linux, the RAOP modules ship in the optional `pipewire-zeroconf`

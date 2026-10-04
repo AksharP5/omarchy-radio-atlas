@@ -42,6 +42,11 @@ class MPV:
 
 class RecoveryTest(unittest.TestCase):
     def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="atlas-mpris-recovery-")
+        self.addCleanup(directory.cleanup)
+        runtime = Path(directory.name)
+        (runtime / "omarchy-radio-atlas").mkdir()
+        patch.dict(os.environ, XDG_RUNTIME_DIR=str(runtime)).start()
         self.timers = {}
         self.sequence = 0
         self.reset()
@@ -311,7 +316,7 @@ class PropertiesTest(unittest.TestCase):
         self.addCleanup(server.close)
         replies, errors = [], []
         context = mpris.GLib.MainContext.default()
-        with (runtime / "player.lock").open("w") as lock:
+        with (runtime / "settings.lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             for value in [0.2, 0.8]:
                 server.Set(mpris.PLAYER, "Volume", mpris.dbus.Double(value),

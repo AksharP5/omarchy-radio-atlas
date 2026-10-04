@@ -105,7 +105,7 @@ country_fetch_block=$(sed -n \
 rg -Fq 'root.applyCountryStations(root.fetchValue, stations)' <<<"$country_fetch_block"
 sed -n '/if (root.pendingFetchAction)/,/^        }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'nextAction === "random" ? root.randomExclusions() : nextValue'
-sed -n '/function playSelected()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+sed -n '/function playSelected(/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | assert_no_match 'recordPlayed'
 rg -q 'clockwiseArc' "$project_dir/Globe.qml"
 rg -q 'Accessible.onPressAction' "$project_dir/RadioAtlas.qml"
