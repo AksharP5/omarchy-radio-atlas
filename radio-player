@@ -25,6 +25,7 @@ status_script="$script_dir/radio-status.lua"
 version=$(jq -r '.version' "$script_dir/manifest.json")
 user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
 install -d -m 700 "$runtime_dir" "$state_dir"
+exec 7>"$runtime_dir/settings.lock"
 exec 8>"$runtime_dir/player.lock"
 
 process_start_time() {
@@ -237,13 +238,16 @@ set_volume() {
   "$state_path" get >/dev/null
   local command
   command=$(jq -cn --argjson volume "$volume" '{command:["set_property","volume",$volume]}')
+  flock -x 8
   if [[ -S $socket ]] && ! send_command "$command"; then
+    flock -u 8
     status >/dev/null
     if [[ -S $socket ]]; then
       echo 'Radio volume could not be changed' >&2
       exit 4
     fi
   fi
+  flock -u 8
   persist_volume "$volume"
   status
 }
@@ -354,12 +358,14 @@ set_output() {
   fi
 
   "$state_path" get >/dev/null
+  flock -x 8
   if [[ -S $socket ]]; then
     local device command
     device=auto
     [[ -z $requested ]] || device="pipewire/$requested"
     command=$(jq -cn --arg device "$device" '{command:["set_property","audio-device",$device]}')
     if ! send_command "$command"; then
+      flock -u 8
       status >/dev/null
       if [[ -S $socket ]]; then
         echo 'Audio output could not be changed' >&2
@@ -367,6 +373,7 @@ set_output() {
       fi
     fi
   fi
+  flock -u 8
   "$state_path" output "$requested" >/dev/null
   status
 }
@@ -481,6 +488,7 @@ play_station() {
   } > "$temporary_playlist"
   rm -f "$source_file"
 
+  flock -x 7
   flock -x 8
   if [[ $(player_generation) != "$starting_generation" ]]; then
     rm -f "$temporary_playlist" "$temporary_queue"
@@ -529,7 +537,7 @@ play_station() {
     RADIO_ATLAS_STATUS_FILE="$status_file" \
     RADIO_ATLAS_QUEUE_FILE="$queue_file" \
     setsid "$script_dir/radio-session" "${player_arguments[@]}" \
-      > "$log_file" 2>&1 8>&- &
+      > "$log_file" 2>&1 7>&- 8>&- &
     local player_pid=$!
     if ! write_player_pid "$player_pid"; then
       kill -- "-$player_pid" 2>/dev/null || kill "$player_pid" 2>/dev/null || true
@@ -562,7 +570,7 @@ play_station() {
   if [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]]; then
     curl --fail --silent --max-time 4 --proto '=https' \
       --user-agent "$user_agent" \
-      "https://all.api.radio-browser.info/json/url/$uuid" >/dev/null 2>&1 8>&- &
+      "https://all.api.radio-browser.info/json/url/$uuid" >/dev/null 2>&1 7>&- 8>&- &
   fi
 
   status
@@ -579,7 +587,12 @@ resume_last() {
 }
 
 action=${1:-status}
-[[ $action == play || $action == resume || $action == outputs ]] || flock -x 8
+if [[ $action == volume || $action == volume-up || $action == volume-down || $action == output ]]; then
+  # Keep settings ordered without holding Stop's lock during saved-state IO.
+  flock -x 7
+elif [[ $action != play && $action != resume && $action != outputs ]]; then
+  flock -x 8
+fi
 case "$action" in
   play)
     play_station "${2:-}" "${3:-results}"

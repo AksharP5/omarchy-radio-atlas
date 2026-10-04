@@ -212,7 +212,8 @@ class AudioOutputTest(unittest.TestCase):
 
     def snapshot(self, event, **extra):
         result = dict(event=event, paused=self.property("pause"),
-                      time=self.property("time-pos"), output=self.property("audio-device"),
+                      time=None if self.property("idle-active") else self.property("time-pos"),
+                      output=self.property("audio-device"),
                       devices=sorted(name for name in self.devices() if name.startswith("pipewire/")), **extra)
         with (self.root / "evidence.jsonl").open("a") as output:
             output.write(json.dumps(result) + "\n")
@@ -340,6 +341,8 @@ class AudioOutputTest(unittest.TestCase):
             self.assert_playing_on_selected(f"MPRIS paused then Stop then {action}")
 
     def test_mpris_stop_cancels_saved_station_preparation(self):
+        if LEGACY_PLAYER:
+            self.skipTest("playback cancellation belongs to the Radio Atlas MPRIS bridge")
         ready = self.root / "fetch-ready"
         release = self.root / "fetch-release"
         row = dict(uuid="12345678-1234-1234-1234-123456789abc", name="Pending station",
@@ -434,14 +437,14 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
             self.processes.append(pending)
             self.addCleanup(pending.stdout.close)
             self.addCleanup(pending.stderr.close)
-            # Observe the child holding player.lock while its state read waits.
-            with (self.runtime / "player.lock").open("w") as player_lock:
+            # Observe the volume operation waiting on state without blocking Stop.
+            with (self.runtime / "settings.lock").open("w") as settings_lock:
                 def waiting_for_state():
                     try:
-                        fcntl.flock(player_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(settings_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError:
                         return True
-                    fcntl.flock(player_lock, fcntl.LOCK_UN)
+                    fcntl.flock(settings_lock, fcntl.LOCK_UN)
                     return False
                 self.wait(waiting_for_state)
             started = time.monotonic()
@@ -450,6 +453,12 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
             self.assertLess(pause_latency, 0.5)
             self.assertTrue(self.property("pause"))
             self.assertIsNone(pending.poll())
+            self.mpris_action("Play")
+            started = time.monotonic()
+            self.mpris_action("Stop")
+            stop_latency = time.monotonic() - started
+            self.assertLess(stop_latency, 0.5)
+            self.assertTrue(self.property("idle-active"))
             properties, context = self.media_properties()
             second_replies, second_errors = [], []
             properties.Set("org.mpris.MediaPlayer2.Player", "Volume", 0.3,
@@ -477,6 +486,7 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
         self.assertEqual(saved, final_volume)
         self.snapshot("overlapping media and UI controls", volume=final_volume,
                       saved_volume=saved, pause_latency_seconds=round(pause_latency, 3),
+                      stop_latency_seconds=round(stop_latency, 3),
                       requested_volumes=[20, 30, 40])
 
     def media_properties(self):
@@ -552,13 +562,13 @@ os.execv("/usr/bin/mpv", ["mpv", "--no-config", "--ao=pipewire", *arguments,
             properties.Get("org.mpris.MediaPlayer2.Player", "Rate")
             self.player.terminate()
             self.player.wait(timeout=3)
-            with (self.runtime / "player.lock").open("w") as player_lock:
+            with (self.runtime / "settings.lock").open("w") as settings_lock:
                 def released():
                     try:
-                        fcntl.flock(player_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(settings_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     except BlockingIOError:
                         return False
-                    fcntl.flock(player_lock, fcntl.LOCK_UN)
+                    fcntl.flock(settings_lock, fcntl.LOCK_UN)
                     return True
                 self.wait(released)
             fcntl.flock(lock, fcntl.LOCK_UN)
