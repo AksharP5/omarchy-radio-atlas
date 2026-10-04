@@ -77,6 +77,7 @@ Item {
   property string recordedStationUuid: ""
   property string lastRandomUuid: ""
   property bool playCancellationRequested: false
+  property bool localStopStatusPending: false
   property var pendingPlayStation: null
   property string pendingPlayScope: ""
   property var pendingPlayStations: []
@@ -581,6 +582,8 @@ Item {
     if (playerActionProcess.running && !playPreparing) return
     if (playPreparing) playCancellationRequested = true
     playerError = ""
+    localStopStatusPending = true
+    stopProcess.output = ""
     stopProcess.command = [playerPath, "stop"]
     stopProcess.running = true
   }
@@ -598,7 +601,8 @@ Item {
       playerRunning = state.running === true
       playerPaused = state.paused === true
       playerStopped = state.stopped === true
-      if (!playbackWasStopped && (!playerRunning || playerStopped)) randomPlaybackPending = false
+      if (!playbackWasStopped && (!playerRunning || playerStopped) && !localStopStatusPending)
+        randomPlaybackPending = false
       streamError = String(state.error || "").replace(/[\r\n\t]+/g, " ").slice(0, 200)
       playerMuted = state.muted === true
       playerOutput = /^[A-Za-z0-9._:+-]{0,160}$/.test(String(state.output || ""))
@@ -1154,10 +1158,20 @@ Item {
 
   Process {
     id: stopProcess
+    property string output: ""
     command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: stopProcess.output = text
+    }
     onExited: function(exitCode) {
       if (exitCode !== 0) root.playerError = "Could not stop the player"
-      else root.statusReady = true
+      else {
+        // Apply Stop's acknowledgment before releasing newer playback requests.
+        root.applyPlayerState(stopProcess.output)
+        root.statusReady = true
+      }
+      root.localStopStatusPending = false
       Qt.callLater(root.playPendingStation)
     }
   }

@@ -14,6 +14,7 @@ const context = vm.createContext({
   playingStationUuid: "",
   playerRunning: false,
   playerStopped: false,
+  localStopStatusPending: false,
   recordedStationUuid: "",
   pendingVolume: -1,
   playerError: "",

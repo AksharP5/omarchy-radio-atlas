@@ -3,8 +3,9 @@ import fs from "node:fs"
 import vm from "node:vm"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
-const functions = source.match(/  function (?:cancelPendingFetch|cancelPendingPlay|stopPlayer|tuneRandom|startFetch|showWorld|showFavorites|previewSearch|search|browseCountry|setStationList)\([\s\S]*?\n  \}/g).join("\n")
+const functions = source.match(/  function (?:applyPlayerState|cancelPendingFetch|cancelPendingPlay|stopPlayer|tuneRandom|startFetch|showWorld|showFavorites|previewSearch|search|browseCountry|setStationList)\([\s\S]*?\n  \}/g).join("\n")
 const complete = source.match(/id: fetchProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
+const stopComplete = source.match(/id: stopProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const edit = source.match(/id: searchField[\s\S]*?onTextEdited: \{([\s\S]*?)\n          \}/)[1]
 const debounce = source.match(/id: searchDebounce[\s\S]*?onTriggered: ([^\n]+)/)[1]
 const model = vm.createContext({})
@@ -39,10 +40,17 @@ function session() {
     fetchStderr: "",
     fetching: false,
     randomPlaybackPending: false,
+    playerRunning: false,
+    playerStopped: false,
+    playingStationUuid: "",
+    recordedStationUuid: "",
+    pendingVolume: -1,
+    playerError: "",
     playPreparing: false,
     playCancellationRequested: false,
+    localStopStatusPending: false,
     playerActionProcess: { running: false },
-    stopProcess: { running: false, command: [] },
+    stopProcess: { running: false, command: [], output: "" },
     playerPath: "/radio-player",
     playSelected() { played.push(this.results[0].uuid) },
     searchField: { text: "" },
@@ -60,6 +68,9 @@ function session() {
       },
     },
     setSelection() {},
+    highlightStationCountry() {},
+    recordPlayed() {},
+    playPendingStation() {},
     keyCatcher: { forceActiveFocus() {} },
     restorePlayingCountry() {},
     scheduleWorldExpansion() {},
@@ -70,6 +81,7 @@ function session() {
   Object.defineProperty(context, "displayStations", { get: () => context.results })
   vm.runInContext(`${functions}
     function complete(exitCode) {${complete}}
+    function stopComplete(exitCode) {${stopComplete}}
     function editText(text) {${edit}}
     function debounce() {${debounce}}`, context)
   return {
@@ -89,6 +101,11 @@ function session() {
       context.fetchProcess.running = false
       context.fetchOutput = JSON.stringify(rows)
       context.complete(exitCode)
+    },
+    finishStop(state, exitCode = 0) {
+      context.stopProcess.running = false
+      context.stopProcess.output = JSON.stringify(state)
+      context.stopComplete(exitCode)
     },
     flush() {
       while (callbacks.length) callbacks.shift()()
@@ -225,5 +242,47 @@ for (const [rows, exitCode] of [[[], 0], [[], 1], [null, 0]]) {
   assert.equal(run.context.randomPlaybackPending, false, "Failed or empty tuning is no longer pending")
   assert.deepEqual(run.played, [])
 }
+
+const playing = { running: true }
+const stopped = { running: false }
+for (const statusBeforeCompletion of [false, true]) {
+  const run = session()
+  run.context.applyPlayerState(JSON.stringify(playing))
+  run.context.stopPlayer()
+  run.context.tuneRandom()
+  if (statusBeforeCompletion) run.context.applyPlayerState(JSON.stringify(stopped))
+  run.finishStop(stopped)
+  if (!statusBeforeCompletion) run.context.applyPlayerState(JSON.stringify(stopped))
+  run.finish([{ uuid: "requested-after-stop" }])
+  assert.deepEqual(run.played, ["requested-after-stop"],
+    "A local Stop's delayed status must preserve a newer Random request")
+}
+
+for (const initiallyRunning of [false, true]) {
+  const run = session()
+  run.context.applyPlayerState(JSON.stringify({ running: initiallyRunning }))
+  run.context.stopPlayer()
+  run.context.tuneRandom()
+  // FileView may coalesce the stop write with later playback status.
+  run.finishStop(stopped)
+  run.finish([{ uuid: "requested-after-stop" }])
+  assert.deepEqual(run.played, ["requested-after-stop"])
+  run.context.applyPlayerState(JSON.stringify(playing))
+  run.context.tuneRandom()
+  run.context.applyPlayerState(JSON.stringify(stopped))
+  run.finish([{ uuid: "canceled-by-external-stop" }])
+  assert.deepEqual(run.played, ["requested-after-stop"],
+    "A completed local Stop must not hide a later external Stop")
+}
+
+const failedStop = session()
+failedStop.context.applyPlayerState(JSON.stringify(playing))
+failedStop.context.stopPlayer()
+failedStop.context.tuneRandom()
+failedStop.finishStop({}, 1)
+assert.equal(failedStop.context.playerError, "Could not stop the player")
+failedStop.context.applyPlayerState(JSON.stringify(stopped))
+failedStop.finish([{ uuid: "canceled-after-failed-stop" }])
+assert.deepEqual(failedStop.played, [], "A failed local Stop must not hide an external Stop")
 
 console.log("Search, country, and random queue tests passed")
