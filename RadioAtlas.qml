@@ -306,6 +306,7 @@ Item {
     if (displayStations.length === 0) return
     if (selectedIndex < 0) setSelection(delta < 0 ? displayStations.length - 1 : 0, true)
     else setSelection((selectedIndex + delta + displayStations.length) % displayStations.length, true)
+    keyCatcher.forceActiveFocus()
   }
 
   function setStationList(nextMode, stations, preserveSelection) {
@@ -784,7 +785,7 @@ Item {
     var preferredUuid = selectedStation ? selectedStation.uuid : playingStationUuid
     var index = preferredUuid ? RadioModel.indexByUuid(stations, preferredUuid) : -1
     if (index < 0 && stations.length > 0) index = Math.min(Math.max(selectedIndex, 0), stations.length - 1)
-    setSelection(index)
+    setSelection(index, keyboardSelectionVisible)
   }
 
   function emptyStateText() {
@@ -1664,6 +1665,7 @@ Item {
               Button {
                 text: "World"
                 selected: root.mode === "world"
+                focusable: true
                 foreground: root.foreground
                 accent: root.accent
                 fontSize: Style.font.caption
@@ -1672,6 +1674,7 @@ Item {
               Button {
                 text: "Favorites"
                 selected: root.mode === "favorites"
+                focusable: true
                 foreground: root.foreground
                 accent: root.accent
                 fontSize: Style.font.caption
@@ -1680,6 +1683,7 @@ Item {
               Button {
                 text: "Recent"
                 selected: root.mode === "recent"
+                focusable: true
                 foreground: root.foreground
                 accent: root.accent
                 fontSize: Style.font.caption

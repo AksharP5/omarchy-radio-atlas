@@ -74,6 +74,7 @@ Favorites, listening history, volume, and the selected audio output remain in
 | `+` / `-` | Raise or lower radio volume |
 | `M` | Mute or unmute |
 | Speaker icon | Choose the audio output |
+| Tab / Shift+Tab, then Enter or Space | Navigate and activate controls, including World / Favorites / Recent |
 | `?` | Show or hide controls |
 | Escape | Hide controls, clear search, or close |
 
@@ -107,9 +108,9 @@ preserving the selected station and ignoring updates for other countries.
 The globe skips off-screen station markers when zoomed in, and player-status
 updates for the same station preserve the landing highlight without repainting
 the globe.
-Search and world refreshes also preserve your selected station when it remains
-in the results, including its keyboard highlight. Track-title, volume, and pause
-updates preserve your station-list selection.
+Search, world, favorites, and recent-list refreshes preserve your selected station
+when it remains in the results, including its keyboard highlight. Track-title,
+volume, and pause updates preserve your station-list selection.
 Theme colors update the globe immediately. Background station expansion stops
 after three consecutive attempts add no stations, including failed requests;
 reopening Radio Atlas allows expansion to try again.
@@ -205,9 +206,9 @@ removing it.
 
 The native QML tests require Qt 6.5 or newer for the globe's drag-event API.
 CI runs them on Ubuntu 26.04 with Qt 6.10.
-Player layout and zoom control tests use the real Omarchy UI components from
-`/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkout's `shell`
-directory to test another version. CI uses a pinned checkout and disables shell
+Keyboard, pointer, player layout, and zoom control tests use the real Omarchy UI
+components from `/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkout's
+`shell` directory to test another version. CI uses a pinned checkout and disables shell
 processes and theme-file access during these tests.
 Headless Qt processes also disable the desktop platform theme and automatic
 portal probes so a private test bus does not start desktop portal services.
