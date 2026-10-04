@@ -193,6 +193,17 @@ capped at 200 lines per player session. Stopping and starting playback begins
 a new session and replaces those logs. A connection closing is not necessarily
 an error; it also happens when changing stations or stopping playback.
 
+If a VPN or proxy uses fake-IP DNS, it can return synthetic station addresses
+such as `198.18.x.x` instead of real public addresses. Radio Atlas rejects these
+with `stage=connect outcome=rejected error=ProxyError status=403` because it
+cannot check the destination hidden behind the mapping. Configure the DNS
+setup to return real addresses for station streams, playlist entries, and
+redirect targets. In mihomo/Clash, use `dns.enhanced-mode: redir-host`, or add
+those hostnames to `dns.fake-ip-filter` in `blacklist` mode. Preserve existing
+filter entries and check both IPv4 and IPv6 answers. See the
+[mihomo DNS settings](https://wiki.metacubex.one/en/config/dns/#enhanced-mode).
+Other fake-IP clients need the equivalent real-address DNS setting.
+
 If saved state is malformed, oversized, or contains too many entries, Radio Atlas
 refuses to overwrite it and reports
 `~/.local/share/radio-atlas/state.json`; back up that file before repairing or
