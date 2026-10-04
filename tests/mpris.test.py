@@ -42,6 +42,11 @@ class MPV:
 
 class RecoveryTest(unittest.TestCase):
     def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="atlas-mpris-recovery-")
+        self.addCleanup(directory.cleanup)
+        runtime = Path(directory.name)
+        (runtime / "omarchy-radio-atlas").mkdir()
+        patch.dict(os.environ, XDG_RUNTIME_DIR=str(runtime)).start()
         self.timers = {}
         self.sequence = 0
         self.reset()
