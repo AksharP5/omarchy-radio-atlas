@@ -628,7 +628,15 @@ case "$action" in
     set_output "${2-}"
     ;;
   stop)
-    stop_player
+    canceled_generation=$(player_generation)
+    stopped_status=$(
+      set -e
+      stop_player
+    )
+    jq -c --arg canceledGeneration "$canceled_generation" \
+      --arg stopGeneration "$(player_generation)" \
+      '. + {canceledGeneration:$canceledGeneration,stopGeneration:$stopGeneration}' \
+      <<< "$stopped_status"
     ;;
   status)
     status
