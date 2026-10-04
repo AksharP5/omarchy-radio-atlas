@@ -5,6 +5,8 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -328,6 +330,63 @@ class PropertiesTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(replies, [True, True])
         self.assertEqual(json.loads(self.state_file.read_text())["volume"], 80)
+
+
+class SessionTest(unittest.TestCase):
+    def test_session_starts_mpris_with_a_shadowed_path_python(self):
+        directory = tempfile.TemporaryDirectory(prefix="radio-atlas-session-")
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        runtime = root / "omarchy-radio-atlas"
+        runtime.mkdir()
+        binary = root / "bin"
+        binary.mkdir()
+        python = binary / "python3"
+        # Model a managed Python without the system dbus/GI site-packages.
+        python.write_text('#!/bin/sh\nexec /usr/bin/python3 -S "$@"\n')
+        python.chmod(0o755)
+        log = tempfile.TemporaryFile(mode="w+")
+        self.addCleanup(log.close)
+
+        def stop(process):
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+
+        bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"],
+                               stdout=subprocess.PIPE, stderr=log, text=True,
+                               start_new_session=True)
+        self.addCleanup(bus.stdout.close)
+        self.addCleanup(stop, bus)
+        address = bus.stdout.readline().strip()
+        self.assertTrue(address)
+        connection = mpris.dbus.bus.BusConnection(address)
+        self.addCleanup(connection.close)
+        env = dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}",
+                   XDG_RUNTIME_DIR=str(root), XDG_DATA_HOME=str(root / "data"),
+                   DBUS_SESSION_BUS_ADDRESS=address)
+        session = subprocess.Popen([
+            str(PROJECT / "radio-session"), "mpv", "--no-config", "--no-video",
+            "--load-scripts=no", "--idle=yes", "--ao=null",
+            f"--input-ipc-server={runtime / 'mpv.sock'}",
+        ], env=env, stdout=log, stderr=log, start_new_session=True)
+        self.addCleanup(stop, session)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and session.poll() is None:
+            if (runtime / "mpv.sock").is_socket() and any(
+                str(name).startswith("org.mpris.MediaPlayer2.mpv.radio_atlas.")
+                for name in connection.list_names()
+            ):
+                return
+            time.sleep(0.02)
+        log.seek(0)
+        self.fail(f"Session did not register MPRIS: {log.read()}")
 
 
 if __name__ == "__main__":
