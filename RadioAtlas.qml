@@ -42,6 +42,7 @@ Item {
 
   property bool fetching: false
   property bool randomPlaybackPending: false
+  property string randomPlayGeneration: "0"
   property string fetchAction: ""
   property string fetchValue: ""
   property string pendingFetchAction: ""
@@ -77,10 +78,12 @@ Item {
   property string recordedStationUuid: ""
   property string lastRandomUuid: ""
   property bool playCancellationRequested: false
+  property string activePlayGeneration: "0"
   property bool localStopStatusPending: false
   property var pendingPlayStation: null
   property string pendingPlayScope: ""
   property var pendingPlayStations: []
+  property string pendingPlayGeneration: ""
   property bool statusReady: false
   readonly property bool playPreparing: playerActionProcess.running
     && playerActionProcess.action === "play"
@@ -337,6 +340,13 @@ Item {
     pendingPlayStation = null
     pendingPlayScope = ""
     pendingPlayStations = []
+    pendingPlayGeneration = ""
+  }
+
+  function playerGeneration() {
+    playerGenerationFile.reload()
+    var value = playerGenerationFile.text().trim()
+    return /^[0-9]+$/.test(value) ? value : "0"
   }
 
   function startFetch(action, value) {
@@ -478,6 +488,7 @@ Item {
     setStationList("random", [])
     restorePlayingCountry(false)
     fetchError = ""
+    randomPlayGeneration = playerGeneration()
     startFetch("random", randomExclusions())
   }
 
@@ -535,6 +546,7 @@ Item {
       pendingPlayStation = station
       pendingPlayScope = scope
       pendingPlayStations = Array.isArray(stations) ? stations.slice(0) : []
+      pendingPlayGeneration = playerGeneration()
       return
     }
     cancelPendingPlay()
@@ -547,6 +559,7 @@ Item {
       playerScope = "selection"
     }
     playCancellationRequested = false
+    activePlayGeneration = playerGeneration()
     highlightStationCountry(station, true)
     playerError = ""
     playerActionProcess.action = "play"
@@ -561,7 +574,9 @@ Item {
     var station = pendingPlayStation
     var scope = pendingPlayScope
     var stations = pendingPlayStations
+    var generation = pendingPlayGeneration
     cancelPendingPlay()
+    if (generation && generation !== playerGeneration()) return
     playStation(station, scope, stations)
   }
 
@@ -601,8 +616,13 @@ Item {
       playerRunning = state.running === true
       playerPaused = state.paused === true
       playerStopped = state.stopped === true
-      if (!playbackWasStopped && (!playerRunning || playerStopped) && !localStopStatusPending)
-        randomPlaybackPending = false
+      if (!playbackWasStopped && (!playerRunning || playerStopped) && !localStopStatusPending) {
+        var generation = playerGeneration()
+        if (randomPlaybackPending && randomPlayGeneration !== generation)
+          randomPlaybackPending = false
+        if (pendingPlayStation && pendingPlayGeneration !== generation) cancelPendingPlay()
+        if (playPreparing && activePlayGeneration !== generation) playCancellationRequested = true
+      }
       streamError = String(state.error || "").replace(/[\r\n\t]+/g, " ").slice(0, 200)
       playerMuted = state.muted === true
       playerOutput = /^[A-Za-z0-9._:+-]{0,160}$/.test(String(state.output || ""))
@@ -851,6 +871,16 @@ Item {
   }
 
   FileView {
+    id: playerGenerationFile
+    path: root.runtimePath + "/player.generation"
+    preload: false
+    // A cached counter could release playback canceled by a newer Stop.
+    blockAllReads: true
+    watchChanges: false
+    printErrors: false
+  }
+
+  FileView {
     id: playSelectionFile
     path: root.playSelectionPath
     preload: false
@@ -929,7 +959,11 @@ Item {
         root.fetching = false
         Qt.callLater(function() {
           if (root.mode !== nextAction) return
-          if (nextAction === "random" && !root.randomPlaybackPending) return
+          if (nextAction === "random" && (!root.randomPlaybackPending
+              || root.randomPlayGeneration !== root.playerGeneration())) {
+            root.randomPlaybackPending = false
+            return
+          }
           if (nextAction === "search"
               && String(searchField.text || "").trim() !== nextValue) return
           if (nextAction === "country" && root.browsedCountryCode !== nextValue) return
@@ -940,6 +974,7 @@ Item {
       }
 
       var playRandom = root.fetchAction === "random" && root.randomPlaybackPending
+        && root.randomPlayGeneration === root.playerGeneration()
       if (root.fetchAction === "random") root.randomPlaybackPending = false
       root.fetching = false
       if (root.mode !== root.fetchAction) return
@@ -1145,7 +1180,8 @@ Item {
     }
     onExited: function(exitCode) {
       var canceled = playerActionProcess.action === "play"
-        && root.playCancellationRequested
+        && (root.playCancellationRequested
+          || root.activePlayGeneration !== root.playerGeneration())
       root.playCancellationRequested = false
       if (exitCode !== 0 && !canceled) {
         root.playerError = playerActionProcess.action === "play"
@@ -1171,6 +1207,9 @@ Item {
         root.applyPlayerState(stopProcess.output)
         root.statusReady = true
       }
+      var generation = root.playerGeneration()
+      if (root.pendingPlayStation) root.pendingPlayGeneration = generation
+      if (root.randomPlaybackPending) root.randomPlayGeneration = generation
       root.localStopStatusPending = false
       Qt.callLater(root.playPendingStation)
     }

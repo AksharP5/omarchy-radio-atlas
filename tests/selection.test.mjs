@@ -15,6 +15,10 @@ const context = vm.createContext({
   playerRunning: false,
   playerStopped: false,
   localStopStatusPending: false,
+  currentGeneration: 0,
+  randomPlayGeneration: "0",
+  pendingPlayStation: null,
+  playPreparing: false,
   recordedStationUuid: "",
   pendingVolume: -1,
   playerError: "",
@@ -25,6 +29,7 @@ const context = vm.createContext({
   },
   highlightStationCountry() {},
   recordPlayed() {},
+  playerGeneration() { return String(context.currentGeneration) },
 })
 vm.runInContext(source.match(/  function (?:applyPlayerState|setSelection)\([\s\S]*?\n  \}/g).join("\n"), context)
 
@@ -161,10 +166,13 @@ for (const mode of ["favorites", "recent"]) {
 for (const stopped of [{ running: false }, { ...playing, stopped: true }]) {
   context.applyPlayerState(JSON.stringify(playing))
   context.randomPlaybackPending = true
+  context.randomPlayGeneration = String(context.currentGeneration)
+  context.currentGeneration++
   context.applyPlayerState(JSON.stringify(stopped))
   assert.equal(context.randomPlaybackPending, false,
     "A stop from the bar or media controls cancels pending random playback")
   context.randomPlaybackPending = true
+  context.randomPlayGeneration = String(context.currentGeneration)
   context.applyPlayerState(JSON.stringify(stopped))
   assert.equal(context.randomPlaybackPending, true,
     "Repeated stopped status must not cancel a new Random request")
