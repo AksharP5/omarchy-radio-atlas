@@ -247,7 +247,7 @@ rg -Fq 'selection_file="$runtime_dir/play-selection.json"' "$project_dir/radio-p
 rg -q 'pendingFavoriteRequests' "$project_dir/RadioAtlas.qml"
 sed -n '/function toggleFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | assert_no_match 'favoriteSelectionFile\.setText'
-sed -n '/function startFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
+sed -n '/function startNextFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'favoriteSelectionFile.setText(JSON.stringify(request.rows)'
 rg -Fq 'favorite-selection.json' "$project_dir/radio-state"
 rg -q 'statusReady' "$project_dir/RadioAtlas.qml" "$project_dir/BarWidget.qml"
