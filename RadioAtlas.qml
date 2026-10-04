@@ -756,14 +756,14 @@ Item {
         return
       }
     }
-    if (stateProcess.running) {
-      pendingFavoriteRequests = pendingFavoriteRequests.concat([request])
-      return
-    }
-    startFavorite(request)
+    pendingFavoriteRequests = pendingFavoriteRequests.concat([request])
+    startNextFavorite()
   }
 
-  function startFavorite(request) {
+  function startNextFavorite() {
+    if (stateProcess.running || pendingFavoriteRequests.length === 0) return
+    var request = pendingFavoriteRequests[0]
+    pendingFavoriteRequests = pendingFavoriteRequests.slice(1)
     if (request.rows.length > 0)
       favoriteSelectionFile.setText(JSON.stringify(request.rows) + "\n")
     stateProcess.action = "favorite"
@@ -1205,9 +1205,7 @@ Item {
       }
 
       if (root.pendingFavoriteRequests.length > 0) {
-        var nextRequest = root.pendingFavoriteRequests[0]
-        root.pendingFavoriteRequests = root.pendingFavoriteRequests.slice(1)
-        Qt.callLater(function() { root.startFavorite(nextRequest) })
+        Qt.callLater(root.startNextFavorite)
         return
       }
       if (root.localReloadPending) root.requestLocalStateReload()
