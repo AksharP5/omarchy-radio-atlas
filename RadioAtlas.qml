@@ -30,6 +30,7 @@ Item {
   property var favorites: []
   property var recent: []
   property string mode: "world"
+  onModeChanged: if (mode !== "random") randomPlaybackPending = false
   property string activeCountryCode: ""
   property string activeCountryName: ""
   property string browsedCountryCode: ""
@@ -40,6 +41,7 @@ Item {
   property bool keyboardSelectionVisible: false
 
   property bool fetching: false
+  property bool randomPlaybackPending: false
   property string fetchAction: ""
   property string fetchValue: ""
   property string pendingFetchAction: ""
@@ -337,6 +339,7 @@ Item {
   }
 
   function startFetch(action, value) {
+    if (action === "random") randomPlaybackPending = true
     var nextValue = value || ""
     if (fetchProcess.running) {
       if (fetchAction === action && fetchValue === nextValue) {
@@ -572,6 +575,7 @@ Item {
   }
 
   function stopPlayer() {
+    randomPlaybackPending = false
     cancelPendingPlay()
     if (stopProcess.running || playCancellationRequested) return
     if (playerActionProcess.running && !playPreparing) return
@@ -587,12 +591,14 @@ Item {
         throw new Error("Player status is too large")
       var state = JSON.parse(raw || "{}")
       var previousUuid = playingStationUuid
+      var playbackWasStopped = !playerRunning || playerStopped
       var nextPlayingStation = state.station && typeof state.station === "object"
         && String(state.station.uuid || "") ? state.station : null
       var nextPlayingUuid = nextPlayingStation ? String(nextPlayingStation.uuid) : ""
       playerRunning = state.running === true
       playerPaused = state.paused === true
       playerStopped = state.stopped === true
+      if (!playbackWasStopped && (!playerRunning || playerStopped)) randomPlaybackPending = false
       streamError = String(state.error || "").replace(/[\r\n\t]+/g, " ").slice(0, 200)
       playerMuted = state.muted === true
       playerOutput = /^[A-Za-z0-9._:+-]{0,160}$/.test(String(state.output || ""))
@@ -919,6 +925,7 @@ Item {
         root.fetching = false
         Qt.callLater(function() {
           if (root.mode !== nextAction) return
+          if (nextAction === "random" && !root.randomPlaybackPending) return
           if (nextAction === "search"
               && String(searchField.text || "").trim() !== nextValue) return
           if (nextAction === "country" && root.browsedCountryCode !== nextValue) return
@@ -928,6 +935,8 @@ Item {
         return
       }
 
+      var playRandom = root.fetchAction === "random" && root.randomPlaybackPending
+      if (root.fetchAction === "random") root.randomPlaybackPending = false
       root.fetching = false
       if (root.mode !== root.fetchAction) return
       if (root.fetchAction === "search"
@@ -956,7 +965,7 @@ Item {
         root.setStationList("search", stations, true)
       } else if (root.fetchAction === "random") {
         root.setStationList("random", stations)
-        if (stations.length > 0) {
+        if (stations.length > 0 && playRandom) {
           root.lastRandomUuid = String(stations[0].uuid || "")
           root.playSelected()
         }
@@ -1996,7 +2005,7 @@ Item {
                 Button {
                   iconText: "\uf04d"
                   tooltipText: "Stop"
-                  enabled: (root.playerRunning || root.playPreparing)
+                  enabled: (root.playerRunning || root.playPreparing || root.randomPlaybackPending)
                     && !stopProcess.running
                     && !root.playCancellationRequested
                     && (!playerActionProcess.running || root.playPreparing)

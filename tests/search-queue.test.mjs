@@ -3,7 +3,7 @@ import fs from "node:fs"
 import vm from "node:vm"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
-const functions = source.match(/  function (?:cancelPendingFetch|startFetch|showWorld|showFavorites|previewSearch|search|browseCountry|setStationList)\([\s\S]*?\n  \}/g).join("\n")
+const functions = source.match(/  function (?:cancelPendingFetch|cancelPendingPlay|stopPlayer|tuneRandom|startFetch|showWorld|showFavorites|previewSearch|search|browseCountry|setStationList)\([\s\S]*?\n  \}/g).join("\n")
 const complete = source.match(/id: fetchProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const edit = source.match(/id: searchField[\s\S]*?onTextEdited: \{([\s\S]*?)\n          \}/)[1]
 const debounce = source.match(/id: searchDebounce[\s\S]*?onTriggered: ([^\n]+)/)[1]
@@ -13,6 +13,7 @@ vm.runInContext(fs.readFileSync(new URL("../RadioModel.js", import.meta.url), "u
 function session() {
   const requests = []
   const callbacks = []
+  const played = []
   const context = vm.createContext({
     RadioModel: model,
     mode: "world",
@@ -37,6 +38,13 @@ function session() {
     fetchOutput: "",
     fetchStderr: "",
     fetching: false,
+    randomPlaybackPending: false,
+    playPreparing: false,
+    playCancellationRequested: false,
+    playerActionProcess: { running: false },
+    stopProcess: { running: false, command: [] },
+    playerPath: "/radio-player",
+    playSelected() { played.push(this.results[0].uuid) },
     searchField: { text: "" },
     searchDebounce: {
       running: false,
@@ -67,6 +75,7 @@ function session() {
   return {
     context,
     requests,
+    played,
     edit(query) {
       context.searchField.text = query
       context.editText(query)
@@ -188,4 +197,33 @@ for (const exitCode of [0, 1]) {
   assert.equal(staleCountry.context.results[0].uuid, "gb-station")
 }
 
-console.log("Search and country queue tests passed")
+for (const phase of ["active", "queued", "deferred"]) {
+  const run = session()
+  if (phase !== "active") run.context.startFetch("world", "")
+  run.context.tuneRandom()
+  if (phase === "deferred") run.finish([])
+  run.context.stopPlayer()
+  assert.equal(run.context.stopProcess.running, true, "Stop must still stop the existing player")
+  if (phase === "queued") run.finish([])
+  run.flush()
+  if (phase === "active") run.finish([{ uuid: "canceled-random" }])
+  assert.deepEqual(run.played, [], `${phase} random request must not play after Stop`)
+  if (phase !== "active")
+    assert.deepEqual(run.requests, [["world"]], "Canceled random work must not start")
+
+  run.context.stopProcess.running = false
+  run.context.tuneRandom()
+  run.finish([{ uuid: "requested-again" }])
+  assert.deepEqual(run.played, ["requested-again"], "A later Random request must still play")
+  assert.equal(run.context.randomPlaybackPending, false)
+}
+
+for (const [rows, exitCode] of [[[], 0], [[], 1], [null, 0]]) {
+  const run = session()
+  run.context.tuneRandom()
+  run.finish(rows, exitCode)
+  assert.equal(run.context.randomPlaybackPending, false, "Failed or empty tuning is no longer pending")
+  assert.deepEqual(run.played, [])
+}
+
+console.log("Search, country, and random queue tests passed")

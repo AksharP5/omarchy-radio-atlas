@@ -84,6 +84,8 @@ and the mouse wheel adjusts radio volume. Volume changes through system media
 controls are saved for the next player session too. If there is no listening history,
 right click does nothing.
 
+Stop also cancels pending random tuning, including before playback starts.
+
 Search accepts country names, two-letter country codes, and aliases such as
 `USA` and `UK`. Recognized countries match by code while station-name and tag
 searches still run. Other queries retain country-name substring matching.
