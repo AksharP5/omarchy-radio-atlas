@@ -775,14 +775,14 @@ Item {
 
   function recordPlayed(uuid) {
     if (!uuid) return
-    if (historyProcess.running) {
-      pendingRecentUuid = uuid
-      return
-    }
-    startRecordPlayed(uuid)
+    pendingRecentUuid = uuid
+    startRecordPlayed()
   }
 
-  function startRecordPlayed(uuid) {
+  function startRecordPlayed() {
+    if (historyProcess.running || !pendingRecentUuid) return
+    var uuid = pendingRecentUuid
+    pendingRecentUuid = ""
     historyProcess.output = ""
     historyProcess.errorOutput = ""
     historyProcess.command = [statePath, "played", uuid]
@@ -1234,9 +1234,7 @@ Item {
       }
 
       if (root.pendingRecentUuid) {
-        var nextUuid = root.pendingRecentUuid
-        root.pendingRecentUuid = ""
-        Qt.callLater(function() { root.startRecordPlayed(nextUuid) })
+        Qt.callLater(root.startRecordPlayed)
         return
       }
       if (root.localReloadPending) root.requestLocalStateReload()
