@@ -21,6 +21,13 @@ diagnostic_count = 0
 diagnostic_lock = threading.Lock()
 NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
 IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
+# Fake-IP DNS (mihomo, Clash, sing-box) answers every lookup from a benchmarking
+# range and routes it into the tunnel, so the real destination is never visible.
+FAKE_IP_NETWORKS = (
+    ipaddress.ip_network("198.18.0.0/15"),
+    ipaddress.ip_network("2001:2::/48"),
+    ipaddress.ip_network("fdfe:dcba:9876::/64"),
+)
 
 
 class ProxyError(Exception):
@@ -101,6 +108,12 @@ def public_endpoints(host: str, port: int):
     except socket.gaierror as error:
         raise ProxyError(b"502 Bad Gateway") from error
 
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        host_is_name = False
+    except ValueError:
+        host_is_name = True
+
     endpoints = []
     seen = set()
     for family, kind, protocol, _, address in addresses:
@@ -112,7 +125,8 @@ def public_endpoints(host: str, port: int):
         seen.add(key)
         ip = ipaddress.ip_address(address[0].split("%", 1)[0])
         nat64 = isinstance(ip, ipaddress.IPv6Address) and ip in NAT64_WELL_KNOWN
-        if (
+        fake_ip = host_is_name and any(ip in network for network in FAKE_IP_NETWORKS)
+        if not fake_ip and (
             not ip.is_global
             or ip.is_multicast
             or ip.is_unspecified

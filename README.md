@@ -176,10 +176,12 @@ click-count endpoint. Favorites and history stay in
 Station metadata and stream URLs are community supplied. Labels are rendered
 as plain text. Playback runs in an isolated network namespace and reaches
 stations through a bounded proxy that rejects private and effectively local
-destinations, including after redirects. Remote metadata and local JSON are
-size- and record-limited before they reach the shell. Radio Atlas still connects
-directly to third-party stations; HTTP streams are unencrypted. Only play
-stations you trust.
+destinations, including after redirects. Hostnames that a fake-IP DNS setup
+(mihomo, Clash, sing-box) resolves into `198.18.0.0/15`, `2001:2::/48`, or
+`fdfe:dcba:9876::/64` are allowed when they do not route locally. Remote
+metadata and local JSON are size- and record-limited before they reach the
+shell. Radio Atlas still connects directly to third-party stations; HTTP
+streams are unencrypted. Only play stations you trust.
 
 Map geometry comes from public-domain Natural Earth data.
 

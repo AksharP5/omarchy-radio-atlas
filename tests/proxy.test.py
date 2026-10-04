@@ -81,6 +81,47 @@ class ProxyTests(unittest.TestCase):
                     radio_proxy.public_endpoints("station.example", 80)
                 route_check.assert_called_once_with(radio_proxy.ipaddress.ip_address(address))
 
+    def test_fake_ip_answers_for_names_are_allowed(self):
+        answers = self.resolve("198.18.0.166", "2001:2::110", "fdfe:dcba:9876::a2")
+        with (
+            patch.object(radio_proxy.socket, "getaddrinfo", return_value=answers),
+            patch.object(radio_proxy, "route_is_local", return_value=False),
+        ):
+            endpoints = radio_proxy.public_endpoints("station.example", 443)
+        self.assertEqual(
+            [endpoint[3][0] for endpoint in endpoints],
+            ["198.18.0.166", "2001:2::110", "fdfe:dcba:9876::a2"],
+        )
+
+    def test_literal_fake_ip_destinations_are_rejected(self):
+        for literal in ("198.18.0.166", "2001:2::110", "[fdfe:dcba:9876::a2]"):
+            with (
+                self.subTest(literal=literal),
+                patch.object(
+                    radio_proxy.socket, "getaddrinfo", return_value=self.resolve(literal.strip("[]"))
+                ),
+                patch.object(radio_proxy, "route_is_local", return_value=False),
+            ):
+                with self.assertRaises(radio_proxy.ProxyError):
+                    radio_proxy.public_endpoints(literal, 80)
+
+    def test_effectively_local_fake_ip_answer_is_rejected(self):
+        with (
+            patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve("198.18.0.1")),
+            patch.object(radio_proxy, "route_is_local", return_value=True),
+        ):
+            with self.assertRaises(radio_proxy.ProxyError):
+                radio_proxy.public_endpoints("station.example", 80)
+
+    def test_mixed_fake_ip_and_private_answers_are_rejected(self):
+        answers = self.resolve("198.18.0.166", "192.168.1.10")
+        with (
+            patch.object(radio_proxy.socket, "getaddrinfo", return_value=answers),
+            patch.object(radio_proxy, "route_is_local", return_value=False),
+        ):
+            with self.assertRaises(radio_proxy.ProxyError):
+                radio_proxy.public_endpoints("station.example", 80)
+
     def test_kernel_local_route_is_detected(self):
         result = radio_proxy.subprocess.CompletedProcess(
             args=[], returncode=0, stdout=b'[{"type":"local","dev":"lo"}]', stderr=b""
