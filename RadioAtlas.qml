@@ -960,7 +960,8 @@ Item {
         Qt.callLater(function() {
           if (root.mode !== nextAction) return
           if (nextAction === "random" && (!root.randomPlaybackPending
-              || root.randomPlayGeneration !== root.playerGeneration())) {
+              || (!root.localStopStatusPending
+                && root.randomPlayGeneration !== root.playerGeneration()))) {
             root.randomPlaybackPending = false
             return
           }
@@ -974,7 +975,7 @@ Item {
       }
 
       var playRandom = root.fetchAction === "random" && root.randomPlaybackPending
-        && root.randomPlayGeneration === root.playerGeneration()
+        && (root.localStopStatusPending || root.randomPlayGeneration === root.playerGeneration())
       if (root.fetchAction === "random") root.randomPlaybackPending = false
       root.fetching = false
       if (root.mode !== root.fetchAction) return

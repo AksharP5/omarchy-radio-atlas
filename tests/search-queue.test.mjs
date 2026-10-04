@@ -386,4 +386,18 @@ delayedExternalStatus.finish([{ uuid: "requested-after-external-stop" }])
 assert.deepEqual(delayedExternalStatus.played, ["requested-after-external-stop"],
   "A delayed external Stop notification must preserve newer Random intent")
 
+for (const phase of ["active", "queued", "deferred"]) {
+  const duringStop = session()
+  if (phase !== "active") duringStop.context.startFetch("world", "")
+  duringStop.context.stopPlayer()
+  duringStop.context.tuneRandom()
+  if (phase === "deferred") duringStop.finish([])
+  duringStop.context.playerGenerationFile.value = "1"
+  if (phase === "queued") duringStop.finish([])
+  duringStop.flush()
+  duringStop.finish([{ uuid: "requested-during-stop" }])
+  assert.deepEqual(duringStop.played, ["requested-during-stop"],
+    `${phase} Random requested during local Stop must survive an early fetch completion`)
+}
+
 console.log("Search, country, and random queue tests passed")
