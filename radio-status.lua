@@ -186,6 +186,11 @@ mp.register_script_message("radio-atlas-mpris-ready", function()
   mp.set_property_bool("user-data/radio-atlas-mpris-ready", true)
 end)
 mp.register_script_message("radio-atlas-perform-toggle", toggle_playback)
+mp.register_script_message("radio-atlas-clear-failure", function()
+  failure = nil
+  mp.set_property_native("user-data/radio-atlas-failure", nil)
+  schedule_update()
+end)
 mp.register_script_message("radio-atlas-toggle", function()
   if mpris_ready then
     mp.commandv("script-message", "radio-atlas-ui-toggle")

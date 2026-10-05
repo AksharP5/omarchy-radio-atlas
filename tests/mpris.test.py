@@ -204,7 +204,8 @@ class RecoveryTest(unittest.TestCase):
     def test_stop_then_play_and_toggle_restart_the_kept_station(self):
         for resume in [self.controls.play, self.controls.toggle]:
             self.controls.stop()
-            self.assertEqual(self.ipc.commands[-1], ("stop", "keep-playlist"))
+            self.assertEqual(self.ipc.commands[-2:], [
+                ("stop", "keep-playlist"), ("script-message", "radio-atlas-clear-failure")])
             self.ipc.properties["playlist-pos"] = -1
             self.ipc.properties["playlist-current-pos"] = -1
             self.ipc.properties["idle-active"] = True
