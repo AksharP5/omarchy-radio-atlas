@@ -12,7 +12,6 @@ max_json_bytes=4194304
 install -d -m 700 "$runtime_dir" "$state_dir"
 
 exec 9>"$state_lock"
-flock -x 9
 
 file_within_limit() {
   local path=$1
@@ -61,7 +60,7 @@ ensure_runtime_data() {
   ensure_runtime_array "$runtime_dir/favorite-selection.json"
 }
 
-find_station() {
+find_runtime_station() {
   local uuid=$1
   local source station
   local -a sources=("$runtime_dir/playlist.json" "$runtime_dir/results.json" "$runtime_dir/world.json")
@@ -69,13 +68,23 @@ find_station() {
     sources=("$runtime_dir/favorite-selection.json" "${sources[@]}")
   fi
   for source in "${sources[@]}"; do
-    station=$(jq -c --arg uuid "$uuid" \
-      'first(.[] | select(.uuid == $uuid)) // empty' "$source" 2>/dev/null || true)
+    file_within_limit "$source" || continue
+    station=$(jq -cs --arg uuid "$uuid" '
+      select(length == 1) | .[0]
+      | select(type == "array" and length <= 500)
+      | first(.[] | select(.uuid == $uuid)) // empty
+    ' "$source" 2>/dev/null || true)
     if [[ -n $station ]]; then
       printf '%s\n' "$station"
       return
     fi
   done
+  return 1
+}
+
+find_station() {
+  find_runtime_station "$1" "$2" && return
+  local uuid=$1
   jq -c --arg uuid "$uuid" \
     'first((.favorites[]?, .recent[]?) | select(.uuid == $uuid)) // empty' \
     "$state_file" 2>/dev/null
@@ -121,8 +130,15 @@ write_output() {
   mv "$temporary" "$state_file"
 }
 
-ensure_state
 action=${1:-get}
+if [[ $action == played ]]; then
+  uuid=${2:-}
+  [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
+  # The playback queue can change while a saved-state write is waiting.
+  played_station=$(find_runtime_station "$uuid" "$action" || true)
+fi
+flock -x 9
+ensure_state
 case "$action" in
   get)
     ;;
@@ -141,9 +157,8 @@ case "$action" in
     ;;
   played)
     ensure_runtime_data
-    uuid=${2:-}
-    [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
-    station=$(find_station "$uuid" "$action")
+    station=$played_station
+    [[ -n $station ]] || station=$(find_station "$uuid" "$action")
     [[ -n $station ]] || { echo 'Station is not in the current data set' >&2; exit 3; }
     write_state '.recent = ([$station] + [.recent[] | select(.uuid != $station.uuid)])[:30]' "$station"
     ;;
