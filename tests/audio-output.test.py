@@ -379,6 +379,27 @@ class AudioOutputTest(unittest.TestCase):
         self.assertTrue(self.property("idle-active"), "Preparation must not undo media-control Stop")
         self.assertEqual(self.property("playlist-count"), 1, "Stop must keep the existing queue")
 
+    def test_mpris_play_retries_after_stopping_failed_station(self):
+        if LEGACY_PLAYER:
+            self.skipTest("failure status belongs to the Radio Atlas MPRIS bridge")
+        repaired = self.root / "repaired.wav"
+        self.ipc("loadfile", str(repaired), "append")
+        for action in ("Play", "PlayPause"):
+            with self.subTest(action=action):
+                repaired.unlink(missing_ok=True)
+                self.ipc("playlist-play-index", 1)
+                self.wait(lambda: self.property("user-data/radio-atlas-failure"))
+                self.mpris_action("Stop")
+                self.wait(lambda: json.loads((self.root / "status.json").read_text()).get("stopped"))
+                stopped = json.loads((self.root / "status.json").read_text())
+                self.assertEqual(stopped["error"], "")
+                self.mpris_action("Stop")
+                shutil.copyfile(self.root / "tone.wav", repaired)
+                self.mpris_action(action)
+                self.wait(lambda: (self.property("time-pos") or 0) > 0.1)
+                self.assertEqual(self.property("playlist-pos"), 1)
+                self.assert_playing_on_selected(f"failed station Stop then {action}")
+
     def test_mpris_volume_is_saved_for_the_next_player_session(self):
         if LEGACY_PLAYER:
             self.skipTest("volume persistence belongs to the Radio Atlas MPRIS bridge")
@@ -636,7 +657,7 @@ if __name__ == "__main__":
     parser.add_argument("--require-dependencies", action="store_true")
     parser.add_argument("--scenario", choices=("all", "reconnect", "mpris-pause", "ui-pause", "ui-cancel",
                                               "repeated-pause", "pause-before-removal", "rapid-reconnect",
-                                              "media-controls", "stop-preparation", "volume"),
+                                              "media-controls", "stop-preparation", "failed-stop-play", "volume"),
                         default="all")
     options = parser.parse_args()
     SCRIPT = options.script.resolve()
@@ -655,7 +676,8 @@ if __name__ == "__main__":
                  "pause-before-removal": "test_manual_pause_immediately_before_removal_is_preserved",
                  "rapid-reconnect": "test_rapid_output_changes_recover",
                  "media-controls": "test_mpris_play_controls_restart_stopped_station",
-                 "stop-preparation": "test_mpris_stop_cancels_saved_station_preparation"}
+                 "stop-preparation": "test_mpris_stop_cancels_saved_station_preparation",
+                 "failed-stop-play": "test_mpris_play_retries_after_stopping_failed_station"}
     if options.scenario == "all":
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(AudioOutputTest)
     elif options.scenario == "volume":
