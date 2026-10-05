@@ -66,6 +66,8 @@ find_runtime_station() {
   local -a sources=("$runtime_dir/playlist.json" "$runtime_dir/results.json" "$runtime_dir/world.json")
   if [[ $2 == favorite ]]; then
     sources=("$runtime_dir/favorite-selection.json" "${sources[@]}")
+  elif [[ $2 == played-selection ]]; then
+    sources=("$runtime_dir/history-selection.json" "${sources[@]}")
   fi
   for source in "${sources[@]}"; do
     file_within_limit "$source" || continue
@@ -134,8 +136,14 @@ action=${1:-get}
 if [[ $action == played ]]; then
   uuid=${2:-}
   [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
+  played_source=played
+  case ${3:-} in
+    selection) played_source=played-selection ;;
+    "") ;;
+    *) echo 'Invalid history source' >&2; exit 2 ;;
+  esac
   # The playback queue can change while a saved-state write is waiting.
-  played_station=$(find_runtime_station "$uuid" "$action" || true)
+  played_station=$(find_runtime_station "$uuid" "$played_source" || true)
 fi
 flock -x 9
 ensure_state

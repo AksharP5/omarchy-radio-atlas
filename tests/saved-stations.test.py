@@ -157,19 +157,40 @@ class SavedStationsTest(unittest.TestCase):
     def test_history_snapshot_rejects_invalid_runtime_arrays(self):
         station = dict(uuid="12345678-1234-1234-1234-123456789abc",
                        name="Station", url="https://example.com/stream")
-        for payload in [json.dumps([station] * 501), json.dumps([station]) + "\n[]"]:
-            with self.subTest(payload=payload[:60]):
-                (self.runtime / "playlist.json").write_text(payload)
-                result = subprocess.run([str(PROJECT / "radio-state"), "played", station["uuid"]],
-                                        env=self.env, capture_output=True, text=True, timeout=5)
-                self.assertEqual(result.returncode, 3, result.stderr)
-                self.assertEqual(json.loads(self.state_file.read_text())["recent"], [])
+        for source, arguments in [("playlist.json", []), ("history-selection.json", ["selection"])]:
+            for payload in [json.dumps([station] * 501), json.dumps([station]) + "\n[]"]:
+                with self.subTest(source=source, payload=payload[:60]):
+                    (self.runtime / source).write_text(payload)
+                    result = subprocess.run([str(PROJECT / "radio-state"), "played", station["uuid"], *arguments],
+                                            env=self.env, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 3, result.stderr)
+                    self.assertEqual(json.loads(self.state_file.read_text())["recent"], [])
 
     def test_history_falls_back_to_saved_stations(self):
         rows = self.save_favorites(1)
         state = self.run_action("radio-state", "played", rows[0]["uuid"])
         self.assertEqual(state["recent"], rows)
         self.assertEqual(state["favorites"], rows)
+
+    def test_history_uses_queued_snapshot_after_playback_changes(self):
+        station = dict(uuid="12345678-1234-1234-1234-123456789abc",
+                       name="Last played station", url="https://example.com/played")
+        following = dict(uuid="87654321-4321-4321-4321-cba987654321",
+                         name="Following station", url="https://example.com/following")
+        (self.runtime / "history-selection.json").write_text(json.dumps([station]))
+        for name in ["playlist.json", "results.json", "world.json"]:
+            (self.runtime / name).write_text(json.dumps([following]))
+        self.state_file.write_text(json.dumps(dict(favorites=[following], recent=[], volume=23)))
+        result = subprocess.run([str(PROJECT / "radio-state"), "played", station["uuid"]],
+                                env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(json.loads(self.state_file.read_text())["recent"], [])
+
+        state = self.run_action("radio-state", "played", station["uuid"], "selection")
+        self.assertEqual(state["recent"], [station])
+        self.assertEqual(state["favorites"], [following])
+        self.assertEqual(state["volume"], 23)
+
 
 
 if __name__ == "__main__":
