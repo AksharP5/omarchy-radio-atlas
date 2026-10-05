@@ -133,17 +133,21 @@ class SavedStationsTest(unittest.TestCase):
                                   env=environment, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, text=True) as process:
                 try:
-                    deadline = time.monotonic() + 5
-                    while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
-                        time.sleep(0.01)
-                    self.assertTrue(ready.exists(), "History never reached saved-state locking")
-                    self.assertIsNone(process.poll())
-                    for name in ["playlist.json", "results.json"]:
-                        (self.runtime / name).write_text(json.dumps([following]))
-                    self.state_file.write_text(json.dumps(dict(favorites=[following], recent=[], volume=23)))
+                    try:
+                        deadline = time.monotonic() + 5
+                        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(ready.exists(), "History never reached saved-state locking")
+                        self.assertIsNone(process.poll())
+                        for name in ["playlist.json", "results.json"]:
+                            (self.runtime / name).write_text(json.dumps([following]))
+                        self.state_file.write_text(json.dumps(dict(favorites=[following], recent=[], volume=23)))
+                    finally:
+                        fcntl.flock(lock, fcntl.LOCK_UN)
+                    output, error = process.communicate(timeout=5)
                 finally:
-                    fcntl.flock(lock, fcntl.LOCK_UN)
-                output, error = process.communicate(timeout=5)
+                    process.kill()
+                    process.wait()
         self.assertEqual(process.returncode, 0, error)
         state = json.loads(output)
         self.assertEqual(state["recent"], [station])
