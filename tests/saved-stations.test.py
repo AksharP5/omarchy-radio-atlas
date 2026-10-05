@@ -1,10 +1,12 @@
 """Exercise saved queue refresh and history with isolated state and network fixtures."""
+import fcntl
 import json
 import os
 from pathlib import Path
 import socket
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -107,6 +109,67 @@ class SavedStationsTest(unittest.TestCase):
         state = self.run_action("radio-state", "favorite", uuid)
         self.assertEqual(state["favorites"], [selected])
         self.assertEqual(state["recent"], [active])
+
+    def test_history_keeps_station_while_waiting_for_saved_state(self):
+        station = dict(uuid="12345678-1234-1234-1234-123456789abc",
+                       name="Played station", url="https://example.com/played")
+        following = dict(uuid="87654321-4321-4321-4321-cba987654321",
+                         name="Following station", url="https://example.com/following")
+        for name in ["playlist.json", "results.json"]:
+            (self.runtime / name).write_text(json.dumps([station]))
+        root = Path(self.directory.name)
+        binary = root / "bin"
+        binary.mkdir()
+        ready = root / "state-lock-requested"
+        wrapper = binary / "flock"
+        wrapper.write_text('#!/bin/sh\n: > "$RADIO_ATLAS_TEST_LOCK_READY"\n'
+                           'exec /usr/bin/flock "$@"\n')
+        wrapper.chmod(0o700)
+        environment = dict(self.env, PATH=f"{binary}:{self.env['PATH']}",
+                           RADIO_ATLAS_TEST_LOCK_READY=str(ready))
+        with self.state_file.with_name("state.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            with subprocess.Popen([str(PROJECT / "radio-state"), "played", station["uuid"]],
+                                  env=environment, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True) as process:
+                try:
+                    try:
+                        deadline = time.monotonic() + 5
+                        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(ready.exists(), "History never reached saved-state locking")
+                        self.assertIsNone(process.poll())
+                        for name in ["playlist.json", "results.json"]:
+                            (self.runtime / name).write_text(json.dumps([following]))
+                        self.state_file.write_text(json.dumps(dict(favorites=[following], recent=[], volume=23)))
+                    finally:
+                        fcntl.flock(lock, fcntl.LOCK_UN)
+                    output, error = process.communicate(timeout=5)
+                finally:
+                    process.kill()
+                    process.wait()
+        self.assertEqual(process.returncode, 0, error)
+        state = json.loads(output)
+        self.assertEqual(state["recent"], [station])
+        self.assertEqual(state["favorites"], [following])
+        self.assertEqual(state["volume"], 23)
+
+    def test_history_snapshot_rejects_invalid_runtime_arrays(self):
+        station = dict(uuid="12345678-1234-1234-1234-123456789abc",
+                       name="Station", url="https://example.com/stream")
+        for payload in [json.dumps([station] * 501), json.dumps([station]) + "\n[]"]:
+            with self.subTest(payload=payload[:60]):
+                (self.runtime / "playlist.json").write_text(payload)
+                result = subprocess.run([str(PROJECT / "radio-state"), "played", station["uuid"]],
+                                        env=self.env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 3, result.stderr)
+                self.assertEqual(json.loads(self.state_file.read_text())["recent"], [])
+
+    def test_history_falls_back_to_saved_stations(self):
+        rows = self.save_favorites(1)
+        state = self.run_action("radio-state", "played", rows[0]["uuid"])
+        self.assertEqual(state["recent"], rows)
+        self.assertEqual(state["favorites"], rows)
 
 
 if __name__ == "__main__":
