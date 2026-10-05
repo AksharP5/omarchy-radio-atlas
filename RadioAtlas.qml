@@ -94,7 +94,7 @@ Item {
   property string localError: ""
   property bool localReloadPending: false
   property var pendingFavoriteRequests: []
-  property string pendingRecentUuid: ""
+  property var pendingRecentRequest: null
 
   readonly property string fetchPath: Qt.resolvedUrl("radio-fetch").toString().replace(/^file:\/\//, "")
   readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
@@ -748,7 +748,7 @@ Item {
 
   function reloadLocalStateWhenIdle() {
     if (!localReloadPending || stateProcess.running || historyProcess.running
-        || pendingFavoriteRequests.length > 0 || pendingRecentUuid) return
+        || pendingFavoriteRequests.length > 0 || pendingRecentRequest) return
     loadState()
   }
 
@@ -798,17 +798,36 @@ Item {
 
   function recordPlayed(uuid) {
     if (!uuid) return
-    pendingRecentUuid = uuid
+    var station = null
+    try {
+      historyPlaylistFile.readSucceeded = false
+      historyPlaylistFile.reload()
+      var raw = historyPlaylistFile.text()
+      if (!historyPlaylistFile.readSucceeded) throw new Error("Playback queue is unavailable")
+      if (raw.length > 4194304) throw new Error("Playback queue is too large")
+      var stations = JSON.parse(raw)
+      if (!Array.isArray(stations) || stations.length > 500)
+        throw new Error("Playback queue is not a station list")
+      var index = RadioModel.indexByUuid(stations, uuid)
+      if (index >= 0) station = stations[index]
+    } catch (error) {
+      console.warn("Played station could not be captured:", error)
+    }
+    pendingRecentRequest = { uuid: uuid, station: station }
     startRecordPlayed()
   }
 
   function startRecordPlayed() {
-    if (historyProcess.running || !pendingRecentUuid) return
-    var uuid = pendingRecentUuid
-    pendingRecentUuid = ""
+    if (historyProcess.running || !pendingRecentRequest) return
+    var request = pendingRecentRequest
+    pendingRecentRequest = null
     historyProcess.output = ""
     historyProcess.errorOutput = ""
-    historyProcess.command = [statePath, "played", uuid]
+    historyProcess.command = [statePath, "played", request.uuid]
+    historySelectionFile.saveSucceeded = false
+    if (request.station && writeSelection(historySelectionFile, request.station, [request.station])
+        && historySelectionFile.saveSucceeded)
+      historyProcess.command = [statePath, "played", request.uuid, "selection"]
     historyProcess.running = true
   }
 
@@ -903,6 +922,29 @@ Item {
     atomicWrites: true
     printErrors: true
     onSaveFailed: root.localError = "Favorite could not be updated"
+  }
+
+  FileView {
+    id: historyPlaylistFile
+    property bool readSucceeded: false
+    path: root.runtimePath + "/playlist.json"
+    preload: false
+    blockAllReads: true
+    watchChanges: false
+    printErrors: false
+    onLoaded: readSucceeded = true
+  }
+
+  FileView {
+    id: historySelectionFile
+    property bool saveSucceeded: false
+    path: root.runtimePath + "/history-selection.json"
+    preload: false
+    watchChanges: false
+    blockWrites: true
+    atomicWrites: true
+    printErrors: true
+    onSaved: saveSucceeded = true
   }
 
   Process {
@@ -1286,7 +1328,7 @@ Item {
         root.localError = "Listening history could not be updated"
       }
 
-      if (root.pendingRecentUuid) {
+      if (root.pendingRecentRequest) {
         Qt.callLater(root.startRecordPlayed)
         return
       }
