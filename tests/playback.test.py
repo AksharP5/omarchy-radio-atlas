@@ -208,6 +208,24 @@ class PlaybackTest(unittest.TestCase):
                 self.assertEqual(resumed["playlistPosition"], position)
                 self.assertEqual(self.requests, requests + [path])
 
+    def test_stop_clears_failure_and_preserves_navigation(self):
+        self.start(["/live", "/broken", "/other"], position=1)
+        self.wait_status(lambda s: s.get("error") == "Station could not be played")
+        requests = list(self.requests)
+        self.native_commands(["stop", "keep-playlist"],
+                             ["script-message", "radio-atlas-clear-failure"])
+        stopped = self.wait_status(lambda s: s.get("stopped"))
+        self.assertEqual(stopped["error"], "")
+        self.assertFalse(stopped["loaded"])
+        reported = self.action("status")
+        self.assertEqual(reported.get("error"), "")
+        self.assertTrue(reported["stopped"])
+        self.assertEqual(self.requests, requests)
+        self.action("next")
+        resumed = self.wait_status(lambda s: s.get("loaded"))
+        self.assertEqual(resumed["playlistPosition"], 2)
+        self.assertEqual(self.requests, requests + ["/other"])
+
     def test_quick_stop_then_navigation_resumes_paused_station(self):
         self.start(["/first", "/second", "/third", "/fourth"], position=1)
         self.wait_status(lambda s: s.get("loaded"))

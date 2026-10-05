@@ -214,6 +214,7 @@ class Controls:
                 # until Play or navigation takes over.
                 self.stopped_position = position
             self.ipc.command("stop", "keep-playlist")
+            self.ipc.command("script-message", "radio-atlas-clear-failure")
 
     def action(self, *command):
         self.cancel()
