@@ -6,12 +6,15 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
 project = Path(__file__).resolve().parents[1]
 quickshell = shutil.which("qs") or shutil.which("quickshell")
 if not quickshell:
+    if "--require-dependencies" in sys.argv:
+        raise RuntimeError("History queue test requires Quickshell")
     print("History queue test skipped: Quickshell is unavailable")
     raise SystemExit(0)
 
@@ -56,6 +59,7 @@ ShellRoot {
   property var pendingRecentRequest: null
   property bool localReloadPending: false
   property string localError: ""
+  onLocalErrorChanged: console.log("LOCAL_ERROR", localError)
   function requestLocalStateReload() {}
 FUNCTIONS
 VIEWS
@@ -65,10 +69,12 @@ WRITER
     watchChanges: true
     onFileChanged: reload()
     onLoaded: {
-      var uuid = text().trim()
-      if (!uuid) return
-      root.recordPlayed(uuid)
-      console.log("QUEUED_HISTORY")
+      var command = JSON.parse(text() || "null")
+      if (!command) return
+      if (command.snapshotPath) historySelectionFile.path = command.snapshotPath
+      root.recordPlayed(command.uuid)
+      console.log("QUEUED_HISTORY", JSON.stringify(root.pendingRecentRequest),
+                  JSON.stringify(historyProcess.command), historySelectionFile.path)
     }
   }
   Component.onCompleted: recordPlayed(FIRST)
@@ -98,13 +104,13 @@ WRITER
                     if process.poll() is not None:
                         break
                     time.sleep(0.025)
-                raise AssertionError(f"History queue did not finish:\n{log_path.read_text()}")
+                raise AssertionError(f"History queue did not finish: {state.read_text()}\n{log_path.read_text()}")
 
             try:
                 wait_for(marker.exists)
                 playlist.write_text(json.dumps([queued]))
                 update = directory / "control.tmp"
-                update.write_text(queued["uuid"])
+                update.write_text(json.dumps(dict(uuid=queued["uuid"])))
                 update.replace(control)
                 wait_for(lambda: "QUEUED_HISTORY" in log_path.read_text())
                 playlist.write_text(json.dumps([following]))
@@ -114,6 +120,23 @@ WRITER
             saved = json.loads(state.read_text())
             assert saved["favorites"] == [following], saved
             assert saved["volume"] == 23, saved
+
+            # A failed snapshot must leave the fallback pending without showing an error.
+            updated = dict(queued, name="Updated queued station", url="https://example.com/updated")
+            playlist.write_text(json.dumps([updated]))
+            blocked = directory / "blocked"
+            blocked.write_text("Not a directory")
+            marker.unlink()
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                update.write_text(json.dumps(dict(uuid=queued["uuid"],
+                                                 snapshotPath=str(blocked / "snapshot.json"))))
+                update.replace(control)
+                wait_for(marker.exists)
+                assert "LOCAL_ERROR Listening history" not in log_path.read_text(), log_path.read_text()
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+            wait_for(lambda: json.loads(state.read_text())["recent"] == [updated, first])
         finally:
             process.terminate()
             try:

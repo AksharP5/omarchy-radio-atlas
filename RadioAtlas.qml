@@ -945,7 +945,6 @@ Item {
     atomicWrites: true
     printErrors: true
     onSaved: saveSucceeded = true
-    onSaveFailed: root.localError = "Listening history could not be updated"
   }
 
   Process {

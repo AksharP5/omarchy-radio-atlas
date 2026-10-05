@@ -227,6 +227,8 @@ components from `/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkou
 processes and theme-file access during these tests.
 Headless Qt processes also disable the desktop platform theme and automatic
 portal probes so a private test bus does not start desktop portal services.
+CI also runs the native history queue regression with Quickshell on Arch Linux;
+that job requires its dependencies and cannot skip the test.
 
 ```bash
 python3 tests/headless.test.py
