@@ -216,6 +216,10 @@ removing it.
 If a Play or Favorite selection cannot be saved, Radio Atlas reports the failure
 and keeps the existing playback queue and saved stations. Retry after correcting
 the storage problem.
+Playback uses up to 500 nearby catalog entries, reducing that window when large
+station records would exceed the snapshot size limit. Favoriting saves only the
+chosen station. Successful background history updates preserve failed Favorite
+warnings, and loading saved stations preserves failed update warnings.
 
 <a href="https://www.greptile.com/?utm_source=oss_badge&amp;utm_medium=readme&amp;utm_campaign=greptile_for_open_source">
   <img src="https://www.greptile.com/badge.svg" alt="Greptile: The War on Bugs" width="100%">

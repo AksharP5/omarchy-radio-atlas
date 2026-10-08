@@ -5,6 +5,7 @@ import vm from "node:vm"
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
 const functions = source.match(/  function (?:toggleFavorite|startFavorite|startNextFavorite|writeSelection|applyLocalState)\([\s\S]*?\n  \}/g).join("\n")
 const complete = source.match(/id: stateProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
+const completeHistory = source.match(/id: historyProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const model = vm.createContext({})
 vm.runInContext(fs.readFileSync(new URL("../RadioModel.js", import.meta.url), "utf8"), model)
 const rows = ["first", "queued", "new-search"].map(uuid => ({ uuid, name: uuid }))
@@ -21,6 +22,8 @@ function session() {
     remoteMode: true,
     displayStations: rows.slice(0, 2),
     pendingFavoriteRequests: [],
+    pendingRecentRequest: null,
+    localError: "",
     localReloadPending: false,
     statePath: "/radio-state",
     favoriteSelectionPath: "/favorite-selection.json",
@@ -44,7 +47,7 @@ function session() {
     },
   })
   context.root = context
-  vm.runInContext(`${functions}\nfunction complete(exitCode) {${complete}}`, context)
+  vm.runInContext(`${functions}\nfunction complete(exitCode) {${complete}}\nfunction completeHistory(exitCode) {${completeHistory}}`, context)
   function finish() {
     const station = selection.find(row => row.uuid === activeUuid)
     if (station) {
@@ -124,5 +127,32 @@ lastFailed.context.complete(0)
 assert.deepEqual(Array.from(lastFailed.context.favorites, row => row.uuid), [rows[0].uuid])
 assert.equal(lastFailed.context.localError, "Favorite could not be updated",
   "Refreshing successful Favorites must preserve the failed selection's error")
+
+const backgroundHistory = session()
+backgroundHistory.context.favoriteSelectionFile.setText = () => {}
+backgroundHistory.context.toggleFavorite(rows[0].uuid)
+backgroundHistory.context.completeHistory(0)
+assert.equal(backgroundHistory.context.localError, "Favorite could not be updated",
+  "Successful background history must not hide an unsaved Favorite")
+backgroundHistory.context.stateProcess.action = "get"
+backgroundHistory.context.output = JSON.stringify({ favorites: [], recent: [rows[0]] })
+backgroundHistory.context.complete(0)
+assert.equal(backgroundHistory.context.localError, "Favorite could not be updated")
+
+const failedHistory = session()
+failedHistory.context.completeHistory(4)
+failedHistory.context.toggleFavorite(rows[0].uuid)
+assert.equal(failedHistory.context.localError, "Listening history could not be updated",
+  "Starting a Favorite must preserve a failed history warning")
+failedHistory.finish()
+assert.equal(failedHistory.context.localError, "Listening history could not be updated",
+  "A successful Favorite must not hide failed listening history")
+failedHistory.context.stateProcess.action = "get"
+failedHistory.context.output = JSON.stringify({ favorites: [rows[0]], recent: [] })
+failedHistory.context.complete(0)
+assert.equal(failedHistory.context.localError, "Listening history could not be updated",
+  "Loading saved stations cannot establish that a failed history write succeeded")
+failedHistory.context.completeHistory(0)
+assert.equal(failedHistory.context.localError, "")
 
 console.log("Favorite queue tests passed")
