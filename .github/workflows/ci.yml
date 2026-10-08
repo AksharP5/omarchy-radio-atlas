@@ -68,3 +68,6 @@ jobs:
 
       - name: Verify queued history with native Quickshell
         run: python tests/headless.test.py python tests/history-queue.test.py --require-dependencies
+
+      - name: Verify native Play and Favorite selection writes
+        run: python tests/headless.test.py python tests/selection-writes.test.py --require-dependencies

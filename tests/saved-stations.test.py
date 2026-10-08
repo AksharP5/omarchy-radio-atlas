@@ -98,7 +98,7 @@ class SavedStationsTest(unittest.TestCase):
         self.assertEqual(state["recent"], [rows[0]])
         self.assertEqual(json.loads(queue_file.read_text()), rows)
 
-    def test_played_uses_playlist_and_favorite_uses_selection(self):
+    def test_favorite_snapshot_requires_explicit_selection_source(self):
         uuid = "12345678-1234-1234-1234-123456789abc"
         active = dict(uuid=uuid, name="Current station", url="https://example.com/current")
         selected = dict(uuid=uuid, name="Selected station", url="https://example.com/selected")
@@ -107,6 +107,9 @@ class SavedStationsTest(unittest.TestCase):
         state = self.run_action("radio-state", "played", uuid)
         self.assertEqual(state["recent"], [active])
         state = self.run_action("radio-state", "favorite", uuid)
+        self.assertEqual(state["favorites"], [active])
+        self.run_action("radio-state", "favorite", uuid)
+        state = self.run_action("radio-state", "favorite", uuid, "selection")
         self.assertEqual(state["favorites"], [selected])
         self.assertEqual(state["recent"], [active])
 
@@ -154,14 +157,16 @@ class SavedStationsTest(unittest.TestCase):
         self.assertEqual(state["favorites"], [following])
         self.assertEqual(state["volume"], 23)
 
-    def test_history_snapshot_rejects_invalid_runtime_arrays(self):
+    def test_snapshot_sources_reject_invalid_runtime_arrays(self):
         station = dict(uuid="12345678-1234-1234-1234-123456789abc",
                        name="Station", url="https://example.com/stream")
-        for source, arguments in [("playlist.json", []), ("history-selection.json", ["selection"])]:
+        for action, source, arguments in [("played", "playlist.json", []),
+                                          ("played", "history-selection.json", ["selection"]),
+                                          ("favorite", "favorite-selection.json", ["selection"])]:
             for payload in [json.dumps([station] * 501), json.dumps([station]) + "\n[]"]:
                 with self.subTest(source=source, payload=payload[:60]):
                     (self.runtime / source).write_text(payload)
-                    result = subprocess.run([str(PROJECT / "radio-state"), "played", station["uuid"], *arguments],
+                    result = subprocess.run([str(PROJECT / "radio-state"), action, station["uuid"], *arguments],
                                             env=self.env, capture_output=True, text=True, timeout=5)
                     self.assertEqual(result.returncode, 3, result.stderr)
                     self.assertEqual(json.loads(self.state_file.read_text())["recent"], [])

@@ -41,6 +41,7 @@ node "$project_dir/tests/selection.test.mjs"
 node "$project_dir/tests/favorite-queue.test.mjs"
 node "$project_dir/tests/recent-queue.test.mjs"
 python3 "$project_dir/tests/history-queue.test.py"
+python3 "$project_dir/tests/selection-writes.test.py"
 node "$project_dir/tests/keyboard.test.mjs"
 node "$project_dir/tests/pointer-selection.test.mjs"
 node "$project_dir/tests/player-layout.test.mjs"
@@ -234,9 +235,7 @@ sed -n '/function setStationList/,/^  }/p' "$project_dir/RadioAtlas.qml" \
 sed -n '/function playPendingStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'playStation(station, scope, stations)'
 sed -n '/function playStation/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'writeSelection(playSelectionFile, station, stations)'
-sed -n '/function writeSelection/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'RadioModel.stationWindow(stations, station && station.uuid, 500)'
+  | rg -Fq 'writeSelection(playSelectionFile, playSelectionPath, rows)'
 sed -n '/id: playSelectionFile/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'preload: false'
 sed -n '/id: playSelectionFile/,/^  }/p' "$project_dir/RadioAtlas.qml" \
@@ -250,7 +249,7 @@ rg -q 'pendingFavoriteRequests' "$project_dir/RadioAtlas.qml"
 sed -n '/function toggleFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | assert_no_match 'favoriteSelectionFile\.setText'
 sed -n '/function startNextFavorite/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'favoriteSelectionFile.setText(JSON.stringify(request.rows)'
+  | rg -Fq 'writeSelection(favoriteSelectionFile, favoriteSelectionPath, request.rows)'
 rg -Fq 'favorite-selection.json' "$project_dir/radio-state"
 rg -q 'statusReady' "$project_dir/RadioAtlas.qml" "$project_dir/BarWidget.qml"
 rg -Fq -- '--demuxer-max-bytes=8MiB' "$project_dir/radio-player"
@@ -615,7 +614,7 @@ jq -e 'length == 0' "$runtime_dir/playlist.json" >/dev/null
 
 selection_only='[{"uuid":"fedcbafe-1234-1234-1234-fedcbafedcba","name":"Selection only","url":"https://example.com/selection.mp3","countryCode":"CA","latitude":43,"longitude":-79}]'
 printf '%s\n' "$selection_only" > "$runtime_dir/favorite-selection.json"
-"$project_dir/radio-state" favorite fedcbafe-1234-1234-1234-fedcbafedcba \
+"$project_dir/radio-state" favorite fedcbafe-1234-1234-1234-fedcbafedcba selection \
   | jq -e '.favorites[0].uuid == "fedcbafe-1234-1234-1234-fedcbafedcba"' >/dev/null
 "$project_dir/radio-state" favorite fedcbafe-1234-1234-1234-fedcbafedcba \
   | jq -e '.favorites | length == 0' >/dev/null

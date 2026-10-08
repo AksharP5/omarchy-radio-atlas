@@ -106,6 +106,7 @@ Item {
   readonly property string statusPath: runtimePath + "/status.json"
   readonly property string playSelectionPath: runtimePath + "/play-selection.json"
   readonly property string favoriteSelectionPath: runtimePath + "/favorite-selection.json"
+  readonly property string historySelectionPath: runtimePath + "/history-selection.json"
 
   readonly property var displayStations: mode === "favorites"
     ? favorites
@@ -533,11 +534,14 @@ Item {
     playStation(selectedStation, playlistScope(), displayStations, generation)
   }
 
-  function writeSelection(fileView, station, stations) {
-    var rows = RadioModel.stationWindow(stations, station && station.uuid, 500)
-    if (rows.length === 0) return false
+  function writeSelection(fileView, path, rows) {
+    if (!Array.isArray(rows) || rows.length === 0 || rows.length > 500) return false
+    // FileView skips identical text, even when its previous write failed.
+    fileView.path = ""
+    fileView.path = path
+    fileView.saveSucceeded = false
     fileView.setText(JSON.stringify(rows) + "\n")
-    return true
+    return fileView.saveSucceeded
   }
 
   function playStation(station, scope, stations, generation) {
@@ -554,7 +558,8 @@ Item {
     cancelPendingPlay()
     var playerScope = scope
     if (scope === "world" || scope === "results") {
-      if (!writeSelection(playSelectionFile, station, stations)) {
+      var rows = RadioModel.stationWindow(stations, station.uuid, 500)
+      if (!writeSelection(playSelectionFile, playSelectionPath, rows)) {
         playerError = "Could not prepare this station"
         return
       }
@@ -784,15 +789,26 @@ Item {
   }
 
   function startNextFavorite() {
-    if (stateProcess.running || pendingFavoriteRequests.length === 0) return
+    if (stateProcess.running) return
+    if (pendingFavoriteRequests.length === 0) {
+      if (localReloadPending) requestLocalStateReload()
+      return
+    }
     var request = pendingFavoriteRequests[0]
     pendingFavoriteRequests = pendingFavoriteRequests.slice(1)
-    if (request.rows.length > 0)
-      favoriteSelectionFile.setText(JSON.stringify(request.rows) + "\n")
+    var command = [statePath, "favorite", request.uuid]
+    if (request.rows.length > 0) {
+      if (!writeSelection(favoriteSelectionFile, favoriteSelectionPath, request.rows)) {
+        localError = "Favorite could not be updated"
+        Qt.callLater(startNextFavorite)
+        return
+      }
+      command.push("selection")
+    }
     stateProcess.action = "favorite"
     stateProcess.output = ""
     stateProcess.errorOutput = ""
-    stateProcess.command = [statePath, "favorite", request.uuid]
+    stateProcess.command = command
     stateProcess.running = true
   }
 
@@ -824,9 +840,7 @@ Item {
     historyProcess.output = ""
     historyProcess.errorOutput = ""
     historyProcess.command = [statePath, "played", request.uuid]
-    historySelectionFile.saveSucceeded = false
-    if (request.station && writeSelection(historySelectionFile, request.station, [request.station])
-        && historySelectionFile.saveSucceeded)
+    if (request.station && writeSelection(historySelectionFile, historySelectionPath, [request.station]))
       historyProcess.command = [statePath, "played", request.uuid, "selection"]
     historyProcess.running = true
   }
@@ -904,24 +918,26 @@ Item {
 
   FileView {
     id: playSelectionFile
+    property bool saveSucceeded: false
     path: root.playSelectionPath
     preload: false
     watchChanges: false
     blockWrites: true
     atomicWrites: true
     printErrors: true
-    onSaveFailed: root.playerError = "Could not prepare this station"
+    onSaved: saveSucceeded = true
   }
 
   FileView {
     id: favoriteSelectionFile
+    property bool saveSucceeded: false
     path: root.favoriteSelectionPath
     preload: false
     watchChanges: false
     blockWrites: true
     atomicWrites: true
     printErrors: true
-    onSaveFailed: root.localError = "Favorite could not be updated"
+    onSaved: saveSucceeded = true
   }
 
   FileView {
@@ -938,7 +954,7 @@ Item {
   FileView {
     id: historySelectionFile
     property bool saveSucceeded: false
-    path: root.runtimePath + "/history-selection.json"
+    path: root.historySelectionPath
     preload: false
     watchChanges: false
     blockWrites: true
@@ -1288,7 +1304,10 @@ Item {
     onExited: function(exitCode) {
       if (exitCode === 0) {
         if (stateProcess.action === "get") {
+          var favoriteFailed = root.localError === "Favorite could not be updated"
           root.applyLocalState(output)
+          if (favoriteFailed && !root.localError)
+            root.localError = "Favorite could not be updated"
           root.refreshLocalSelection()
         } else {
           root.localError = ""

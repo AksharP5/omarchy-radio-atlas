@@ -24,6 +24,7 @@ function session() {
     pendingRecentRequest: null,
     localReloadPending: false,
     statePath: "/radio-state",
+    historySelectionPath: "/history-selection.json",
     requestLocalStateReload() {},
     historyPlaylistFile: {
       readSucceeded: false,

@@ -69,6 +69,7 @@ function session() {
     },
     stopProcess: { running: false, command: [], output: "" },
     playerPath: "/radio-player",
+    playSelectionPath: "/play-selection.json",
     playSelectionFile: {},
     writeSelection() { return true },
     searchField: { text: "" },
