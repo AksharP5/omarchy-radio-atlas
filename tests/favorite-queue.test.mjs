@@ -3,7 +3,7 @@ import fs from "node:fs"
 import vm from "node:vm"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
-const functions = source.match(/  function (?:toggleFavorite|startFavorite|startNextFavorite|writeSelection)\([\s\S]*?\n  \}/g).join("\n")
+const functions = source.match(/  function (?:toggleFavorite|startFavorite|startNextFavorite|writeSelection|applyLocalState)\([\s\S]*?\n  \}/g).join("\n")
 const complete = source.match(/id: stateProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const model = vm.createContext({})
 vm.runInContext(fs.readFileSync(new URL("../RadioModel.js", import.meta.url), "utf8"), model)
@@ -15,6 +15,7 @@ function session() {
   let selection = []
   let activeUuid = ""
   let restartUuid = ""
+  let reloads = 0
   const context = vm.createContext({
     RadioModel: model,
     remoteMode: true,
@@ -29,7 +30,7 @@ function session() {
     },
     applyLocalState() {},
     refreshLocalSelection() {},
-    requestLocalStateReload() {},
+    requestLocalStateReload() { reloads++ },
     Qt: { callLater(callback) { callbacks.push(callback) } },
     stateProcess: {
       command: [],
@@ -59,6 +60,7 @@ function session() {
   }
   return {
     context, saved, finish, flush,
+    get reloads() { return reloads },
     drain() {
       flush()
       for (let remaining = 10; activeUuid; remaining--) {
@@ -106,5 +108,21 @@ failed.finish()
 failed.drain()
 assert.deepEqual([...failed.saved.values()], [rows[0], rows[2]],
   "A failed selection write must skip that Favorite and release the next queued request")
+
+const lastFailed = session()
+lastFailed.context.toggleFavorite(rows[0].uuid)
+lastFailed.context.toggleFavorite(rows[1].uuid)
+lastFailed.context.favoriteSelectionFile.setText = () => {}
+lastFailed.finish()
+lastFailed.drain()
+assert.equal(lastFailed.reloads, 1,
+  "A final failed snapshot must still refresh an earlier successful Favorite")
+lastFailed.context.stateProcess.action = "get"
+lastFailed.context.localReloadPending = false
+lastFailed.context.output = JSON.stringify({ favorites: [...lastFailed.saved.values()], recent: [] })
+lastFailed.context.complete(0)
+assert.deepEqual(Array.from(lastFailed.context.favorites, row => row.uuid), [rows[0].uuid])
+assert.equal(lastFailed.context.localError, "Favorite could not be updated",
+  "Refreshing successful Favorites must preserve the failed selection's error")
 
 console.log("Favorite queue tests passed")

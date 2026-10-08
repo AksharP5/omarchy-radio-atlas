@@ -789,7 +789,11 @@ Item {
   }
 
   function startNextFavorite() {
-    if (stateProcess.running || pendingFavoriteRequests.length === 0) return
+    if (stateProcess.running) return
+    if (pendingFavoriteRequests.length === 0) {
+      if (localReloadPending) requestLocalStateReload()
+      return
+    }
     var request = pendingFavoriteRequests[0]
     pendingFavoriteRequests = pendingFavoriteRequests.slice(1)
     var command = [statePath, "favorite", request.uuid]
@@ -1300,7 +1304,10 @@ Item {
     onExited: function(exitCode) {
       if (exitCode === 0) {
         if (stateProcess.action === "get") {
+          var favoriteFailed = root.localError === "Favorite could not be updated"
           root.applyLocalState(output)
+          if (favoriteFailed && !root.localError)
+            root.localError = "Favorite could not be updated"
           root.refreshLocalSelection()
         } else {
           root.localError = ""
