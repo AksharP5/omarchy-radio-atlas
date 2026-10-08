@@ -141,8 +141,10 @@ assert.equal(backgroundHistory.context.localError, "Favorite could not be update
 
 const failedHistory = session()
 failedHistory.context.completeHistory(4)
-failedHistory.context.stateProcess.action = "favorite"
-failedHistory.context.complete(0)
+failedHistory.context.toggleFavorite(rows[0].uuid)
+assert.equal(failedHistory.context.localError, "Listening history could not be updated",
+  "Starting a Favorite must preserve a failed history warning")
+failedHistory.finish()
 assert.equal(failedHistory.context.localError, "Listening history could not be updated",
   "A successful Favorite must not hide failed listening history")
 failedHistory.context.stateProcess.action = "get"

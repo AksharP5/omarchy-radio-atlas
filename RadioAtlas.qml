@@ -776,7 +776,7 @@ Item {
 
   function toggleFavorite(uuid) {
     if (!uuid) return
-    localError = ""
+    if (localError === "Favorite could not be updated") localError = ""
     var request = { uuid: uuid, rows: [] }
     var index = RadioModel.indexByUuid(displayStations, uuid)
     if (remoteMode && index >= 0) {
