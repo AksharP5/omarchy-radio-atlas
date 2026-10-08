@@ -3,7 +3,7 @@ import fs from "node:fs"
 import vm from "node:vm"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
-const functions = source.match(/  function (?:toggleFavorite|startFavorite|startNextFavorite)\([\s\S]*?\n  \}/g).join("\n")
+const functions = source.match(/  function (?:toggleFavorite|startFavorite|startNextFavorite|writeSelection)\([\s\S]*?\n  \}/g).join("\n")
 const complete = source.match(/id: stateProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const model = vm.createContext({})
 vm.runInContext(fs.readFileSync(new URL("../RadioModel.js", import.meta.url), "utf8"), model)
@@ -22,7 +22,11 @@ function session() {
     pendingFavoriteRequests: [],
     localReloadPending: false,
     statePath: "/radio-state",
-    favoriteSelectionFile: { setText(text) { selection = JSON.parse(text) } },
+    favoriteSelectionPath: "/favorite-selection.json",
+    favoriteSelectionFile: {
+      saveSucceeded: false,
+      setText(text) { selection = JSON.parse(text); this.saveSucceeded = true },
+    },
     applyLocalState() {},
     refreshLocalSelection() {},
     requestLocalStateReload() {},
@@ -88,5 +92,19 @@ repeated.context.toggleFavorite(rows[2].uuid)
 repeated.drain()
 assert.deepEqual([...repeated.saved.values()], [rows[2]],
   "Repeated toggles must cancel each other without losing another Favorite")
+
+const failed = session()
+failed.context.toggleFavorite(rows[0].uuid)
+failed.context.toggleFavorite(rows[1].uuid)
+failed.context.displayStations = [rows[2]]
+failed.context.toggleFavorite(rows[2].uuid)
+const write = failed.context.favoriteSelectionFile.setText
+failed.context.favoriteSelectionFile.setText = function(text) {
+  if (JSON.parse(text)[0].uuid !== rows[1].uuid) write.call(this, text)
+}
+failed.finish()
+failed.drain()
+assert.deepEqual([...failed.saved.values()], [rows[0], rows[2]],
+  "A failed selection write must skip that Favorite and release the next queued request")
 
 console.log("Favorite queue tests passed")

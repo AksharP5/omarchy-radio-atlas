@@ -56,6 +56,7 @@ ShellRoot {
   id: root
   property string runtimePath: RUNTIME
   property string statePath: STATE
+  property string historySelectionPath: runtimePath + "/history-selection.json"
   property var pendingRecentRequest: null
   property bool localReloadPending: false
   property string localError: ""
@@ -71,7 +72,7 @@ WRITER
     onLoaded: {
       var command = JSON.parse(text() || "null")
       if (!command) return
-      if (command.snapshotPath) historySelectionFile.path = command.snapshotPath
+      if (command.snapshotPath) root.historySelectionPath = command.snapshotPath
       root.recordPlayed(command.uuid)
       console.log("QUEUED_HISTORY", JSON.stringify(root.pendingRecentRequest),
                   JSON.stringify(historyProcess.command), historySelectionFile.path)

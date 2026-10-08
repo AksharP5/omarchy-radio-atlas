@@ -64,7 +64,7 @@ find_runtime_station() {
   local uuid=$1
   local source station
   local -a sources=("$runtime_dir/playlist.json" "$runtime_dir/results.json" "$runtime_dir/world.json")
-  if [[ $2 == favorite ]]; then
+  if [[ $2 == favorite-selection ]]; then
     sources=("$runtime_dir/favorite-selection.json" "${sources[@]}")
   elif [[ $2 == played-selection ]]; then
     sources=("$runtime_dir/history-selection.json" "${sources[@]}")
@@ -154,7 +154,13 @@ case "$action" in
     ensure_runtime_data
     uuid=${2:-}
     [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]] || { echo 'Invalid station id' >&2; exit 2; }
-    station=$(find_station "$uuid" "$action")
+    favorite_source=favorite
+    case ${3:-} in
+      selection) favorite_source=favorite-selection ;;
+      "") ;;
+      *) echo 'Invalid favorite source' >&2; exit 2 ;;
+    esac
+    station=$(find_station "$uuid" "$favorite_source")
     [[ -n $station ]] || { echo 'Station is not in the current data set' >&2; exit 3; }
     write_state '
       if any(.favorites[]?; .uuid == $station.uuid)

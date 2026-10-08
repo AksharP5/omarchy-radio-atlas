@@ -213,6 +213,10 @@ refuses to overwrite it and reports
 `~/.local/share/radio-atlas/state.json`; back up that file before repairing or
 removing it.
 
+If a Play or Favorite selection cannot be saved, Radio Atlas reports the failure
+and keeps the existing playback queue and saved stations. Retry after correcting
+the storage problem.
+
 <a href="https://www.greptile.com/?utm_source=oss_badge&amp;utm_medium=readme&amp;utm_campaign=greptile_for_open_source">
   <img src="https://www.greptile.com/badge.svg" alt="Greptile: The War on Bugs" width="100%">
 </a>
@@ -227,7 +231,7 @@ components from `/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkou
 processes and theme-file access during these tests.
 Headless Qt processes also disable the desktop platform theme and automatic
 portal probes so a private test bus does not start desktop portal services.
-CI also runs the native history queue regression with Quickshell on Arch Linux;
+CI also runs native history and selection-write regressions with Quickshell on Arch Linux;
 that job requires its dependencies and cannot skip the test.
 
 ```bash
