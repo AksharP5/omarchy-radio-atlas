@@ -185,6 +185,31 @@ WRITER
                 assert json.loads(calls.read_text().splitlines()[-1])["code"] == 0
                 assert json.loads(path.read_text()) == [retry], path.read_text()
                 assert not report["playerError" if action == "play" else "localError"], report
+            # Separate bounded API batches can make a larger expanded catalog.
+            catalog = [dict(current, uuid=f"{index:08x}-1234-1234-1234-123456789abc",
+                            homepage="https://example.com/" + "漢" * 2000,
+                            favicon="https://example.com/" + "漢" * 2000)
+                       for index in range(500)]
+            assert len(json.dumps(catalog, ensure_ascii=False).encode()) > 4194304
+            for action in ["play", "favorite"]:
+                saved = json.loads(state.read_text())
+                saved["favorites"] = []
+                state.write_text(json.dumps(saved))
+                stale = dict(catalog[0], url="https://example.com/old")
+                (runtime / "playlist.json").write_text(json.dumps([stale]))
+                count = len(calls.read_text().splitlines())
+                completed = log_path.read_text().count("OPERATION_DONE")
+                path = runtime / ("play-selection.json" if action == "play" else "favorite-selection.json")
+                submit(f"{action}-large-catalog", action, path, rows=catalog)
+                wait_for(lambda: len(calls.read_text().splitlines()) == count + 1)
+                wait_for(lambda: log_path.read_text().count("OPERATION_DONE") == completed + 1)
+                result = json.loads(calls.read_text().splitlines()[-1])
+                assert result["code"] == 0, result
+                assert path.stat().st_size <= 4194304
+                if action == "play":
+                    assert json.loads((runtime / "playlist.json").read_text())[0] == catalog[0]
+                else:
+                    assert json.loads(state.read_text())["favorites"] == [catalog[0]], state.read_text()
             # Local Favorite uses current playback, not an old remote snapshot.
             saved = json.loads(state.read_text())
             saved["favorites"] = []

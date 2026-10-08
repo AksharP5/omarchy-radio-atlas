@@ -1,6 +1,7 @@
 var radians = Math.PI / 180
 var degrees = 180 / Math.PI
 var estimatedLocationCache = ({})
+var maximumSelectionBytes = 4194304
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value))
@@ -534,17 +535,37 @@ function stationsForCountry(stations, code, maximum) {
   return output
 }
 
+function utf8Length(text) {
+  var bytes = 0
+  for (var i = 0; i < text.length; i++) {
+    var code = text.charCodeAt(i)
+    if (code <= 0x7f) bytes++
+    else if (code <= 0x7ff) bytes += 2
+    else if (code >= 0xd800 && code <= 0xdbff
+             && i + 1 < text.length
+             && text.charCodeAt(i + 1) >= 0xdc00 && text.charCodeAt(i + 1) <= 0xdfff) {
+      bytes += 4
+      i++
+    } else bytes += 3
+  }
+  return bytes
+}
+
 function stationWindow(stations, uuid, maximum) {
   var rows = Array.isArray(stations) ? stations : []
   var index = indexByUuid(rows, uuid)
   if (index < 0) return []
 
   var limit = Math.min(rows.length, Math.max(1, Number(maximum || 500)))
-  var before = Math.floor((limit - 1) / 2)
-  var start = (index - before + rows.length) % rows.length
-  var output = []
-  for (var i = 0; i < limit; i++) output.push(rows[(start + i) % rows.length])
-  return output
+  while (true) {
+    var before = Math.floor((limit - 1) / 2)
+    var start = (index - before + rows.length) % rows.length
+    var output = []
+    for (var i = 0; i < limit; i++) output.push(rows[(start + i) % rows.length])
+    if (utf8Length(JSON.stringify(output)) + 1 <= maximumSelectionBytes) return output
+    if (limit === 1) return []
+    limit = Math.max(1, Math.floor(limit / 2))
+  }
 }
 
 function compactTags(tags, maximum) {

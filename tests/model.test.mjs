@@ -334,4 +334,19 @@ assert.deepEqual(
 )
 assert.deepEqual(Array.from(model.stationWindow(playlistRows, "missing", 5)), [])
 
+for (const text of ["ascii", "é漢", "😀", "\ud800", "\udc00", JSON.stringify({ label: "漢😀" })])
+  assert.equal(model.utf8Length(text), Buffer.byteLength(text))
+const largeRows = Array.from({ length: 500 }, (_, index) => ({
+  uuid: `large-${index}`, homepage: "漢".repeat(2000), favicon: "漢".repeat(2000)
+}))
+assert.ok(Buffer.byteLength(JSON.stringify(largeRows)) > model.maximumSelectionBytes)
+for (const uuid of ["large-0", "large-499"]) {
+  const window = model.stationWindow(largeRows, uuid, 500)
+  assert.ok(window.some(row => row.uuid === uuid), "A smaller window must retain the chosen station")
+  assert.ok(Buffer.byteLength(JSON.stringify(window) + "\n") <= model.maximumSelectionBytes)
+}
+assert.deepEqual(Array.from(model.stationWindow([
+  { uuid: "too-large", name: "x".repeat(model.maximumSelectionBytes) }
+], "too-large", 500)), [])
+
 console.log("RadioModel tests passed")

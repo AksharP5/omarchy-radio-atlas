@@ -536,11 +536,13 @@ Item {
 
   function writeSelection(fileView, path, rows) {
     if (!Array.isArray(rows) || rows.length === 0 || rows.length > 500) return false
+    var text = JSON.stringify(rows) + "\n"
+    if (RadioModel.utf8Length(text) > RadioModel.maximumSelectionBytes) return false
     // FileView skips identical text, even when its previous write failed.
     fileView.path = ""
     fileView.path = path
     fileView.saveSucceeded = false
-    fileView.setText(JSON.stringify(rows) + "\n")
+    fileView.setText(text)
     return fileView.saveSucceeded
   }
 
@@ -778,11 +780,7 @@ Item {
     var request = { uuid: uuid, rows: [] }
     var index = RadioModel.indexByUuid(displayStations, uuid)
     if (remoteMode && index >= 0) {
-      request.rows = RadioModel.stationWindow(displayStations, uuid, 500)
-      if (request.rows.length === 0) {
-        localError = "Favorite could not be updated"
-        return
-      }
+      request.rows = [displayStations[index]]
     }
     pendingFavoriteRequests = pendingFavoriteRequests.concat([request])
     startNextFavorite()
@@ -1304,13 +1302,13 @@ Item {
     onExited: function(exitCode) {
       if (exitCode === 0) {
         if (stateProcess.action === "get") {
-          var favoriteFailed = root.localError === "Favorite could not be updated"
+          var mutationError = root.localError === "Favorite could not be updated"
+            || root.localError === "Listening history could not be updated" ? root.localError : ""
           root.applyLocalState(output)
-          if (favoriteFailed && !root.localError)
-            root.localError = "Favorite could not be updated"
+          if (mutationError && !root.localError) root.localError = mutationError
           root.refreshLocalSelection()
         } else {
-          root.localError = ""
+          if (root.localError === "Favorite could not be updated") root.localError = ""
           root.localReloadPending = true
         }
       } else {
@@ -1341,7 +1339,7 @@ Item {
     }
     onExited: function(exitCode) {
       if (exitCode === 0) {
-        root.localError = ""
+        if (root.localError === "Listening history could not be updated") root.localError = ""
         root.localReloadPending = true
       } else {
         root.localError = "Listening history could not be updated"
