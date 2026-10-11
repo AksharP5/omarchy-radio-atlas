@@ -68,6 +68,12 @@ TestCase {
   property string playingStationName: "A long station name that must stay above the controls"
   property string playingTrackTitle: "A long track title that must stay above the controls"
   property string playerTitle: ""
+  readonly property var playingTrackParts: ({ artist: "", title: playingTrackTitle })
+  readonly property string trackCopyText: playingTrackTitle
+  property bool trackCopied: false
+  property string playingLogoPath: ""
+  readonly property int edgeInset: Style.spacing.md
+  function copyTrack() { trackCopied = true }
   property string playerError: ""
   property string streamError: ""
   property string playerOutput: ""
@@ -146,19 +152,18 @@ TestCase {
     } else {
       compare(bounds(outputControls).bottom, bounds(transportControls).bottom,
         "Normal windows must retain the single row")
-      verify(Math.abs(bounds(outputControls).left - bounds(transportControls).right - Style.spacing.xs) <= 0.5,
-        "Keep the same gap between playback and output buttons")
+      verify(Math.abs(muteButton.mapToItem(playerPanel, 0, 0).x - bounds(transportControls).right
+          - Style.spacing.xs - Style.spacing.md) <= 0.5,
+        "Separate the playback and volume groups with a wider gap")
       if (data.shortSlider)
         verify(volumeSlider.width < Style.space(116), "Shorten the slider before moving to two rows")
       else
         verify(volumeSlider.width >= Style.space(116), "Use spare width for the volume slider")
     }
     var controls = controlsIn(playerPanel)
-    compare(controls.length, 9, "Favorite, six playback/output buttons, slider, percentage")
-    var status = playerPanel.children.find(function(item) {
-      return item.text && item.text.indexOf(root.playingTrackTitle) === 0
-    })
-    verify(status !== undefined, "Track metadata must be present")
+    compare(controls.length, 8, "Favorite, six playback/output buttons, slider (percentage floats on hover)")
+    verify(trackLine.visible && trackLine.text !== "", "Track metadata must be present")
+    var status = playerStatus
     var statusBottom = bounds(status).bottom
     for (var i = 0; i < controls.length; i++) {
       var control = controls[i]

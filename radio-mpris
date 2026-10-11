@@ -44,6 +44,15 @@ def cancel_pending_plays(runtime):
         Path(temporary).unlink(missing_ok=True)
 
 
+def queued_favicon(position):
+    try:
+        queue = json.loads((Path(os.environ["XDG_RUNTIME_DIR"]) / "omarchy-radio-atlas" / "playlist.json").read_text())
+        favicon = str(queue[max(position, 0)].get("favicon") or "").strip()
+        return favicon if favicon.startswith(("http://", "https://")) else ""
+    except (KeyError, OSError, ValueError, IndexError, TypeError, AttributeError):
+        return ""
+
+
 class MPVError(Exception):
     pass
 
@@ -370,6 +379,9 @@ class Mpris(dbus.service.Object):
         if not stopped:
             metadata["mpris:trackid"] = dbus.ObjectPath(f"{OBJECT}/track/{max(position, 0)}")
             metadata["xesam:title"] = dbus.String(title if isinstance(title, str) else "")
+            art = queued_favicon(position)
+            if art:
+                metadata["mpris:artUrl"] = dbus.String(art)
         return dict(
             PlaybackStatus="Stopped" if stopped else "Paused" if ipc.get("pause", False) else "Playing",
             Rate=dbus.Double(1), Metadata=metadata,
