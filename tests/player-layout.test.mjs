@@ -277,7 +277,18 @@ TestCase {
     ]
   }
 
+  property real initialFontBaseSize: 0
+  property bool initialSpacingScaleWithFont: true
+
+  function initTestCase() {
+    initialFontBaseSize = Style.fontBaseSize
+    initialSpacingScaleWithFont = Style.spacingScaleWithFont
+  }
+
   function cleanup() {
+    // Layout rows change global Style; restore it so later tests start clean.
+    Style.fontBaseSize = initialFontBaseSize
+    Style.spacingScaleWithFont = initialSpacingScaleWithFont
     for (var i = 0; i < barWidget.resources.length; i++) {
       var resource = barWidget.resources[i]
       if (resource.command !== undefined) resource.running = false
