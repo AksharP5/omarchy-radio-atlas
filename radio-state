@@ -27,6 +27,7 @@ valid_state_file() {
         and (.favorites | length <= 500)
         and (.recent | type == "array")
         and (.recent | length <= 30)
+        and ((has("allowFakeIp") | not) or (.allowFakeIp | type == "boolean"))
         and ((.volume // 70) | type == "number")
         and ((.volume // 70) >= 0 and (.volume // 70) <= 100)
         and ((.output // "") | type == "string")

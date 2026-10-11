@@ -75,6 +75,29 @@ class SavedStationsTest(unittest.TestCase):
                 self.assertEqual([uuid for request in requests for uuid in request.split(",")],
                                  [row["uuid"] for row in rows])
 
+    def test_fake_ip_setting_survives_saved_state_updates(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                rows = self.save_favorites(1)
+                state = json.loads(self.state_file.read_text())
+                state["allowFakeIp"] = enabled
+                self.state_file.write_text(json.dumps(state))
+                for action, argument in (("volume", "42"), ("output", "test-sink"),
+                                         ("played", rows[0]["uuid"]), ("favorite", rows[0]["uuid"])):
+                    saved = self.run_action("radio-state", action, argument)
+                    self.assertIs(saved["allowFakeIp"], enabled)
+
+    def test_fake_ip_setting_must_be_a_boolean(self):
+        for value in ("true", "false", 1, 0, None, [], {}):
+            with self.subTest(value=value):
+                original = json.dumps(dict(favorites=[], recent=[], volume=70, allowFakeIp=value))
+                self.state_file.write_text(original)
+                result = subprocess.run([str(PROJECT / "radio-state"), "volume", "42"],
+                                        env=self.env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 4, result.stderr)
+                self.assertIn("saved state is invalid", result.stderr)
+                self.assertEqual(self.state_file.read_text(), original)
+
     def test_failed_later_batch_keeps_the_original_queue(self):
         rows = self.save_favorites(500)
         self.env["RADIO_ATLAS_TEST_RESOLVE_FAIL_UUID"] = rows[-1]["uuid"]

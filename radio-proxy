@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import ipaddress
 import json
 import os
@@ -21,6 +22,7 @@ diagnostic_count = 0
 diagnostic_lock = threading.Lock()
 NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")
 IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
+FAKE_IP_RANGE = ipaddress.ip_network("198.18.0.0/15")
 
 
 class ProxyError(Exception):
@@ -95,7 +97,7 @@ def route_is_local(ip: ipaddress.IPv4Address | ipaddress.IPv6Address):
     )
 
 
-def public_endpoints(host: str, port: int):
+def public_endpoints(host: str, port: int, *, allow_fake_ip: bool = False):
     try:
         addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except socket.gaierror as error:
@@ -112,8 +114,9 @@ def public_endpoints(host: str, port: int):
         seen.add(key)
         ip = ipaddress.ip_address(address[0].split("%", 1)[0])
         nat64 = isinstance(ip, ipaddress.IPv6Address) and ip in NAT64_WELL_KNOWN
+        fake_ip = allow_fake_ip and ip in FAKE_IP_RANGE
         if (
-            not ip.is_global
+            (not ip.is_global and not fake_ip)
             or ip.is_multicast
             or ip.is_unspecified
             or (ip.is_reserved and not nat64)
@@ -130,9 +133,9 @@ def public_endpoints(host: str, port: int):
     return endpoints
 
 
-def connect_public(host: str, port: int):
+def connect_public(host: str, port: int, *, allow_fake_ip: bool = False):
     last_error = None
-    for family, kind, protocol, address in public_endpoints(host, port):
+    for family, kind, protocol, address in public_endpoints(host, port, allow_fake_ip=allow_fake_ip):
         upstream = socket.socket(family, kind, protocol)
         upstream.settimeout(12)
         try:
@@ -244,7 +247,7 @@ class ProxyHandler(socketserver.BaseRequestHandler):
             header, pending = read_header(self.request)
             method, host, port, forwarded = parse_request(header)
             stage = "connect"
-            with connect_public(host, port) as upstream:
+            with connect_public(host, port, allow_fake_ip=self.server.allow_fake_ip) as upstream:
                 stage = "relay"
                 if method == "CONNECT":
                     self.request.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -267,7 +270,8 @@ class ProxyServer(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
     request_queue_size = 32
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, allow_fake_ip: bool = False, **kwargs):
+        self.allow_fake_ip = allow_fake_ip
         self.connection_slots = threading.BoundedSemaphore(MAX_ACTIVE_CONNECTIONS)
         super().__init__(*args, **kwargs)
 
@@ -289,16 +293,19 @@ class ProxyServer(socketserver.ThreadingUnixStreamServer):
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: radio-proxy SOCKET")
-    path = sys.argv[1]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("socket", metavar="SOCKET")
+    parser.add_argument("--allow-fake-ip", action="store_true",
+                        help="trust the TUN proxy for destinations mapped to 198.18.0.0/15")
+    args = parser.parse_args()
+    path = args.socket
     if os.path.exists(path):
         if not stat.S_ISSOCK(os.stat(path).st_mode):
             raise SystemExit("Proxy path exists and is not a socket")
         os.unlink(path)
 
     os.umask(0o077)
-    server = ProxyServer(path, ProxyHandler)
+    server = ProxyServer(path, ProxyHandler, allow_fake_ip=args.allow_fake_ip)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         server.serve_forever()

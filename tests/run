@@ -859,6 +859,7 @@ if [[ ! -s $session_child_file || ! -S $runtime_dir/proxy.sock ]]; then
   exit 1
 fi
 session_child_pid=$(<"$session_child_file")
+pgrep -P "$session_pid" -af 'radio-proxy' | assert_no_match -- '--allow-fake-ip'
 track_player_pid "$session_pid"
 "$project_dir/radio-player" stop | jq -e '.running == false' >/dev/null
 wait "$session_pid" 2>/dev/null || true
@@ -873,6 +874,8 @@ if kill -0 "$session_child_pid" 2>/dev/null; then
 fi
 [[ ! -S $runtime_dir/proxy.sock ]]
 
+printf '{"favorites":[],"recent":[],"volume":70,"allowFakeIp":true}\n' \
+  > "$XDG_DATA_HOME/radio-atlas/state.json"
 setsid "$project_dir/radio-session" sleep 60 > "$test_root/killed-session.log" 2>&1 &
 session_pid=$!
 for _ in $(seq 1 100); do
@@ -882,6 +885,7 @@ done
 [[ -S $runtime_dir/proxy.sock ]]
 orphan_proxy_pid=$(pgrep -P "$session_pid" -f 'radio-proxy' | head -n 1)
 [[ -n $orphan_proxy_pid ]]
+tr '\0' '\n' < "/proc/$orphan_proxy_pid/cmdline" | rg -qx -- '--allow-fake-ip'
 orphan_bridge_pid=""
 for _ in $(seq 1 100); do
   orphan_bridge_pid=$(pgrep -f \
