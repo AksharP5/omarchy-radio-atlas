@@ -47,6 +47,7 @@ node "$project_dir/tests/pointer-selection.test.mjs"
 node "$project_dir/tests/player-layout.test.mjs"
 node "$project_dir/tests/zoom-controls.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
+python3 "$project_dir/tests/favicon.test.py"
 python3 "$project_dir/tests/playback.test.py"
 python3 "$project_dir/tests/saved-stations.test.py"
 QT_QUICK_BACKEND=software QT_NO_XDG_DESKTOP_PORTAL=1 QT_QPA_PLATFORMTHEME= \

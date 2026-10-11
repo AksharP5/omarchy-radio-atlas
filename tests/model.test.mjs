@@ -168,6 +168,18 @@ assert.equal(model.stationDetails({ countryCode: "DE", codec: "MP3", bitrate: 12
 assert.equal(model.stationDetails({ countryCode: "CN", codec: " ", bitrate: 0, tags: " , news" }, 2), "CN · news")
 assert.equal(model.stationDetails({ tags: "" }, 2), "")
 
+function track(title, station) {
+  const parts = model.trackParts(title, station)
+  return [parts.artist, parts.title]
+}
+assert.deepEqual(track("Rockwell - Somebody's Watching Me", "Rock"), ["Rockwell", "Somebody's Watching Me"])
+assert.deepEqual(track("Radiohead - Creep", "Radio"), ["Radiohead", "Creep"])
+assert.deepEqual(track("Radio Breza - Song", "Radio Breza"), ["", "Song"])
+assert.deepEqual(track("Radio Breza: Artist - Song", "Radio Breza"), ["Artist", "Song"])
+assert.deepEqual(track("Radio Breza | Song", "Radio Breza"), ["", "Song"])
+assert.deepEqual(track("Radio Breza", "Radio Breza"), ["", ""])
+assert.deepEqual(track(" - Artist - Song", ""), ["Artist", "Song"])
+
 const landingStations = [
   { uuid: "playing", name: "Playing", latitude: 0, longitude: 0 },
   { uuid: "nearby", name: "Nearby", latitude: 0, longitude: 10 },

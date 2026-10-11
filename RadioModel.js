@@ -588,6 +588,22 @@ function cleanText(value) {
     .trim()
 }
 
+// Split stream metadata into artist/title. A leading station name is removed
+// only when it is the whole title or is followed by a separator, so
+// "Rockwell - ..." on a station called "Rock" stays intact.
+function trackParts(rawTitle, stationName) {
+  var title = cleanText(rawTitle).replace(/^[\s:|\-–—·]+/, "").trim()
+  var station = cleanText(stationName)
+  if (station && title.toLowerCase().indexOf(station.toLowerCase()) === 0) {
+    var rest = title.slice(station.length)
+    if (rest === "") title = ""
+    else if (/^(\s+[-–—|·:\/]\s+|\s*[:|·]\s*)/.test(rest))
+      title = rest.replace(/^[\s:|\-–—·\/]+/, "").trim()
+  }
+  var split = title.match(/^(.+?)\s+[-–—]\s+(.+)$/)
+  return split ? { artist: split[1].trim(), title: split[2].trim() } : { artist: "", title: title }
+}
+
 function joinParts(parts) {
   var output = []
   for (var i = 0; i < parts.length; i++) {

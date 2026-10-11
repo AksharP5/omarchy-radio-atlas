@@ -139,28 +139,29 @@ Item {
   readonly property string faviconCacheDir:
     (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache") + "/omarchy-radio-atlas/favicons"
   property string playingLogoPath: ""
+  readonly property string faviconPath: Qt.resolvedUrl("radio-favicon").toString().replace(/^file:\/\//, "")
   onPlayingFaviconChanged: fetchFavicon()
+  onPlayingStationUuidChanged: fetchFavicon()
 
+  // Favicons are cached by URL; radio-favicon refuses non-public hosts and
+  // validates every redirect hop. A result is only shown if the station and
+  // URL it was requested for are still the ones playing.
   function fetchFavicon() {
+    var uuid = playingStationUuid
+    var url = playingFavicon
+    if (faviconProcess.requestedUuid === uuid && faviconProcess.requestedUrl === url
+        && (faviconProcess.running || playingLogoPath !== "")) return
     playingLogoPath = ""
-    if (!playingFavicon || !playingStationUuid) return
-    var target = faviconCacheDir + "/" + playingStationUuid.replace(/[^A-Za-z0-9-]/g, "")
-    faviconProcess.target = target
     faviconProcess.running = false
-    faviconProcess.command = ["sh", "-c",
-      'test -s "$2" || { mkdir -p "$(dirname "$2")" && curl -fsSL --proto =http,https --max-time 8 --max-filesize 1048576 -A "Mozilla/5.0 RadioAtlas" -o "$2.tmp" "$1" && case "$(file -b --mime-type "$2.tmp")" in image/*) mv -f "$2.tmp" "$2";; *) rm -f "$2.tmp"; exit 1;; esac; }',
-      "sh", playingFavicon, target]
+    faviconProcess.requestedUuid = uuid
+    faviconProcess.requestedUrl = url
+    if (!uuid || !url) return
+    faviconProcess.target = faviconCacheDir + "/" + Qt.md5(url)
+    faviconProcess.command = [faviconPath, url, faviconProcess.target]
     faviconProcess.running = true
   }
   // Track metadata cleaned of leading junk and a repeated station-name prefix.
-  readonly property var playingTrackParts: {
-    var title = RadioModel.cleanText(playingTrackTitle).replace(/^[\s\\:|\-–—·]+/, "").trim()
-    var station = playingStationName
-    if (station && title.toLowerCase().indexOf(station.toLowerCase()) === 0)
-      title = title.slice(station.length).replace(/^[\s:|\-–—·]+/, "").trim()
-    var split = title.match(/^(.+?)\s+[-–—]\s+(.+)$/)
-    return split ? { artist: split[1].trim(), title: split[2].trim() } : { artist: "", title: title }
-  }
+  readonly property var playingTrackParts: RadioModel.trackParts(playingTrackTitle, playingStationName)
   readonly property bool remoteMode: mode !== "favorites" && mode !== "recent"
   readonly property bool lightTheme:
     0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b > 0.5
@@ -1015,8 +1016,11 @@ Item {
   Process {
     id: faviconProcess
     property string target: ""
+    property string requestedUuid: ""
+    property string requestedUrl: ""
     onExited: function(exitCode) {
-      if (exitCode === 0 && target.indexOf(root.playingStationUuid.replace(/[^A-Za-z0-9-]/g, "")) >= 0)
+      if (exitCode === 0 && requestedUuid !== ""
+          && requestedUuid === root.playingStationUuid && requestedUrl === root.playingFavicon)
         root.playingLogoPath = "file://" + target
     }
   }
@@ -2281,6 +2285,8 @@ Item {
 
                 Button {
                   iconText: "\uf048"
+                  implicitWidth: playerIconMetrics.buttonWidth
+                  implicitHeight: playerIconMetrics.buttonHeight
                   tooltipText: "Previous station"
                   enabled: root.playerRunning && !root.playerActionBusy
                   focusable: true
@@ -2290,6 +2296,8 @@ Item {
                 }
                 Button {
                   iconText: root.playerRunning && !root.playerStopped && !root.playerPaused ? "\uf04c" : "\uf04b"
+                  implicitWidth: playerIconMetrics.buttonWidth
+                  implicitHeight: playerIconMetrics.buttonHeight
                   tooltipText: root.streamError ? "Retry station"
                     : root.playerRunning && !root.playerStopped && !root.playerPaused ? "Pause" : "Play"
                   enabled: !root.playerActionBusy
@@ -2300,6 +2308,8 @@ Item {
                 }
                 Button {
                   iconText: "\uf051"
+                  implicitWidth: playerIconMetrics.buttonWidth
+                  implicitHeight: playerIconMetrics.buttonHeight
                   tooltipText: "Next station"
                   enabled: root.playerRunning && !root.playerActionBusy
                   focusable: true
@@ -2309,6 +2319,8 @@ Item {
                 }
                 Button {
                   iconText: "\uf04d"
+                  implicitWidth: playerIconMetrics.buttonWidth
+                  implicitHeight: playerIconMetrics.buttonHeight
                   tooltipText: "Stop"
                   enabled: (root.playerRunning || root.playPreparing || root.randomPlaybackPending)
                     && !stopProcess.running
@@ -2331,14 +2343,27 @@ Item {
                   id: muteButton
                   Layout.leftMargin: playerControls.columns > 1 ? Style.spacing.md : 0
                   iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
-                  Layout.preferredWidth: muteMetrics.implicitWidth
-                  Layout.preferredHeight: outputButton.implicitHeight
+                  Layout.preferredWidth: playerIconMetrics.muteWidth
+                  Layout.preferredHeight: playerIconMetrics.buttonHeight
 
-                  Button {
-                    id: muteMetrics
+                  // Fixed widths: transport buttons share the widest transport icon and
+                  // mute uses its wider state, so toggling icons never shifts the row.
+                  Item {
+                    id: playerIconMetrics
                     visible: false
-                    iconText: "\uf028"
-                    focusable: true
+                    readonly property real buttonWidth: Math.max(metricPlay.implicitWidth, metricPause.implicitWidth,
+                      metricPrevious.implicitWidth, metricNext.implicitWidth, metricStop.implicitWidth)
+                    readonly property real muteWidth: Math.max(metricMuted.implicitWidth, metricVolume.implicitWidth)
+                    readonly property real buttonHeight: Math.max(metricPlay.implicitHeight, metricVolume.implicitHeight,
+                      metricOutput.implicitHeight)
+                    Button { id: metricPlay; iconText: "\uf04b"; focusable: true }
+                    Button { id: metricPause; iconText: "\uf04c"; focusable: true }
+                    Button { id: metricPrevious; iconText: "\uf048"; focusable: true }
+                    Button { id: metricNext; iconText: "\uf051"; focusable: true }
+                    Button { id: metricStop; iconText: "\uf04d"; focusable: true }
+                    Button { id: metricMuted; iconText: "\uf026"; focusable: true }
+                    Button { id: metricVolume; iconText: "\uf028"; focusable: true }
+                    Button { id: metricOutput; iconText: "\uf0a1"; focusable: true }
                   }
                   tooltipText: root.playerMuted ? "Unmute" : "Mute (M)"
                   active: root.playerMuted
@@ -2370,6 +2395,7 @@ Item {
 
                   // Floating value label; outside the layout so nothing reflows.
                   Text {
+                    id: volumePercent
                     visible: volumeSlider._hot || muteButton.hot
                     text: Math.round(volumeSlider.liveValue) + "%"
                     x: Math.max(0, Math.min(parent.width - width,
@@ -2385,6 +2411,7 @@ Item {
 
                 Button {
                   id: outputButton
+                  Layout.preferredHeight: playerIconMetrics.buttonHeight
                   Layout.leftMargin: Style.spacing.md
                   iconText: "\uf0a1"
                   tooltipText: root.playerOutput

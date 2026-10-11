@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Download a station favicon to a cache file, refusing non-public hosts.
+
+Usage: radio-favicon URL TARGET
+
+Every hop (including redirects, which are followed manually) is resolved and
+checked with radio-proxy's public-destination rules, then fetched by curl
+pinned to the validated address so DNS cannot change between check and use.
+"""
+
+import importlib.machinery
+import importlib.util
+import os
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import urljoin, urlsplit
+
+MAX_REDIRECTS = 3
+MAX_BYTES = 1_048_576
+TIMEOUT_SECONDS = 8
+
+_loader = importlib.machinery.SourceFileLoader(
+    "radio_proxy", str(Path(__file__).resolve().parent / "radio-proxy"))
+_spec = importlib.util.spec_from_loader(_loader.name, _loader)
+radio_proxy = importlib.util.module_from_spec(_spec)
+_loader.exec_module(radio_proxy)
+
+
+class FaviconError(Exception):
+    pass
+
+
+def validated_hop(url):
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise FaviconError("unsupported URL")
+    if parts.username or parts.password:
+        raise FaviconError("credentials in URL")
+    try:
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError as error:
+        raise FaviconError("bad port") from error
+    try:
+        endpoints = radio_proxy.public_endpoints(parts.hostname, port)
+    except radio_proxy.ProxyError as error:
+        raise FaviconError("non-public destination") from error
+    address = endpoints[0][3][0]
+    return parts.hostname, port, address
+
+
+def run_curl(url, host, port, address, output):
+    pinned = f"[{address}]" if ":" in address else address
+    result = subprocess.run(
+        ["curl", "-sS", "--proto", "=http,https", "--noproxy", "*",
+         "--max-time", str(TIMEOUT_SECONDS), "--max-filesize", str(MAX_BYTES),
+         "--resolve", f"{host}:{port}:{pinned}",
+         "-A", "Mozilla/5.0 RadioAtlas", "-o", output,
+         "-w", "%{http_code} %{redirect_url}", "--", url],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        timeout=TIMEOUT_SECONDS + 2, check=False)
+    if result.returncode != 0:
+        raise FaviconError("download failed")
+    status, _, location = result.stdout.strip().partition(" ")
+    return int(status or 0), location.strip()
+
+
+def is_image(path):
+    result = subprocess.run(["file", "-b", "--mime-type", path],
+                            capture_output=True, text=True, check=False)
+    return result.stdout.strip().startswith("image/")
+
+
+def fetch(url, target, curl=run_curl):
+    temporary = target + ".tmp"
+    try:
+        for _ in range(MAX_REDIRECTS + 1):
+            host, port, address = validated_hop(url)
+            status, location = curl(url, host, port, address, temporary)
+            if status in (301, 302, 303, 307, 308) and location:
+                url = urljoin(url, location)
+                continue
+            if status != 200:
+                raise FaviconError(f"HTTP {status}")
+            size = os.path.getsize(temporary) if os.path.exists(temporary) else 0
+            if not 0 < size <= MAX_BYTES or not is_image(temporary):
+                raise FaviconError("not an image")
+            os.replace(temporary, target)
+            return
+        raise FaviconError("too many redirects")
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def main():
+    if len(sys.argv) != 3:
+        print("usage: radio-favicon URL TARGET", file=sys.stderr)
+        return 2
+    url, target = sys.argv[1], sys.argv[2]
+    if os.path.isfile(target) and os.path.getsize(target) > 0:
+        return 0
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    try:
+        fetch(url, target)
+    except (FaviconError, OSError, subprocess.SubprocessError) as error:
+        print(f"radio-favicon: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
