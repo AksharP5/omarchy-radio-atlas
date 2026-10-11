@@ -8,7 +8,7 @@ import socket
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 sys.dont_write_bytecode = True
 project_dir = Path(__file__).resolve().parent.parent
@@ -61,7 +61,7 @@ class ProxyTests(unittest.TestCase):
                 radio_proxy.public_endpoints("station.example", 80)
 
     def test_fake_ip_answers_cannot_connect_over_a_nonlocal_route(self):
-        for address in ("198.18.0.166", "2001:2::110", "fdfe:dcba:9876::a2"):
+        for address in ("198.18.0.0", "198.18.0.166", "198.19.255.255", "2001:2::110", "fdfe:dcba:9876::a2"):
             for answers in (self.resolve(address), self.resolve("93.184.216.34", address)):
                 with (
                     self.subTest(answers=answers),
@@ -73,6 +73,76 @@ class ProxyTests(unittest.TestCase):
                         radio_proxy.connect_public("station.example", 80)
                     self.assertEqual(error.exception.status, b"403 Forbidden")
                     upstream.assert_not_called()
+
+    def test_fake_ip_opt_in_connects_to_the_validated_address(self):
+        for address in ("198.18.0.0", "198.18.0.166", "198.19.255.255"):
+            with (
+                self.subTest(address=address),
+                patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve(address)),
+                patch.object(radio_proxy, "route_is_local", return_value=False) as route_check,
+                patch.object(radio_proxy.socket, "socket") as upstream,
+            ):
+                connected = radio_proxy.connect_public("station.example", 80, allow_fake_ip=True)
+                self.assertIs(connected, upstream.return_value)
+                connected.connect.assert_called_once_with((address, 80))
+                route_check.assert_called_once_with(radio_proxy.ipaddress.ip_address(address))
+
+    def test_fake_ip_opt_in_rejects_mixed_non_public_answers_before_connecting(self):
+        for address in (
+            "0.0.0.0", "127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1",
+            "169.254.169.254", "100.64.0.1", "192.0.2.1", "224.0.0.1", "240.0.0.1",
+            "::", "::1", "fe80::1", "fec0::1", "fd00::1", "ff02::1", "4000::1",
+            "2001:2::110", "fdfe:dcba:9876::a2", "::ffff:198.18.0.166",
+            "64:ff9b::c612:a6", "::198.18.0.166", "2002:c612:a6::1",
+            "2001:0:808:808:0:ffff:39ed:ff59", "64:ff9b::a00:1",
+        ):
+            with (
+                self.subTest(address=address),
+                patch.object(radio_proxy.socket, "getaddrinfo",
+                             return_value=self.resolve("198.18.0.166", address)),
+                patch.object(radio_proxy, "route_is_local", return_value=False),
+                patch.object(radio_proxy.socket, "socket") as upstream,
+            ):
+                with self.assertRaises(radio_proxy.ProxyError) as error:
+                    radio_proxy.connect_public("station.example", 80, allow_fake_ip=True)
+                self.assertEqual(error.exception.status, b"403 Forbidden")
+                upstream.assert_not_called()
+
+    def test_fake_ip_opt_in_still_rejects_local_routes(self):
+        with (
+            patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve("198.18.0.166")),
+            patch.object(radio_proxy, "route_is_local", return_value=True),
+            patch.object(radio_proxy.socket, "socket") as upstream,
+        ):
+            with self.assertRaises(radio_proxy.ProxyError) as error:
+                radio_proxy.connect_public("station.example", 80, allow_fake_ip=True)
+            self.assertEqual(error.exception.status, b"403 Forbidden")
+            upstream.assert_not_called()
+
+    def test_http_and_connect_use_the_session_fake_ip_setting(self):
+        for allow_fake_ip in (False, True):
+            for method, target in (("GET", "http://station.example/live"), ("CONNECT", "station.example:80")):
+                request = Mock()
+                request.recv.return_value = f"{method} {target} HTTP/1.1\r\n\r\n".encode()
+                with (
+                    self.subTest(allow_fake_ip=allow_fake_ip, method=method),
+                    patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve("198.18.0.166")),
+                    patch.object(radio_proxy, "route_is_local", return_value=False),
+                    patch.object(radio_proxy.socket, "socket", return_value=MagicMock()) as upstream,
+                    patch.object(radio_proxy, "relay", return_value="upstream_closed"),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    radio_proxy.ProxyHandler(request, None, Mock(allow_fake_ip=allow_fake_ip))
+                    if allow_fake_ip:
+                        upstream.return_value.connect.assert_called_once_with(("198.18.0.166", 80))
+                        if method == "CONNECT":
+                            request.sendall.assert_called_once_with(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                        else:
+                            forwarded = upstream.return_value.__enter__.return_value.sendall.call_args.args[0]
+                            self.assertTrue(forwarded.startswith(b"GET /live HTTP/1.1\r\n"))
+                    else:
+                        upstream.assert_not_called()
+                        self.assertIn(b"403 Forbidden", request.sendall.call_args.args[0])
 
     def test_alternate_numeric_fake_ip_hosts_are_rejected(self):
         # These are numeric addresses to libc, despite not parsing with ipaddress.
@@ -176,7 +246,7 @@ class ProxyTests(unittest.TestCase):
             patch.object(radio_proxy, "connect_public", side_effect=failure),
             contextlib.redirect_stderr(output),
         ):
-            radio_proxy.ProxyHandler(request, None, None)
+            radio_proxy.ProxyHandler(request, None, Mock(allow_fake_ip=False))
         self.assertEqual(output.getvalue(),
                          "radio-proxy: stage=connect outcome=rejected error=ProxyError status=502 cause=gaierror errno=-2\n")
         request.sendall.assert_called_once_with(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
@@ -196,7 +266,7 @@ class ProxyTests(unittest.TestCase):
             contextlib.redirect_stderr(output),
         ):
             for _ in range(radio_proxy.MAX_DIAGNOSTICS + 2):
-                radio_proxy.ProxyHandler(request, None, None)
+                radio_proxy.ProxyHandler(request, None, Mock(allow_fake_ip=False))
         lines = output.getvalue().splitlines()
         self.assertEqual(len(lines), radio_proxy.MAX_DIAGNOSTICS)
         self.assertEqual(lines[0], "radio-proxy: stage=relay outcome=failed error=TimeoutError")

@@ -180,7 +180,9 @@ click-count endpoint. Favorites and history stay in
 Station metadata and stream URLs are community supplied. Labels are rendered
 as plain text. Playback runs in an isolated network namespace and reaches
 stations through a bounded proxy that rejects private and effectively local
-destinations, including after redirects. Remote metadata and local JSON are
+destinations, including after redirects. The optional `allowFakeIp` setting
+trusts the TUN proxy to check destinations hidden behind synthetic addresses;
+see Troubleshooting below. Remote metadata and local JSON are
 size- and record-limited before they reach the shell. Radio Atlas still connects
 directly to third-party stations; HTTP streams are unencrypted. Only play
 stations you trust.
@@ -207,6 +209,24 @@ those hostnames to `dns.fake-ip-filter` in `blacklist` mode. Preserve existing
 filter entries and check both IPv4 and IPv6 answers. See the
 [mihomo DNS settings](https://wiki.metacubex.one/en/config/dns/#enhanced-mode).
 Other fake-IP clients need the equivalent real-address DNS setting.
+
+For random tuning or setups where real-address DNS is impractical, Radio Atlas
+can opt in to IPv4 fake-IP addresses in `198.18.0.0/15`. Stop the player with
+`~/.config/omarchy/plugins/akshar.radio-atlas/radio-player stop`, back up
+`~/.local/share/radio-atlas/state.json`, and add `"allowFakeIp": true` to its
+top-level object, keeping the other fields. If `XDG_DATA_HOME` is set, the file
+is at `$XDG_DATA_HOME/radio-atlas/state.json`. Start playback again to apply it.
+To disable it, run the same stop command, set the value to `false` or remove the
+field, then start playback again.
+The setting is off by default and must be a JSON boolean, not a quoted string.
+
+Enable this only with a trusted TUN proxy. Radio Atlas cannot verify the real
+destination behind a fake-IP mapping, which could lead to a private or local
+service. The exception skips only the global-address check for that IPv4 range.
+Other non-public addresses, IPv6 addresses embedding non-public IPv4 addresses,
+and addresses routed locally are still rejected, including in mixed DNS answers
+and after redirects. IPv6 fake-IP ranges are not supported; configure the DNS
+client to return real public IPv6 addresses or omit its AAAA answers.
 
 If saved state is malformed, oversized, or contains too many entries, Radio Atlas
 refuses to overwrite it and reports
