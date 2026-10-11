@@ -49,6 +49,8 @@ Item {
   property var preparedCountries: []
   property var preparedGrid: []
   property var preparedStations: []
+  property var sphereGradient: null
+  property string sphereGradientKey: ""
 
   signal stationActivated(var station)
   signal countryActivated(string code, string name)
@@ -320,11 +322,16 @@ Item {
     var sinLongitude = Math.sin(longitude)
     var cosLongitude = Math.cos(longitude)
     var activeCode = activeCountryCode.toUpperCase()
+    // Convert colours once per paint, not once per country.
+    var landFill = withAlpha(landColor, 0.9)
+    var landStroke = withAlpha(outlineColor, 0.34)
+    var activeFill = withAlpha(accentColor, 0.38)
+    var activeStroke = withAlpha(accentColor, 0.95)
     for (var i = 0; i < rows.length; i++) {
       var country = rows[i]
       var active = country.code === activeCode
-      ctx.fillStyle = active ? withAlpha(accentColor, 0.38) : withAlpha(landColor, 0.9)
-      ctx.strokeStyle = active ? withAlpha(accentColor, 0.95) : withAlpha(outlineColor, 0.34)
+      ctx.fillStyle = active ? activeFill : landFill
+      ctx.strokeStyle = active ? activeStroke : landStroke
       ctx.lineWidth = active ? 1.5 : 0.7
 
       for (var ringIndex = 0; ringIndex < country.rings.length; ringIndex++) {
@@ -489,12 +496,18 @@ Item {
     ctx.fillStyle = backgroundColor
     ctx.fillRect(0, 0, globeCanvas.width, globeCanvas.height)
 
-    var sphere = ctx.createRadialGradient(
-      centreX - globeRadius * 0.28, centreY - globeRadius * 0.32, globeRadius * 0.04,
-      centreX, centreY, globeRadius)
-    sphere.addColorStop(0, withAlpha(Qt.lighter(sphereColor, 1.7), 1))
-    sphere.addColorStop(0.62, sphereColor)
-    sphere.addColorStop(1, Qt.darker(sphereColor, 1.8))
+    // Rebuild the sphere gradient only when its geometry or colour changes.
+    var gradientKey = centreX + "," + centreY + "," + globeRadius + "," + sphereColor
+    if (!sphereGradient || sphereGradientKey !== gradientKey) {
+      sphereGradient = ctx.createRadialGradient(
+        centreX - globeRadius * 0.28, centreY - globeRadius * 0.32, globeRadius * 0.04,
+        centreX, centreY, globeRadius)
+      sphereGradient.addColorStop(0, withAlpha(Qt.lighter(sphereColor, 1.7), 1))
+      sphereGradient.addColorStop(0.62, sphereColor)
+      sphereGradient.addColorStop(1, Qt.darker(sphereColor, 1.8))
+      sphereGradientKey = gradientKey
+    }
+    var sphere = sphereGradient
     ctx.beginPath()
     ctx.arc(centreX, centreY, globeRadius, 0, Math.PI * 2)
     ctx.fillStyle = sphere
