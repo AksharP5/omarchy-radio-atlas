@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
+sys.dont_write_bytecode = True  # importing radio-proxy must not drop __pycache__ in the plugin
 MAX_REDIRECTS = 3
 MAX_BYTES = 1_048_576
 TIMEOUT_SECONDS = 8
