@@ -2007,10 +2007,7 @@ Item {
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                anchors.topMargin: Style.space(4)
-                anchors.bottomMargin: Style.space(4)
-                width: 3
-                radius: 1.5
+                width: 2
                 color: root.accent
                 z: 1
               }
