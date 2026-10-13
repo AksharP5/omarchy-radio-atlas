@@ -42,6 +42,7 @@ try {
   fs.copyFileSync(new URL("../BarWidget.qml", import.meta.url), path.join(directory, "RadioBar.qml"))
   fs.writeFileSync(path.join(directory, "tst_player_layout.qml"), `
 import QtQuick
+import QtQuick.Window
 import QtQuick.Layouts
 import QtTest
 import qs.Ui
@@ -144,8 +145,8 @@ TestCase {
     width = data.panelWidth
     Style.fontBaseSize = data.fontSize
     Style.spacingScaleWithFont = data.spacingScaleWithFont !== false
-    waitForPolish(playerControls)
-    waitForPolish(outputControls)
+    // Font changes can polish text before scheduling the containing layouts.
+    verify(waitForPolish(root.Window.window), "Font and layout changes must settle before measuring")
     if (data.stacked) {
       verify(bounds(outputControls).top >= bounds(transportControls).bottom + Style.spacing.xs - 0.5,
         "Volume must move below playback when the window is narrow")
@@ -223,8 +224,7 @@ TestCase {
     if (data.drag) volumeSlider.dragging = true
     else mouseMove(volumeSlider, volumeSlider.width / 2, volumeSlider.height / 2)
     tryCompare(volumePercent, "visible", true)
-    waitForPolish(playerControls)
-    waitForPolish(outputControls)
+    verify(waitForPolish(root.Window.window), "Logo and layout changes must settle before measuring")
     var items = [stationLogo, nowPlaying, playerStatus, trackLine, volumePercent, volumeSlider]
     for (var i = 0; i < items.length; i++) {
       var rect = bounds(items[i])
