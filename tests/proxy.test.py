@@ -4,6 +4,7 @@ import importlib.machinery
 import importlib.util
 import contextlib
 import io
+import errno
 import socket
 import sys
 import unittest
@@ -32,6 +33,28 @@ class ProxyTests(unittest.TestCase):
         ):
             endpoints = radio_proxy.public_endpoints("fc-radio.example", 80)
         self.assertEqual(endpoints[0][3][0], "93.184.216.34")
+
+    def test_unavailable_address_family_does_not_prevent_ipv4_fallback(self):
+        reachable = Mock()
+        with (
+            patch.object(radio_proxy.socket, "getaddrinfo", return_value=self.resolve(
+                "2001:4860:4860::8888", "93.184.216.34")),
+            patch.object(radio_proxy, "route_is_local", return_value=False),
+            patch.object(radio_proxy.socket, "socket", side_effect=[
+                OSError(errno.EAFNOSUPPORT, "Address family not supported"), reachable]),
+        ):
+            connected = radio_proxy.connect_public("station.example", 80)
+        self.assertIs(connected, reachable)
+        reachable.connect.assert_called_once_with(("93.184.216.34", 80))
+        reachable.close.assert_not_called()
+
+    def test_explicit_zero_port_is_rejected(self):
+        for request in (b"GET http://station.example:0/live HTTP/1.1\r\n\r\n",
+                        b"CONNECT station.example:0 HTTP/1.1\r\n\r\n"):
+            with self.subTest(request=request):
+                with self.assertRaises(radio_proxy.ProxyError) as error:
+                    radio_proxy.parse_request(request)
+                self.assertEqual(error.exception.status, b"400 Bad Request")
 
     def test_non_public_destinations_are_rejected(self):
         addresses = (

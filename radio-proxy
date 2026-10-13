@@ -136,14 +136,16 @@ def public_endpoints(host: str, port: int, *, allow_fake_ip: bool = False):
 def connect_public(host: str, port: int, *, allow_fake_ip: bool = False):
     last_error = None
     for family, kind, protocol, address in public_endpoints(host, port, allow_fake_ip=allow_fake_ip):
-        upstream = socket.socket(family, kind, protocol)
-        upstream.settimeout(12)
+        upstream = None
         try:
+            upstream = socket.socket(family, kind, protocol)
+            upstream.settimeout(12)
             upstream.connect(address)
             return upstream
         except OSError as error:
             last_error = error
-            upstream.close()
+            if upstream is not None:
+                upstream.close()
     raise ProxyError(b"502 Bad Gateway") from last_error
 
 
@@ -151,7 +153,9 @@ def parse_authority(authority: str, default_port: int):
     try:
         target = urlsplit(f"//{authority}")
         host = target.hostname
-        port = target.port or default_port
+        port = target.port
+        if port is None:
+            port = default_port
     except ValueError as error:
         raise ProxyError(b"400 Bad Request") from error
     if not host or target.username is not None or target.password is not None:
@@ -203,7 +207,9 @@ def parse_request(header: bytes):
         raise ProxyError(b"405 Method Not Allowed")
     try:
         destination = urlsplit(target)
-        port = destination.port or 80
+        port = destination.port
+        if port is None:
+            port = 80
     except ValueError as error:
         raise ProxyError(b"400 Bad Request") from error
     if destination.scheme.lower() != "http" or not destination.hostname:
