@@ -21,6 +21,7 @@ pause, previous, and next controls.
 - Country-level map estimates when a station has no published coordinates
 - Automatic country focus for the station that is actually playing
 - Current station identity, track metadata, and one-click favoriting in the player
+- Cached station logos in the player and desktop media controls, plus click-to-copy track text
 - Instant cached results while full-directory search and country browsing refresh from Radio Browser
 - Random tuning that avoids recent stations, plus favorites and listening history
 - Independent volume slider, mute, and bar-wheel volume control
@@ -42,6 +43,8 @@ Radio Atlas uses `bubblewrap`, `curl`, `iproute2`, `jq`, `mpv`, `python`,
 packages ship with Omarchy, including `python-dbus` through `uwsm`. Radio Atlas
 provides its own MPRIS controls and disables automatic mpv script loading for
 this player instance.
+Station artwork uses `file` to verify downloaded images, and track copying uses
+`wl-copy` from `wl-clipboard`.
 
 ## Remove
 
@@ -188,6 +191,14 @@ directly to third-party stations; HTTP streams are unencrypted. Only play
 stations you trust.
 
 Map geometry comes from public-domain Natural Earth data.
+
+Station artwork is downloaded once per URL into
+`~/.cache/omarchy-radio-atlas/favicons`, or under `XDG_CACHE_HOME` when set.
+Both the player and desktop media controls use the validated local image.
+Downloads check every redirect and reject private or locally routed addresses,
+with the same `allowFakeIp` opt-in as playback. Images are limited to 1 MiB;
+missing or rejected artwork leaves the player text in place. Artwork downloads
+run independently of the window and do not block media controls.
 
 ## Troubleshooting
 

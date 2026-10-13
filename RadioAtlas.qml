@@ -120,46 +120,7 @@ Item {
     var station = playingStationName.toLowerCase()
     return title && station && title.toLowerCase() !== station ? title : ""
   }
-  // Player status omits favicon, so look the playing station up in loaded lists.
-  readonly property string playingFavicon: {
-    var uuid = playingStationUuid
-    if (!uuid) return ""
-    var lists = [results, favorites, recent, worldStations, [playingStation || {}]]
-    for (var l = 0; l < lists.length; l++) {
-      var rows = lists[l] || []
-      for (var i = 0; i < rows.length; i++) {
-        if (rows[i] && rows[i].uuid === uuid) {
-          var icon = String(rows[i].favicon || "").trim()
-          if (/^https?:\/\//.test(icon)) return icon
-        }
-      }
-    }
-    return ""
-  }
-  readonly property string faviconCacheDir:
-    (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache") + "/omarchy-radio-atlas/favicons"
   property string playingLogoPath: ""
-  readonly property string faviconPath: Qt.resolvedUrl("radio-favicon").toString().replace(/^file:\/\//, "")
-  onPlayingFaviconChanged: fetchFavicon()
-  onPlayingStationUuidChanged: fetchFavicon()
-
-  // Favicons are cached by URL; radio-favicon refuses non-public hosts and
-  // validates every redirect hop. A result is only shown if the station and
-  // URL it was requested for are still the ones playing.
-  function fetchFavicon() {
-    var uuid = playingStationUuid
-    var url = playingFavicon
-    if (faviconProcess.requestedUuid === uuid && faviconProcess.requestedUrl === url
-        && (faviconProcess.running || playingLogoPath !== "")) return
-    playingLogoPath = ""
-    faviconProcess.running = false
-    faviconProcess.requestedUuid = uuid
-    faviconProcess.requestedUrl = url
-    if (!uuid || !url) return
-    faviconProcess.target = faviconCacheDir + "/" + Qt.md5(url)
-    faviconProcess.command = [faviconPath, url, faviconProcess.target]
-    faviconProcess.running = true
-  }
   // Track metadata cleaned of leading junk and a repeated station-name prefix.
   readonly property var playingTrackParts: RadioModel.trackParts(playingTrackTitle, playingStationName)
   readonly property bool remoteMode: mode !== "favorites" && mode !== "recent"
@@ -677,6 +638,8 @@ Item {
       playerRunning = state.running === true
       playerPaused = state.paused === true
       playerStopped = state.stopped === true
+      playingLogoPath = playerRunning && !playerStopped && typeof state.artwork === "string"
+        && state.artwork.indexOf("file:///") === 0 ? state.artwork : ""
       if (!playbackWasStopped && (!playerRunning || playerStopped) && !localStopStatusPending) {
         var generation = playerGeneration()
         if (randomPlaybackPending && randomPlayGeneration !== generation)
@@ -1011,18 +974,6 @@ Item {
     atomicWrites: true
     printErrors: true
     onSaved: saveSucceeded = true
-  }
-
-  Process {
-    id: faviconProcess
-    property string target: ""
-    property string requestedUuid: ""
-    property string requestedUrl: ""
-    onExited: function(exitCode) {
-      if (exitCode === 0 && requestedUuid !== ""
-          && requestedUuid === root.playingStationUuid && requestedUrl === root.playingFavicon)
-        root.playingLogoPath = "file://" + target
-    }
   }
 
   property bool trackCopied: false

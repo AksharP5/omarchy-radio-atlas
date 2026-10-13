@@ -96,6 +96,7 @@ local function current_status()
     playlistCount = mp.get_property_number("playlist-count", 0),
     volume = last_volume,
     output = last_output,
+    artwork = mp.get_property_native("user-data/radio-atlas-artwork", ""),
     loaded = station_loaded,
     error = failure and failure.message or "",
     errorDetail = failure and failure.detail or "",
@@ -114,7 +115,8 @@ local function schedule_update()
 end
 
 for _, property in ipairs({
-  "pause", "idle-active", "mute", "media-title", "playlist-pos", "playlist-count", "volume", "audio-device"
+  "pause", "idle-active", "mute", "media-title", "playlist-pos", "playlist-count", "volume", "audio-device",
+  "user-data/radio-atlas-artwork"
 }) do
   mp.observe_property(property, "native", schedule_update)
 end
@@ -222,6 +224,7 @@ mp.register_event("shutdown", function()
     playlistCount = 0,
     volume = last_volume,
     output = last_output,
+    artwork = "",
     loaded = false,
     station = empty_station()
   })

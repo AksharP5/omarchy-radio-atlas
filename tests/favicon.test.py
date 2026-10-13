@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.dont_write_bytecode = True
 project_dir = Path(__file__).resolve().parent.parent
@@ -87,6 +87,75 @@ class FaviconTests(unittest.TestCase):
                 radio_favicon.fetch("http://icons.example/a.png", self.target, curl=curl)
         self.assertFalse(Path(self.target).exists())
         self.assertFalse(Path(self.target + ".tmp").exists())
+
+    def test_encoded_hostnames_are_rejected_before_resolution(self):
+        for host in ("%31%32%37.%30.%30.%31", "％３１％３２％３７．％３０．％３０．％３１"):
+            with self.subTest(host=host), patch.object(proxy.socket, "getaddrinfo") as resolve_host:
+                with self.assertRaises(radio_favicon.FaviconError):
+                    radio_favicon.validated_hop(f"http://{host}/private.png")
+            resolve_host.assert_not_called()
+
+    def test_fake_ip_opt_in_applies_to_every_redirect(self):
+        calls = []
+        def curl(url, host, port, address, output):
+            calls.append((url, address))
+            if len(calls) == 1:
+                return 302, "https://redirect.example/image.svg"
+            Path(output).write_text('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>')
+            return 200, ""
+        with (
+            patch.object(proxy.socket, "getaddrinfo", return_value=resolve("198.18.1.2")),
+            patch.object(proxy, "route_is_local", return_value=False),
+        ):
+            with self.assertRaises(radio_favicon.FaviconError):
+                radio_favicon.fetch("https://icons.example/image.svg", self.target, curl=curl)
+            self.assertEqual(calls, [])
+            radio_favicon.fetch("https://icons.example/image.svg", self.target, curl=curl, allow_fake_ip=True)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([address for _, address in calls], ["198.18.1.2", "198.18.1.2"])
+
+    def test_fake_ip_opt_in_still_rejects_private_redirects_and_local_routes(self):
+        for address, local in [("127.0.0.1", False), ("10.0.0.1", False), ("198.18.1.2", True)]:
+            with self.subTest(address=address), patch.object(
+                proxy.socket, "getaddrinfo", return_value=resolve(address)), patch.object(
+                proxy, "route_is_local", return_value=local):
+                curl = Mock()
+                with self.assertRaises(radio_favicon.FaviconError):
+                    radio_favicon.fetch("https://icons.example/image.svg", self.target, curl=curl, allow_fake_ip=True)
+                curl.assert_not_called()
+
+    def test_unicode_hostname_is_canonical_before_validation_and_fetch(self):
+        with patch.object(proxy, "public_endpoints", return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, 6, ("93.184.216.34", 80))]) as endpoints:
+            url, host, port, address = radio_favicon.validated_hop("https://bücher.example/image.svg")
+        self.assertEqual((url, host, port, address),
+                         ("https://xn--bcher-kva.example/image.svg", "xn--bcher-kva.example", 443, "93.184.216.34"))
+        endpoints.assert_called_once_with(host, port, allow_fake_ip=False)
+
+    def test_ipv6_literal_is_pinned_with_brackets(self):
+        with patch.object(radio_favicon.subprocess, "run", return_value=Mock(returncode=0, stdout="200 ")) as run:
+            radio_favicon.run_curl("https://[2001:4860:4860::8888]/image.svg", "2001:4860:4860::8888",
+                                  443, "2001:4860:4860::8888", self.target)
+        command = run.call_args.args[0]
+        self.assertIn("--globoff", command, "Curl must not expand the URL after destination validation")
+        self.assertEqual(command[command.index("--resolve") + 1],
+                         "[2001:4860:4860::8888]:443:[2001:4860:4860::8888]")
+
+    def test_overlapping_fetches_use_independent_temporary_files(self):
+        image = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
+        outputs = []
+        def curl(url, host, port, address, output):
+            outputs.append(output)
+            if len(outputs) == 1:
+                radio_favicon.fetch(url, self.target, curl=curl)
+            Path(output).write_text(image)
+            return 200, ""
+        with patch.object(proxy, "public_endpoints", return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, 6, ("93.184.216.34", 80))]):
+            radio_favicon.fetch("https://icons.example/image.svg", self.target, curl=curl)
+        self.assertNotEqual(outputs[0], outputs[1])
+        self.assertEqual(Path(self.target).read_text(), image)
+        self.assertEqual(list(Path(self.target).parent.iterdir()), [Path(self.target)])
 
 
 if __name__ == "__main__":

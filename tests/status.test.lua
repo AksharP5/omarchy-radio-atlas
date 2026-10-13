@@ -8,6 +8,7 @@ package.preload["mp"] = function()
       return default
     end,
     get_property_number = function(_, default) return default end,
+    get_property_native = function(_, default) return default end,
     get_property_bool = function(_, default) return default end,
     set_property_bool = function() end,
     add_timeout = function(_, callback)

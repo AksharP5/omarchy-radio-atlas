@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """Download a station favicon to a cache file, refusing non-public hosts.
 
-Usage: radio-favicon URL TARGET
+Usage: radio-favicon URL TARGET [--allow-fake-ip]
 
 Every hop (including redirects, which are followed manually) is resolved and
 checked with radio-proxy's public-destination rules, then fetched by curl
 pinned to the validated address so DNS cannot change between check and use.
 """
 
+import argparse
 import importlib.machinery
 import importlib.util
 import os
+import signal
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -32,30 +35,46 @@ class FaviconError(Exception):
     pass
 
 
-def validated_hop(url):
-    parts = urlsplit(url)
+def validated_hop(url, *, allow_fake_ip=False):
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        port = parts.port
+    except ValueError as error:
+        raise FaviconError("invalid URL") from error
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise FaviconError("unsupported URL")
-    if parts.username or parts.password:
+    if parts.username is not None or parts.password is not None:
         raise FaviconError("credentials in URL")
     try:
-        port = parts.port or (443 if parts.scheme == "https" else 80)
-    except ValueError as error:
-        raise FaviconError("bad port") from error
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError as error:
+        raise FaviconError("invalid hostname") from error
+    if any(character in host for character in "%\\") or any(character.isspace() for character in host):
+        raise FaviconError("ambiguous hostname")
+    explicit_port = port is not None
+    if port is None:
+        port = 443 if parts.scheme == "https" else 80
+    if not 1 <= port <= 65_535:
+        raise FaviconError("bad port")
     try:
-        endpoints = radio_proxy.public_endpoints(parts.hostname, port)
+        endpoints = radio_proxy.public_endpoints(host, port, allow_fake_ip=allow_fake_ip)
     except radio_proxy.ProxyError as error:
         raise FaviconError("non-public destination") from error
     address = endpoints[0][3][0]
-    return parts.hostname, port, address
+    authority = f"[{host}]" if ":" in host else host
+    if explicit_port:
+        authority += f":{port}"
+    return parts._replace(netloc=authority).geturl(), host, port, address
 
 
 def run_curl(url, host, port, address, output):
     pinned = f"[{address}]" if ":" in address else address
+    hostname = f"[{host}]" if ":" in host else host
     result = subprocess.run(
-        ["curl", "-sS", "--proto", "=http,https", "--noproxy", "*",
+        ["setpriv", "--pdeathsig", "TERM", "curl", "-sS", "--globoff", "--proto", "=http,https", "--noproxy", "*",
          "--max-time", str(TIMEOUT_SECONDS), "--max-filesize", str(MAX_BYTES),
-         "--resolve", f"{host}:{port}:{pinned}",
+         "--resolve", f"{hostname}:{port}:{pinned}",
          "-A", "Mozilla/5.0 RadioAtlas", "-o", output,
          "-w", "%{http_code} %{redirect_url}", "--", url],
         stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -72,11 +91,12 @@ def is_image(path):
     return result.stdout.strip().startswith("image/")
 
 
-def fetch(url, target, curl=run_curl):
-    temporary = target + ".tmp"
+def fetch(url, target, curl=run_curl, *, allow_fake_ip=False):
+    descriptor, temporary = tempfile.mkstemp(prefix=".favicon.", dir=Path(target).parent)
+    os.close(descriptor)
     try:
         for _ in range(MAX_REDIRECTS + 1):
-            host, port, address = validated_hop(url)
+            url, host, port, address = validated_hop(url, allow_fake_ip=allow_fake_ip)
             status, location = curl(url, host, port, address, temporary)
             if status in (301, 302, 303, 307, 308) and location:
                 url = urljoin(url, location)
@@ -95,15 +115,19 @@ def fetch(url, target, curl=run_curl):
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("usage: radio-favicon URL TARGET", file=sys.stderr)
-        return 2
-    url, target = sys.argv[1], sys.argv[2]
-    if os.path.isfile(target) and os.path.getsize(target) > 0:
-        return 0
-    os.makedirs(os.path.dirname(target), exist_ok=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("url")
+    parser.add_argument("target")
+    parser.add_argument("--allow-fake-ip", action="store_true")
+    args = parser.parse_args()
+    signal.signal(signal.SIGTERM, lambda signum, _: sys.exit(128 + signum))
+    os.umask(0o077)
     try:
-        fetch(url, target)
+        os.makedirs(os.path.dirname(args.target), mode=0o700, exist_ok=True)
+        if (os.path.isfile(args.target) and 0 < os.path.getsize(args.target) <= MAX_BYTES
+                and is_image(args.target)):
+            return 0
+        fetch(args.url, args.target, allow_fake_ip=args.allow_fake_ip)
     except (FaviconError, OSError, subprocess.SubprocessError) as error:
         print(f"radio-favicon: {error}", file=sys.stderr)
         return 1

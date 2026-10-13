@@ -6,12 +6,14 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+import wave
+from unittest.mock import Mock, patch
 
 
 sys.dont_write_bytecode = True
@@ -232,7 +234,7 @@ class PropertiesTest(unittest.TestCase):
 
     def set_property(self, server, name, value):
         server.volume = mpris.VolumeWriter()
-        self.addCleanup(server.close)
+        self.addCleanup(server.volume.close)
         replies, errors = [], []
         server.Set(mpris.PLAYER, name, value, lambda: replies.append(True), errors.append)
         deadline = time.monotonic() + 7
@@ -266,6 +268,8 @@ class PropertiesTest(unittest.TestCase):
         ipc.properties.update({"media-title": "Station song", "playlist-pos": 1, "volume": 70})
         server = mpris.Mpris.__new__(mpris.Mpris)
         server.controls = mpris.Controls(ipc, lambda: None, lambda: None)
+        server.artwork = mpris.Artwork(server.controls, lambda: None)
+        self.addCleanup(server.artwork.close)
         root = server.GetAll(mpris.ROOT)
         self.assertEqual(root["Identity"], "Radio Atlas")
         self.assertEqual(root["DesktopEntry"], "")
@@ -282,6 +286,20 @@ class PropertiesTest(unittest.TestCase):
         self.assertEqual(server.Get(mpris.PLAYER, "Metadata"), {})
         with self.assertRaises(mpris.dbus.DBusException):
             server.OpenUri("http://127.0.0.1/private")
+
+    def test_station_artwork_never_exports_a_remote_url(self):
+        runtime = self.root / "runtime/omarchy-radio-atlas"
+        runtime.mkdir(parents=True)
+        (runtime / "playlist.json").write_text(json.dumps([
+            dict(uuid="station", favicon="http://127.0.0.1/private.png")]))
+        ipc = MPV()
+        ipc.properties["playlist-pos"] = 0
+        server = mpris.Mpris.__new__(mpris.Mpris)
+        server.controls = mpris.Controls(ipc, lambda: None, lambda: None)
+        server.artwork = mpris.Artwork(server.controls, lambda: None)
+        self.addCleanup(server.artwork.close)
+        metadata = server.GetAll(mpris.PLAYER)["Metadata"]
+        self.assertNotIn("mpris:artUrl", metadata)
 
     def test_volume_saves_the_rounded_level_and_keeps_other_state(self):
         self.state_file.parent.mkdir(parents=True)
@@ -314,7 +332,7 @@ class PropertiesTest(unittest.TestCase):
         runtime.mkdir(parents=True)
         server = mpris.Mpris.__new__(mpris.Mpris)
         server.volume = mpris.VolumeWriter()
-        self.addCleanup(server.close)
+        self.addCleanup(server.volume.close)
         replies, errors = [], []
         context = mpris.GLib.MainContext.default()
         with (runtime / "settings.lock").open("w") as lock:
@@ -338,8 +356,118 @@ class PropertiesTest(unittest.TestCase):
         self.assertEqual(json.loads(self.state_file.read_text())["volume"], 80)
 
 
+class ArtworkTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="atlas-artwork-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.runtime = self.root / "runtime/omarchy-radio-atlas"
+        self.runtime.mkdir(parents=True)
+        self.queue = self.runtime / "playlist.json"
+        environment = patch.dict(os.environ, XDG_RUNTIME_DIR=str(self.root / "runtime"),
+                                 XDG_CACHE_HOME=str(self.root / "cache #?"), RADIO_ATLAS_ALLOW_FAKE_IP="false")
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.ipc = MPV()
+        self.ipc.properties["playlist-pos"] = 0
+        self.controls = mpris.Controls(self.ipc, lambda: None, lambda: None)
+        self.changed = Mock()
+        self.artwork = mpris.Artwork(self.controls, self.changed)
+        self.addCleanup(self.artwork.close)
+        self.downloads = []
+        def start(command, flags):
+            process = Mock()
+            process.communicate_utf8_finish.return_value = (True, None, "")
+            process.get_successful.return_value = True
+            self.downloads.append((process, command))
+            return process
+        patcher = patch.object(mpris.Gio.Subprocess, "new", side_effect=start)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def station(self, url):
+        temporary = self.queue.with_suffix(".next")
+        temporary.write_text(json.dumps([dict(uuid="station", favicon=url)]))
+        temporary.replace(self.queue)
+        self.artwork.update(0, True)
+
+    def finish(self, index):
+        process, command = self.downloads[index]
+        target = Path(command[command.index(str(PROJECT / "radio-favicon")) + 2])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>')
+        callback = process.communicate_utf8_async.call_args.args[2]
+        callback(process, object())
+        return target.as_uri()
+
+    def test_artwork_is_local_and_controls_work_while_the_download_is_pending(self):
+        self.station("https://icons.example/image.svg")
+        self.assertEqual(self.artwork.uri, "")
+        self.controls.pause()
+        self.assertTrue(self.ipc.properties["pause"])
+        expected = self.finish(0)
+        self.assertEqual(self.artwork.uri, expected)
+        self.assertIn("cache%20%23%3F", expected)
+        self.assertEqual(self.ipc.properties["user-data/radio-atlas-artwork"], expected)
+        self.changed.assert_called_once()
+        self.artwork.update(0, True)
+        self.assertEqual(len(self.downloads), 1)
+
+    def test_same_position_queue_replacement_rejects_old_download(self):
+        self.station("https://icons.example/old.svg")
+        first = self.downloads[0][0]
+        self.station("https://icons.example/new.svg")
+        first.send_signal.assert_called_once_with(signal.SIGTERM)
+        self.finish(0)
+        self.assertEqual(self.artwork.uri, "")
+        expected = self.finish(1)
+        self.assertEqual(self.artwork.uri, expected)
+
+    def test_stop_and_failure_clear_artwork_and_ignore_late_completion(self):
+        self.station("https://icons.example/image.svg")
+        self.finish(0)
+        self.artwork.update(0, False)
+        self.assertEqual(self.artwork.uri, "")
+        self.assertEqual(self.ipc.properties["user-data/radio-atlas-artwork"], "")
+        self.artwork.update(0, True)
+        self.ipc.properties["user-data/radio-atlas-failure"] = dict(message="failed")
+        self.finish(1)
+        self.assertEqual(self.artwork.uri, "")
+
+    def test_failed_downloads_are_not_retried_on_metadata_updates(self):
+        self.station("https://icons.example/image.svg")
+        self.downloads[0][0].get_successful.return_value = False
+        self.finish(0)
+        for _ in range(10):
+            self.artwork.update(0, True)
+        self.assertEqual(self.artwork.uri, "")
+        self.assertEqual(len(self.downloads), 1)
+
+    def test_queue_is_read_once_until_it_changes_and_is_bounded(self):
+        self.station("https://icons.example/image.svg")
+        with patch.object(Path, "open", side_effect=AssertionError("queue was read again")):
+            for _ in range(100):
+                self.artwork.update(0, True)
+        for data in ([dict(favicon="https://icons.example/image.svg")] * 501, {"favicon": "https://icons.example/image.svg"}):
+            self.queue.write_text(json.dumps(data))
+            self.artwork.update(0, True)
+            self.assertEqual(self.artwork.uri, "")
+            self.assertEqual(self.artwork.urls, [])
+        with self.queue.open("wb") as source:
+            source.truncate(4_194_305)
+        self.artwork.update(0, True)
+        self.assertEqual(self.artwork.urls, [])
+
+    def test_session_fake_ip_opt_in_is_forwarded_to_downloader(self):
+        with patch.dict(os.environ, RADIO_ATLAS_ALLOW_FAKE_IP="true"):
+            self.artwork = mpris.Artwork(self.controls, self.changed)
+        self.addCleanup(self.artwork.close)
+        self.station("https://icons.example/image.svg")
+        self.assertIn("--allow-fake-ip", self.downloads[0][1])
+
+
 class SessionTest(unittest.TestCase):
-    def test_session_starts_mpris_with_a_shadowed_path_python(self):
+    def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="radio-atlas-session-")
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
@@ -353,6 +481,8 @@ class SessionTest(unittest.TestCase):
         python.chmod(0o755)
         log = tempfile.TemporaryFile(mode="w+")
         self.addCleanup(log.close)
+
+        self.root, self.runtime, self.binary, self.log = root, runtime, binary, log
 
         def stop(process):
             try:
@@ -376,23 +506,113 @@ class SessionTest(unittest.TestCase):
         self.addCleanup(connection.close)
         env = dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}",
                    XDG_RUNTIME_DIR=str(root), XDG_DATA_HOME=str(root / "data"),
+                   XDG_CACHE_HOME=str(root / "cache #?"),
                    DBUS_SESSION_BUS_ADDRESS=address)
+        self.connection, self.env, self.stop = connection, env, stop
+
+    def start_session(self, *arguments):
         session = subprocess.Popen([
             str(PROJECT / "radio-session"), "mpv", "--no-config", "--no-video",
             "--load-scripts=no", "--idle=yes", "--ao=null",
-            f"--input-ipc-server={runtime / 'mpv.sock'}",
-        ], env=env, stdout=log, stderr=log, start_new_session=True)
-        self.addCleanup(stop, session)
+            f"--input-ipc-server={self.runtime / 'mpv.sock'}", *arguments,
+        ], env=self.env, stdout=self.log, stderr=self.log, start_new_session=True)
+        self.addCleanup(self.stop, session)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and session.poll() is None:
-            if (runtime / "mpv.sock").is_socket() and any(
-                str(name).startswith("org.mpris.MediaPlayer2.mpv.radio_atlas.")
-                for name in connection.list_names()
-            ):
-                return
+            names = [str(name) for name in self.connection.list_names()
+                     if str(name).startswith("org.mpris.MediaPlayer2.mpv.radio_atlas.")]
+            if (self.runtime / "mpv.sock").is_socket() and names:
+                return self.connection.get_object(names[0], mpris.OBJECT)
             time.sleep(0.02)
-        log.seek(0)
-        self.fail(f"Session did not register MPRIS: {log.read()}")
+        self.log.seek(0)
+        self.fail(f"Session did not register MPRIS: {self.log.read()}")
+
+    def wait(self, predicate):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            result = predicate()
+            if result:
+                return result
+            time.sleep(0.02)
+        self.log.seek(0)
+        status = self.runtime / "status.json"
+        state = status.read_text() if status.exists() else "missing"
+        self.fail(f"Timed out waiting for session artwork: {self.log.read()}\nStatus: {state}")
+
+    def test_session_starts_mpris_with_a_shadowed_path_python(self):
+        self.start_session()
+
+    def test_fake_ip_artwork_reaches_mpris_and_both_status_paths_without_blocking_controls(self):
+        state = self.root / "data/radio-atlas/state.json"
+        state.parent.mkdir(parents=True)
+        state.write_text(json.dumps(dict(favorites=[], recent=[], volume=70, allowFakeIp=True)))
+        queue = self.runtime / "playlist.json"
+        queue.write_text(json.dumps([dict(uuid="station", name="Station", favicon="http://198.18.1.2/image.svg")]))
+        image = self.root / "image.svg"
+        image.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="blue"/></svg>')
+        started, release = self.root / "download-started", self.root / "download-release"
+        curl = self.binary / "curl"
+        curl.write_text('''#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -o ]; then output=$2; shift 2; else shift; fi
+done
+head -c 500000 /dev/zero > "$output"
+printf '%s\n' "$$" >> "$RADIO_ATLAS_TEST_ART_STARTED"
+while [ ! -f "$RADIO_ATLAS_TEST_ART_RELEASE" ]; do sleep 0.01; done
+cp "$RADIO_ATLAS_TEST_ART_IMAGE" "$output"
+printf '200 '
+''')
+        curl.chmod(0o700)
+        status = self.runtime / "status.json"
+        self.env.update(RADIO_ATLAS_TEST_ART_STARTED=str(started),
+                        RADIO_ATLAS_TEST_ART_RELEASE=str(release), RADIO_ATLAS_TEST_ART_IMAGE=str(image),
+                        RADIO_ATLAS_STATUS_FILE=str(status), RADIO_ATLAS_QUEUE_FILE=str(queue))
+        tone = self.root / "tone.wav"
+        with wave.open(str(tone), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(8000)
+            output.writeframes(b"\0\0" * 8000 * 30)
+        server = self.start_session("--loop-playlist=inf", f"--script={PROJECT / 'radio-status.lua'}", str(tone))
+        properties = mpris.dbus.Interface(server, mpris.PROPERTIES)
+        player = mpris.dbus.Interface(server, mpris.PLAYER)
+        self.wait(started.exists)
+        self.assertNotIn("mpris:artUrl", properties.GetAll(mpris.PLAYER)["Metadata"])
+        player.Pause(timeout=1)
+        self.assertEqual(properties.GetAll(mpris.PLAYER)["PlaybackStatus"], "Paused")
+        cache = self.root / "cache #?/omarchy-radio-atlas/favicons"
+        partial = next(cache.glob(".favicon.*"))
+        player.Next()
+        self.wait(lambda: len(started.read_text().splitlines()) >= 2)
+        self.wait(lambda: not partial.exists())
+        self.assertEqual(len(list(cache.glob(".favicon.*"))), 1, "Cancellation must remove the old partial image")
+        release.touch()
+        artwork = str(self.wait(lambda: properties.GetAll(mpris.PLAYER)["Metadata"].get("mpris:artUrl")))
+        self.assertTrue(artwork.startswith("file:///"))
+        self.assertIn("cache%20%23%3F", artwork)
+        self.wait(lambda: status.exists() and json.loads(status.read_text()).get("artwork") == artwork)
+        result = subprocess.run([str(PROJECT / "radio-player"), "status"], env=self.env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["artwork"], artwork)
+        previous_write = status.stat().st_mtime_ns
+        player.Next()
+        self.wait(lambda: status.stat().st_mtime_ns != previous_write)
+        self.wait(lambda: json.loads(status.read_text()).get("artwork") == artwork)
+        self.assertEqual(len(started.read_text().splitlines()), 2, "Cached replay must not download again")
+        self.assertEqual(list(cache.glob(".favicon.*")), [])
+
+        queue.write_text(json.dumps([dict(uuid="other-station", favicon="http://127.0.0.1/private.svg")]))
+        with socket.socket(socket.AF_UNIX) as ipc:
+            ipc.settimeout(2)
+            ipc.connect(str(self.runtime / "mpv.sock"))
+            ipc.sendall(b'{"command":["script-message","radio-atlas-reload"],"request_id":1}\n')
+            ipc.recv(4096)
+        self.wait(lambda: "mpris:artUrl" not in properties.GetAll(mpris.PLAYER)["Metadata"])
+        self.wait(lambda: json.loads(status.read_text()).get("artwork") == "")
+        player.Play()
+        player.Stop()
+        self.assertEqual(properties.GetAll(mpris.PLAYER)["Metadata"], {})
 
 
 if __name__ == "__main__":
