@@ -451,7 +451,7 @@ play_station() {
   local uuid=$1
   local scope=${2:-results}
   local source_file starting_generation
-  starting_generation=$(player_generation)
+  starting_generation=${3:-$(player_generation)}
   source_file=$(mktemp "$runtime_dir/source.XXXXXX")
   if ! source_stations "$scope" > "$source_file"; then
     rm -f "$source_file"
@@ -581,13 +581,14 @@ play_station() {
 }
 
 resume_last() {
-  local uuid
+  local uuid starting_generation
+  starting_generation=$(player_generation)
   uuid=$("$state_path" get | jq -r '.recent[0].uuid // empty')
   if [[ -z $uuid ]]; then
     echo 'No station has been played yet' >&2
     exit 3
   fi
-  play_station "$uuid" recent
+  play_station "$uuid" recent "$starting_generation"
 }
 
 action=${1:-status}

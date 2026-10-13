@@ -1,5 +1,6 @@
 """Exercise stream failure and recovery with real mpv, without audio or public network."""
 import io
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -181,7 +182,7 @@ class PlaybackTest(unittest.TestCase):
         self.wait_status(lambda s: s.get("loaded") and s["playlistPosition"] == 0)
         self.assertEqual(self.requests, failed_requests + ["/live"])
 
-    def test_new_player_starts_playing_when_mpv_config_defaults_to_paused(self):
+    def prepare_cli(self):
         root = Path(self.directory.name)
         scripts = root / "scripts"
         scripts.mkdir()
@@ -193,17 +194,25 @@ class PlaybackTest(unittest.TestCase):
         session.chmod(0o700)
         config = root / "config/mpv"
         config.mkdir(parents=True)
-        (config / "mpv.conf").write_text("pause=yes\n")
+        fetch = scripts / "radio-fetch"
+        fetch.write_text('#!/bin/sh\nprintf "[]\\n"\n')
+        fetch.chmod(0o700)
         environment = dict(self.env, XDG_CONFIG_HOME=str(config.parent))
+        player = scripts / "radio-player"
+        def stop():
+            subprocess.run([str(player), "stop"], env=environment,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        self.addCleanup(stop)
+        return player, environment
+
+    def test_new_player_starts_playing_when_mpv_config_defaults_to_paused(self):
+        player, environment = self.prepare_cli()
+        (Path(environment["XDG_CONFIG_HOME"]) / "mpv/mpv.conf").write_text("pause=yes\n")
         station = dict(uuid="startup-station", name="Startup station",
                        url=f"http://127.0.0.1:{self.server.server_port}/live")
         (self.runtime / "results.json").write_text(json.dumps([station]))
 
-        def stop():
-            subprocess.run([str(scripts / "radio-player"), "stop"], env=environment,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-        self.addCleanup(stop)
-        result = subprocess.run([str(scripts / "radio-player"), "play", station["uuid"]],
+        result = subprocess.run([str(player), "play", station["uuid"]],
                                 env=environment, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.log = (self.runtime / "mpv.log").open()
@@ -211,6 +220,62 @@ class PlaybackTest(unittest.TestCase):
         state = self.wait_status(lambda s: s.get("loaded"))
         self.assertFalse(state["paused"], "Selecting a station must start playback despite pause=yes in mpv.conf")
         self.assertEqual(state["error"], "")
+
+    def test_stop_cancels_resume_that_is_waiting_for_saved_state(self):
+        player, environment = self.prepare_cli()
+        root = Path(self.directory.name)
+        state_dir = root / "data/radio-atlas"
+        state_dir.mkdir(parents=True)
+        station = dict(uuid="resume-station", name="Resume station",
+                       url=f"http://127.0.0.1:{self.server.server_port}/live")
+        (state_dir / "state.json").write_text(json.dumps(dict(favorites=[], recent=[station], volume=70)))
+        ready = root / "state-read-ready"
+        binary = root / "bin"
+        binary.mkdir()
+        flock = binary / "flock"
+        flock.write_text('#!/bin/sh\nif [ "$2" = 9 ]; then : > "$RADIO_ATLAS_TEST_STATE_READY"; fi\n'
+                         'exec /usr/bin/flock "$@"\n')
+        flock.chmod(0o700)
+        environment.update(PATH=f"{binary}:{environment['PATH']}", RADIO_ATLAS_TEST_STATE_READY=str(ready))
+
+        with (state_dir / "state.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            with subprocess.Popen([str(player), "resume"], env=environment, text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as resume:
+                try:
+                    deadline = time.monotonic() + 5
+                    while not ready.exists() and resume.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(ready.exists(), "Resume must reach the blocked state read")
+                    with subprocess.Popen([str(player), "stop"], env=environment, text=True,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE) as stop:
+                        try:
+                            generation = self.runtime / "player.generation"
+                            deadline = time.monotonic() + 5
+                            while not generation.exists() and stop.poll() is None and time.monotonic() < deadline:
+                                time.sleep(0.01)
+                            self.assertTrue(generation.exists(), "Stop must cancel the pending request")
+                            fcntl.flock(lock, fcntl.LOCK_UN)
+                            stopped, stop_error = stop.communicate(timeout=10)
+                            _, resume_error = resume.communicate(timeout=10)
+                        finally:
+                            stop.kill()
+                            stop.wait()
+                finally:
+                    resume.kill()
+                    resume.wait()
+        self.assertEqual(stop.returncode, 0, stop_error)
+        self.assertFalse(json.loads(stopped)["running"])
+        self.assertEqual(resume.returncode, 4, resume_error)
+        self.assertIn("Radio playback was canceled", resume_error)
+        self.assertFalse((self.runtime / "mpv.sock").exists())
+        # A genuinely new Resume after Stop still starts the saved station.
+        result = subprocess.run([str(player), "resume"], env=environment,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.log = (self.runtime / "mpv.log").open()
+        self.addCleanup(self.log.close)
+        self.assertFalse(self.wait_status(lambda s: s.get("loaded"))["paused"])
 
     def test_selecting_station_resumes_paused_playback(self):
         self.start(["/live", "/other"])
