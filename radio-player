@@ -517,6 +517,7 @@ play_station() {
       --audio-display=no
       --audio-client-name="Radio Atlas"
       --idle=yes
+      --pause=no
       --loop-playlist=inf
       --cache-secs=20
       --demuxer-max-bytes=8MiB

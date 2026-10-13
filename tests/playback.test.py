@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -179,6 +180,37 @@ class PlaybackTest(unittest.TestCase):
         self.action("previous")
         self.wait_status(lambda s: s.get("loaded") and s["playlistPosition"] == 0)
         self.assertEqual(self.requests, failed_requests + ["/live"])
+
+    def test_new_player_starts_playing_when_mpv_config_defaults_to_paused(self):
+        root = Path(self.directory.name)
+        scripts = root / "scripts"
+        scripts.mkdir()
+        for name in ("radio-player", "radio-state", "radio-status.lua", "manifest.json"):
+            shutil.copy2(PROJECT / name, scripts / name)
+        # Keep the real CLI and mpv; bypass session networking for the local stream.
+        session = scripts / "radio-session"
+        session.write_text('#!/bin/sh\nexec "$@" --ao=null\n')
+        session.chmod(0o700)
+        config = root / "config/mpv"
+        config.mkdir(parents=True)
+        (config / "mpv.conf").write_text("pause=yes\n")
+        environment = dict(self.env, XDG_CONFIG_HOME=str(config.parent))
+        station = dict(uuid="startup-station", name="Startup station",
+                       url=f"http://127.0.0.1:{self.server.server_port}/live")
+        (self.runtime / "results.json").write_text(json.dumps([station]))
+
+        def stop():
+            subprocess.run([str(scripts / "radio-player"), "stop"], env=environment,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        self.addCleanup(stop)
+        result = subprocess.run([str(scripts / "radio-player"), "play", station["uuid"]],
+                                env=environment, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.log = (self.runtime / "mpv.log").open()
+        self.addCleanup(self.log.close)
+        state = self.wait_status(lambda s: s.get("loaded"))
+        self.assertFalse(state["paused"], "Selecting a station must start playback despite pause=yes in mpv.conf")
+        self.assertEqual(state["error"], "")
 
     def test_selecting_station_resumes_paused_playback(self):
         self.start(["/live", "/other"])
