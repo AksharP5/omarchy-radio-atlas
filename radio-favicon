@@ -5,7 +5,7 @@ Usage: radio-favicon URL TARGET [--allow-fake-ip]
 
 Every hop (including redirects, which are followed manually) is resolved and
 checked with radio-proxy's public-destination rules, then fetched by curl
-pinned to the validated address so DNS cannot change between check and use.
+pinned to the validated addresses so DNS cannot change between check and use.
 """
 
 import argparse
@@ -61,15 +61,15 @@ def validated_hop(url, *, allow_fake_ip=False):
         endpoints = radio_proxy.public_endpoints(host, port, allow_fake_ip=allow_fake_ip)
     except radio_proxy.ProxyError as error:
         raise FaviconError("non-public destination") from error
-    address = endpoints[0][3][0]
+    addresses = [endpoint[3][0] for endpoint in endpoints]
     authority = f"[{host}]" if ":" in host else host
     if explicit_port:
         authority += f":{port}"
-    return parts._replace(netloc=authority).geturl(), host, port, address
+    return parts._replace(netloc=authority).geturl(), host, port, addresses
 
 
-def run_curl(url, host, port, address, output):
-    pinned = f"[{address}]" if ":" in address else address
+def run_curl(url, host, port, addresses, output):
+    pinned = ",".join(f"[{address}]" if ":" in address else address for address in addresses)
     hostname = f"[{host}]" if ":" in host else host
     result = subprocess.run(
         ["setpriv", "--pdeathsig", "TERM", "curl", "-sS", "--globoff", "--proto", "=http,https", "--noproxy", "*",
@@ -96,8 +96,8 @@ def fetch(url, target, curl=run_curl, *, allow_fake_ip=False):
     os.close(descriptor)
     try:
         for _ in range(MAX_REDIRECTS + 1):
-            url, host, port, address = validated_hop(url, allow_fake_ip=allow_fake_ip)
-            status, location = curl(url, host, port, address, temporary)
+            url, host, port, addresses = validated_hop(url, allow_fake_ip=allow_fake_ip)
+            status, location = curl(url, host, port, addresses, temporary)
             if status in (301, 302, 303, 307, 308) and location:
                 url = urljoin(url, location)
                 continue
