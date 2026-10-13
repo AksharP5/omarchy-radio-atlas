@@ -86,6 +86,8 @@ local function current_status()
   local volume = mp.get_property_number("volume", last_volume)
   last_volume = math.floor(volume + 0.5)
   last_output = clean_output(mp.get_property("audio-device", ""))
+  local artwork = mp.get_property_native("user-data/radio-atlas-artwork", "")
+  if type(artwork) ~= "string" or artwork:sub(1, 8) ~= "file:///" then artwork = "" end
   return {
     running = true,
     stopped = failure == nil and mp.get_property_bool("idle-active", false),
@@ -96,7 +98,7 @@ local function current_status()
     playlistCount = mp.get_property_number("playlist-count", 0),
     volume = last_volume,
     output = last_output,
-    artwork = mp.get_property_native("user-data/radio-atlas-artwork", ""),
+    artwork = artwork,
     loaded = station_loaded,
     error = failure and failure.message or "",
     errorDetail = failure and failure.detail or "",
