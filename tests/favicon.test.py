@@ -2,9 +2,11 @@
 
 import importlib.machinery
 import importlib.util
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import socket
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -43,8 +45,8 @@ class FaviconTests(unittest.TestCase):
         answers = {"icons.example": "93.184.216.34", "internal.example": "192.168.1.1"}
         calls = []
 
-        def curl(url, host, port, address, output):
-            calls.append((url, address))
+        def curl(url, host, port, addresses, output):
+            calls.append((url, addresses))
             return 302, "http://internal.example/secret.png"
 
         def getaddrinfo(host, port, **_):
@@ -56,14 +58,14 @@ class FaviconTests(unittest.TestCase):
         ):
             with self.assertRaises(radio_favicon.FaviconError):
                 radio_favicon.fetch("http://icons.example/a.png", self.target, curl=curl)
-        self.assertEqual(calls, [("http://icons.example/a.png", "93.184.216.34")])
+        self.assertEqual(calls, [("http://icons.example/a.png", ["93.184.216.34"])])
         self.assertFalse(Path(self.target).exists())
 
     def test_public_image_is_saved_with_pinned_address(self):
         png = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000004000000040806000000a9f19e7e0000001249444154789c63f8dfc0f01f1933902e0000504f27e1eb00f8a50000000049454e44ae426082")
 
-        def curl(url, host, port, address, output):
-            self.assertEqual((host, port, address), ("icons.example", 443, "93.184.216.34"))
+        def curl(url, host, port, addresses, output):
+            self.assertEqual((host, port, addresses), ("icons.example", 443, ["93.184.216.34"]))
             Path(output).write_bytes(png)
             return 200, ""
 
@@ -74,8 +76,36 @@ class FaviconTests(unittest.TestCase):
             radio_favicon.fetch("https://icons.example/a.png", self.target, curl=curl)
         self.assertEqual(Path(self.target).read_bytes(), png)
 
+    def test_download_uses_reachable_address_after_the_first_connection_fails(self):
+        image = b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
+        requests = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(image)
+            def log_message(self, *_):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            # Stub validation only: curl really tries a refused IPv6 address,
+            # then the IPv4 image server, without contacting public hosts.
+            with patch.object(proxy, "public_endpoints", return_value=[
+                    (socket.AF_INET6, socket.SOCK_STREAM, 6, ("::1", server.server_port, 0, 0)),
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, ("127.0.0.1", server.server_port))]):
+                radio_favicon.fetch(f"http://icons.example:{server.server_port}/image.svg", self.target)
+            self.assertEqual(Path(self.target).read_bytes(), image)
+            self.assertEqual(requests, ["/image.svg"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
+
     def test_non_image_payload_is_discarded(self):
-        def curl(url, host, port, address, output):
+        def curl(url, host, port, addresses, output):
             Path(output).write_text("<html>nope</html>")
             return 200, ""
 
@@ -97,8 +127,8 @@ class FaviconTests(unittest.TestCase):
 
     def test_fake_ip_opt_in_applies_to_every_redirect(self):
         calls = []
-        def curl(url, host, port, address, output):
-            calls.append((url, address))
+        def curl(url, host, port, addresses, output):
+            calls.append((url, addresses))
             if len(calls) == 1:
                 return 302, "https://redirect.example/image.svg"
             Path(output).write_text('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>')
@@ -112,7 +142,7 @@ class FaviconTests(unittest.TestCase):
             self.assertEqual(calls, [])
             radio_favicon.fetch("https://icons.example/image.svg", self.target, curl=curl, allow_fake_ip=True)
         self.assertEqual(len(calls), 2)
-        self.assertEqual([address for _, address in calls], ["198.18.1.2", "198.18.1.2"])
+        self.assertEqual([addresses for _, addresses in calls], [["198.18.1.2"], ["198.18.1.2"]])
 
     def test_fake_ip_opt_in_still_rejects_private_redirects_and_local_routes(self):
         for address, local in [("127.0.0.1", False), ("10.0.0.1", False), ("198.18.1.2", True)]:
@@ -127,15 +157,15 @@ class FaviconTests(unittest.TestCase):
     def test_unicode_hostname_is_canonical_before_validation_and_fetch(self):
         with patch.object(proxy, "public_endpoints", return_value=[
                 (socket.AF_INET, socket.SOCK_STREAM, 6, ("93.184.216.34", 80))]) as endpoints:
-            url, host, port, address = radio_favicon.validated_hop("https://bücher.example/image.svg")
-        self.assertEqual((url, host, port, address),
-                         ("https://xn--bcher-kva.example/image.svg", "xn--bcher-kva.example", 443, "93.184.216.34"))
+            url, host, port, addresses = radio_favicon.validated_hop("https://bücher.example/image.svg")
+        self.assertEqual((url, host, port, addresses),
+                         ("https://xn--bcher-kva.example/image.svg", "xn--bcher-kva.example", 443, ["93.184.216.34"]))
         endpoints.assert_called_once_with(host, port, allow_fake_ip=False)
 
     def test_ipv6_literal_is_pinned_with_brackets(self):
         with patch.object(radio_favicon.subprocess, "run", return_value=Mock(returncode=0, stdout="200 ")) as run:
             radio_favicon.run_curl("https://[2001:4860:4860::8888]/image.svg", "2001:4860:4860::8888",
-                                  443, "2001:4860:4860::8888", self.target)
+                                  443, ["2001:4860:4860::8888"], self.target)
         command = run.call_args.args[0]
         self.assertIn("--globoff", command, "Curl must not expand the URL after destination validation")
         self.assertEqual(command[command.index("--resolve") + 1],
@@ -144,7 +174,7 @@ class FaviconTests(unittest.TestCase):
     def test_overlapping_fetches_use_independent_temporary_files(self):
         image = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
         outputs = []
-        def curl(url, host, port, address, output):
+        def curl(url, host, port, addresses, output):
             outputs.append(output)
             if len(outputs) == 1:
                 radio_favicon.fetch(url, self.target, curl=curl)
@@ -156,6 +186,16 @@ class FaviconTests(unittest.TestCase):
         self.assertNotEqual(outputs[0], outputs[1])
         self.assertEqual(Path(self.target).read_text(), image)
         self.assertEqual(list(Path(self.target).parent.iterdir()), [Path(self.target)])
+
+    def test_non_public_fallback_address_rejects_the_whole_download(self):
+        curl = Mock()
+        with (
+            patch.object(proxy.socket, "getaddrinfo", return_value=resolve("93.184.216.34") + resolve("127.0.0.1")),
+            patch.object(proxy, "route_is_local", return_value=False),
+        ):
+            with self.assertRaises(radio_favicon.FaviconError):
+                radio_favicon.fetch("https://icons.example/image.svg", self.target, curl=curl)
+        curl.assert_not_called()
 
 
 if __name__ == "__main__":
