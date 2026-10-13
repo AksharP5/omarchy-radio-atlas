@@ -114,12 +114,15 @@ Item {
   readonly property var currentGeoStations:
     RadioModel.mergeGeoStations(worldStations, displayStations, countries)
   readonly property string playingStationName: playingStation
-    ? String(playingStation.name || "").trim() : ""
+    ? RadioModel.cleanText(playingStation.name) : ""
   readonly property string playingTrackTitle: {
-    var title = String(playerTitle || "").trim()
+    var title = RadioModel.cleanText(playerTitle)
     var station = playingStationName.toLowerCase()
     return title && station && title.toLowerCase() !== station ? title : ""
   }
+  property string playingLogoPath: ""
+  // Track metadata cleaned of leading junk and a repeated station-name prefix.
+  readonly property var playingTrackParts: RadioModel.trackParts(playingTrackTitle, playingStationName)
   readonly property bool remoteMode: mode !== "favorites" && mode !== "recent"
   readonly property bool lightTheme:
     0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b > 0.5
@@ -146,7 +149,17 @@ Item {
     Qt.resolvedUrl("radio-window").toString().replace(/^file:\/\//, "")
   readonly property int cardWidth: panel.width
   readonly property int cardHeight: panel.height
-  readonly property int headerHeight: Style.space(68)
+  // Base outer inset (close-button edge spacing) used for every pane edge.
+  readonly property int edgeInset: Style.spacing.md
+  // Globe overlay labels/controls: shared inset from the map pane edges.
+  readonly property int overlayInset: edgeInset * 2
+  readonly property int overlaySideInset: overlayInset + Math.round(overlayMetrics.descent)
+  // Tallest header control + edgeInset above/below. The outer 1px border overlaps the
+  // top inset and the 1px divider overlaps the bottom one, mirroring how the outer
+  // border overlaps the close button's right inset, so all three gaps read equal.
+  readonly property int headerHeight: Math.ceil(Math.max(searchField.implicitHeight,
+    randomButton.implicitHeight, helpButton.implicitHeight, closeButton.implicitHeight))
+    + edgeInset * 2
   readonly property int sidebarWidth: Math.min(Style.space(390), cardWidth * 0.39)
   readonly property var controlSections: [
     {
@@ -625,6 +638,8 @@ Item {
       playerRunning = state.running === true
       playerPaused = state.paused === true
       playerStopped = state.stopped === true
+      playingLogoPath = playerRunning && !playerStopped && typeof state.artwork === "string"
+        && state.artwork.indexOf("file:///") === 0 ? state.artwork : ""
       if (!playbackWasStopped && (!playerRunning || playerStopped) && !localStopStatusPending) {
         var generation = playerGeneration()
         if (randomPlaybackPending && randomPlayGeneration !== generation)
@@ -959,6 +974,32 @@ Item {
     atomicWrites: true
     printErrors: true
     onSaved: saveSucceeded = true
+  }
+
+  property bool trackCopied: false
+  readonly property string trackCopyText: playingTrackParts.artist
+    ? playingTrackParts.artist + " - " + playingTrackParts.title
+    : playingTrackParts.title
+
+  function copyTrack() {
+    if (!trackCopyText || copyProcess.running) return
+    copyProcess.command = ["wl-copy", "--", trackCopyText]
+    copyProcess.running = true
+  }
+
+  Process {
+    id: copyProcess
+    onExited: function(exitCode) {
+      if (exitCode !== 0) return
+      root.trackCopied = true
+      trackCopiedTimer.restart()
+    }
+  }
+
+  Timer {
+    id: trackCopiedTimer
+    interval: 1200
+    onTriggered: root.trackCopied = false
   }
 
   Process {
@@ -1429,7 +1470,8 @@ Item {
       id: card
       anchors.fill: parent
       color: root.background
-      borderSpec: Border.surfaceSpec("menu", "border", root.border, Math.max(1, Style.normalBorderWidth))
+      // Theme [menu] border is bright; keep the window edge subtle so the globe reads flush.
+      borderSpec: Border.flat(root.faint, 1)
       radius: Style.cornerRadius
 
       Keys.priority: Keys.AfterItem
@@ -1519,7 +1561,7 @@ Item {
         Text {
           id: title
           anchors.left: parent.left
-          anchors.leftMargin: Style.spacing.panelPadding
+          anchors.leftMargin: root.edgeInset
           anchors.verticalCenter: parent.verticalCenter
           text: "RADIO ATLAS"
           textFormat: Text.PlainText
@@ -1568,6 +1610,8 @@ Item {
           anchors.rightMargin: Style.spacing.xs
           anchors.verticalCenter: parent.verticalCenter
           text: "?"
+          implicitWidth: randomButton.implicitWidth
+          implicitHeight: randomButton.implicitHeight
           tooltipText: root.helpVisible ? "Hide controls (?)" : "Show controls (?)"
           selected: root.helpVisible
           focusable: true
@@ -1581,7 +1625,7 @@ Item {
         Button {
           id: closeButton
           anchors.right: parent.right
-          anchors.rightMargin: Style.spacing.md
+          anchors.rightMargin: root.edgeInset
           anchors.verticalCenter: parent.verticalCenter
           iconText: "\uf00d"
           tooltipText: "Close"
@@ -1619,7 +1663,8 @@ Item {
           Globe {
             id: globe
             anchors.fill: parent
-            anchors.margins: Style.spacing.lg
+            // Equal inset on all sides so the globe doesn't merge with the window border.
+            anchors.margins: root.edgeInset
             countries: root.countries
             stations: root.currentGeoStations
             selectedStation: root.playingStation || root.selectedStation
@@ -1645,9 +1690,9 @@ Item {
           Rectangle {
             id: zoomControls
             anchors.right: parent.right
-            anchors.rightMargin: Style.spacing.panelPadding
+            anchors.rightMargin: root.overlaySideInset
             anchors.bottom: signalCount.top
-            anchors.bottomMargin: Style.spacing.md
+            anchors.bottomMargin: root.overlayInset
             width: Style.space(34)
             height: Style.space(69)
             radius: Style.cornerRadius
@@ -1734,16 +1779,16 @@ Item {
           Text {
             id: mapHint
             anchors.left: parent.left
-            anchors.leftMargin: Style.spacing.panelPadding
+            anchors.leftMargin: root.overlaySideInset
             anchors.right: signalCount.left
             anchors.rightMargin: Style.spacing.md
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: Style.spacing.md
+            anchors.bottomMargin: root.overlayInset
             text: root.fetchError || root.localError
               ? root.fetchError || root.localError
               : (root.activeCountryName
-                ? root.activeCountryName + "  ·  click another country to browse"
-                : "Drag or flick to spin  ·  wheel to zoom  ·  click a signal or country")
+                ? root.activeCountryName + " · click another country to browse"
+                : "Drag or flick to spin · wheel to zoom · click a signal or country")
             textFormat: Text.PlainText
             color: root.fetchError || root.localError ? root.urgent : root.dim
             font.family: Style.font.menuFamily
@@ -1751,12 +1796,20 @@ Item {
             elide: Text.ElideRight
           }
 
+          // Caption text sits on its line box, so the visible bottom gap includes the
+          // descent; side insets add the same amount so all edges read equal.
+          FontMetrics {
+            id: overlayMetrics
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.caption
+          }
+
           Text {
             id: signalCount
             anchors.right: parent.right
-            anchors.rightMargin: Style.spacing.panelPadding
+            anchors.rightMargin: root.overlaySideInset
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: Style.spacing.md
+            anchors.bottomMargin: root.overlayInset
             text: root.currentGeoStations.length + " signals"
             textFormat: Text.PlainText
             color: root.dim
@@ -1785,15 +1838,17 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            height: Style.space(48)
+            height: Style.spacing.controlHeight + root.edgeInset * 2
 
             Row {
+              id: tabRow
               anchors.left: parent.left
-              anchors.leftMargin: Style.spacing.md
+              anchors.leftMargin: root.edgeInset
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.spacing.xs
 
               Button {
+                id: worldTab
                 text: "World"
                 selected: root.mode === "world"
                 focusable: true
@@ -1803,6 +1858,7 @@ Item {
                 onClicked: root.showWorld()
               }
               Button {
+                id: favoritesTab
                 text: "Favorites"
                 selected: root.mode === "favorites"
                 focusable: true
@@ -1812,6 +1868,7 @@ Item {
                 onClicked: root.showFavorites()
               }
               Button {
+                id: recentTab
                 text: "Recent"
                 selected: root.mode === "recent"
                 focusable: true
@@ -1828,6 +1885,18 @@ Item {
               anchors.bottom: parent.bottom
               height: 1
               color: root.faint
+            }
+
+            // Always-visible active tab marker; Button fill is overridden by hover/focus.
+            Rectangle {
+              readonly property Item tab: root.mode === "favorites" ? favoritesTab
+                : root.mode === "recent" ? recentTab : worldTab
+              x: tabRow.x + tab.x
+              width: tab.width
+              anchors.bottom: parent.bottom
+              height: 2
+              color: root.accent
+              z: 1
             }
           }
 
@@ -1889,11 +1958,13 @@ Item {
 
               Rectangle {
                 visible: root.playingStationUuid === stationRow.modelData.uuid
+                  || (root.keyboardSelectionVisible && root.selectedIndex === stationRow.index)
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 width: 2
                 color: root.accent
+                z: 1
               }
 
               Rectangle {
@@ -1909,12 +1980,13 @@ Item {
 
               Text {
                 anchors.left: parent.left
-                anchors.leftMargin: Style.spacing.md
+                anchors.leftMargin: root.edgeInset
                 anchors.right: favoriteButton.left
                 anchors.rightMargin: Style.spacing.sm
                 anchors.top: parent.top
                 anchors.topMargin: Style.space(10)
-                text: stationRow.modelData.name
+                text: RadioModel.cleanText(stationRow.modelData.name)
+                horizontalAlignment: Text.AlignLeft
                 textFormat: Text.PlainText
                 color: root.foreground
                 font.family: Style.font.menuFamily
@@ -1925,14 +1997,13 @@ Item {
 
               Text {
                 anchors.left: parent.left
-                anchors.leftMargin: Style.spacing.md
+                anchors.leftMargin: root.edgeInset
                 anchors.right: favoriteButton.left
                 anchors.rightMargin: Style.spacing.sm
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: Style.space(9)
-                text: RadioModel.stationMeta(stationRow.modelData)
-                  + (RadioModel.compactTags(stationRow.modelData.tags, 2)
-                    ? "  ·  " + RadioModel.compactTags(stationRow.modelData.tags, 2) : "")
+                text: RadioModel.stationDetails(stationRow.modelData, 2)
+                horizontalAlignment: Text.AlignLeft
                 textFormat: Text.PlainText
                 color: root.dim
                 font.family: Style.font.menuFamily
@@ -1943,7 +2014,7 @@ Item {
               Button {
                 id: favoriteButton
                 anchors.right: parent.right
-                anchors.rightMargin: Style.spacing.sm
+                anchors.rightMargin: root.edgeInset
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: root.isFavorite(stationRow.modelData.uuid) ? "\uf005" : "\uf006"
                 tooltipText: root.isFavorite(stationRow.modelData.uuid) ? "Remove favorite" : "Add favorite"
@@ -2006,26 +2077,57 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            height: Math.max(Style.space(126), nowPlaying.height + playerStatus.height
-              + playerControls.implicitHeight + Style.spacing.md * 3 + Style.spacing.xs)
-            color: "transparent"
+            height: Math.max(Style.space(126), Math.max(stationLogo.visible ? stationLogo.height : 0,
+                nowPlaying.height + (trackLine.visible ? Math.ceil(trackLine.font.pixelSize * 1.4) + Style.spacing.xxs : 0)
+                + playerStatus.height + Style.spacing.xs)
+              + playerControls.implicitHeight + root.edgeInset * 3 + Style.spacing.md)
+            // Subtle tint + stronger divider so the block reads apart from the list.
+            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
 
             Rectangle {
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.top: parent.top
               height: 1
-              color: root.faint
+              color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.2)
+            }
+
+            Rectangle {
+              id: stationLogo
+              // Only shown once a real logo has loaded; otherwise the name takes its place.
+              visible: root.playerRunning && !root.playerStopped && stationLogoImage.status === Image.Ready
+              anchors.left: parent.left
+              anchors.leftMargin: root.edgeInset
+              anchors.top: parent.top
+              anchors.topMargin: root.edgeInset * 2
+              width: Style.space(38)
+              height: width
+              radius: Style.cornerRadius
+              clip: true
+              color: "transparent"
+
+              Image {
+                id: stationLogoImage
+                anchors.fill: parent
+                source: root.playingLogoPath
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+                cache: true
+                smooth: true
+                sourceSize.width: width * 2
+                sourceSize.height: height * 2
+              }
             }
 
             Text {
               id: nowPlaying
-              anchors.left: parent.left
+              horizontalAlignment: Text.AlignLeft
+              anchors.left: stationLogo.visible ? stationLogo.right : parent.left
               anchors.leftMargin: Style.spacing.md
               anchors.right: playingFavoriteButton.left
               anchors.rightMargin: Style.spacing.xs
               anchors.top: parent.top
-              anchors.topMargin: Style.spacing.md
+              anchors.topMargin: root.edgeInset * 2
               text: root.playerRunning && !root.playerStopped
                 ? (root.playingStationName || root.playerTitle || "Unknown station")
                 : "Nothing playing"
@@ -2038,18 +2140,54 @@ Item {
             }
 
             Text {
-              id: playerStatus
+              id: trackLine
+              horizontalAlignment: Text.AlignLeft
               anchors.left: nowPlaying.left
               anchors.right: nowPlaying.right
               anchors.top: nowPlaying.bottom
+              anchors.topMargin: Style.spacing.xxs
+              visible: root.playerRunning && !root.playerStopped && root.playingTrackParts.title !== ""
+              text: root.playingTrackParts.artist
+                ? root.playingTrackParts.title + " · " + root.playingTrackParts.artist
+                : root.playingTrackParts.title
+              textFormat: Text.PlainText
+              color: root.foreground
+
+              MouseArea {
+                id: trackCopyMouse
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: Math.min(parent.width, parent.implicitWidth)
+                enabled: parent.visible && root.trackCopyText !== ""
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.copyTrack()
+
+                PanelToolTip {
+                  visible: trackCopyMouse.containsMouse || root.trackCopied
+                  text: (root.trackCopied ? "Copied: " : "Copy: ") + root.trackCopyText
+                  delay: root.trackCopied ? 0 : 400
+                }
+              }
+              font.family: Style.font.menuFamily
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+            }
+
+            Text {
+              id: playerStatus
+              horizontalAlignment: Text.AlignLeft
+              anchors.left: nowPlaying.left
+              anchors.right: nowPlaying.right
+              anchors.top: trackLine.visible ? trackLine.bottom : nowPlaying.bottom
               anchors.topMargin: Style.spacing.xs
               text: root.playerError
                 ? root.playerError
                 : root.streamError ? root.streamError + ". Play to retry, or Next."
                 : (!root.playerRunning ? "Choose a signal to begin"
-                : (root.playingTrackTitle ? root.playingTrackTitle + "  ·  " : "")
-                  + (root.playerStopped ? "Stopped" : root.playerPaused ? "Paused" : "Live")
-                  + (root.playlistCount > 1 ? "  ·  " + root.playlistCount + " stations queued" : ""))
+                : (root.playerStopped ? "Stopped" : root.playerPaused ? "Paused" : "Live")
+                  + (root.playlistCount > 1 ? " · " + root.playlistCount + " stations queued" : ""))
               textFormat: Text.PlainText
               color: root.playerError || root.streamError ? root.urgent : root.dim
               font.family: Style.font.menuFamily
@@ -2060,9 +2198,9 @@ Item {
             Button {
               id: playingFavoriteButton
               anchors.right: parent.right
-              anchors.rightMargin: Style.spacing.sm
+              anchors.rightMargin: root.edgeInset
               anchors.top: parent.top
-              anchors.topMargin: Style.spacing.sm
+              anchors.topMargin: root.edgeInset * 2
               visible: root.playerRunning && root.playingStationUuid !== ""
               iconText: root.isFavorite(root.playingStationUuid) ? "\uf005" : "\uf006"
               tooltipText: root.isFavorite(root.playingStationUuid)
@@ -2082,9 +2220,9 @@ Item {
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.bottom: parent.bottom
-              anchors.leftMargin: Style.spacing.sm
-              anchors.rightMargin: Style.spacing.md
-              anchors.bottomMargin: Style.spacing.sm
+              anchors.leftMargin: root.edgeInset
+              anchors.rightMargin: root.edgeInset
+              anchors.bottomMargin: root.edgeInset
               columns: width < transportControls.implicitWidth
                 + outputControls.implicitWidth - volumeSlider.Layout.preferredWidth
                 + volumeSlider.Layout.minimumWidth + columnSpacing ? 1 : 2
@@ -2098,6 +2236,8 @@ Item {
 
                 Button {
                   iconText: "\uf048"
+                  implicitWidth: playerIconMetrics.buttonWidth
+                  implicitHeight: playerIconMetrics.buttonHeight
                   tooltipText: "Previous station"
                   enabled: root.playerRunning && !root.playerActionBusy
                   focusable: true
@@ -2107,6 +2247,8 @@ Item {
                 }
                 Button {
                   iconText: root.playerRunning && !root.playerStopped && !root.playerPaused ? "\uf04c" : "\uf04b"
+                  implicitWidth: playerIconMetrics.buttonWidth
+                  implicitHeight: playerIconMetrics.buttonHeight
                   tooltipText: root.streamError ? "Retry station"
                     : root.playerRunning && !root.playerStopped && !root.playerPaused ? "Pause" : "Play"
                   enabled: !root.playerActionBusy
@@ -2117,6 +2259,8 @@ Item {
                 }
                 Button {
                   iconText: "\uf051"
+                  implicitWidth: playerIconMetrics.buttonWidth
+                  implicitHeight: playerIconMetrics.buttonHeight
                   tooltipText: "Next station"
                   enabled: root.playerRunning && !root.playerActionBusy
                   focusable: true
@@ -2126,6 +2270,8 @@ Item {
                 }
                 Button {
                   iconText: "\uf04d"
+                  implicitWidth: playerIconMetrics.buttonWidth
+                  implicitHeight: playerIconMetrics.buttonHeight
                   tooltipText: "Stop"
                   enabled: (root.playerRunning || root.playPreparing || root.randomPlaybackPending)
                     && !stopProcess.running
@@ -2145,21 +2291,31 @@ Item {
                 spacing: Style.spacing.xs
 
                 Button {
-                  id: outputButton
-                  iconText: "\uf0a1"
-                  tooltipText: root.playerOutput
-                    ? "Audio output: " + root.outputLabel(root.playerOutput)
-                    : "Choose audio output"
-                  active: root.playerOutput !== ""
-                  enabled: !stopProcess.running && !outputProcess.running
-                  focusable: true
-                  foreground: root.foreground
-                  accent: root.accent
-                  onClicked: root.toggleOutputMenu()
-                }
-
-                Button {
+                  id: muteButton
+                  Layout.leftMargin: playerControls.columns > 1 ? Style.spacing.md : 0
                   iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
+                  Layout.preferredWidth: playerIconMetrics.muteWidth
+                  Layout.preferredHeight: playerIconMetrics.buttonHeight
+
+                  // Fixed widths: transport buttons share the widest transport icon and
+                  // mute uses its wider state, so toggling icons never shifts the row.
+                  Item {
+                    id: playerIconMetrics
+                    visible: false
+                    readonly property real buttonWidth: Math.max(metricPlay.implicitWidth, metricPause.implicitWidth,
+                      metricPrevious.implicitWidth, metricNext.implicitWidth, metricStop.implicitWidth)
+                    readonly property real muteWidth: Math.max(metricMuted.implicitWidth, metricVolume.implicitWidth)
+                    readonly property real buttonHeight: Math.max(metricPlay.implicitHeight, metricVolume.implicitHeight,
+                      metricOutput.implicitHeight)
+                    Button { id: metricPlay; iconText: "\uf04b"; focusable: true }
+                    Button { id: metricPause; iconText: "\uf04c"; focusable: true }
+                    Button { id: metricPrevious; iconText: "\uf048"; focusable: true }
+                    Button { id: metricNext; iconText: "\uf051"; focusable: true }
+                    Button { id: metricStop; iconText: "\uf04d"; focusable: true }
+                    Button { id: metricMuted; iconText: "\uf026"; focusable: true }
+                    Button { id: metricVolume; iconText: "\uf028"; focusable: true }
+                    Button { id: metricOutput; iconText: "\uf0a1"; focusable: true }
+                  }
                   tooltipText: root.playerMuted ? "Unmute" : "Mute (M)"
                   active: root.playerMuted
                   enabled: root.playerRunning && !root.playerActionBusy
@@ -2187,17 +2343,37 @@ Item {
                   Accessible.name: "Radio volume"
                   onMoved: function(nextVolume) { root.setPlayerVolume(nextVolume) }
                   onRightClicked: root.playerAction("mute")
+
+                  // Floating value label; outside the layout so nothing reflows.
+                  Text {
+                    id: volumePercent
+                    visible: volumeSlider._hot || muteButton.hot
+                    text: Math.round(volumeSlider.liveValue) + "%"
+                    x: Math.max(0, Math.min(parent.width - width,
+                      parent.width * volumeSlider.progress - width / 2))
+                    anchors.bottom: parent.top
+                    anchors.bottomMargin: Style.spacing.xxs
+                    textFormat: Text.PlainText
+                    color: root.dim
+                    font.family: Style.font.menuFamily
+                    font.pixelSize: Style.font.caption
+                  }
                 }
 
-                Text {
-                  text: root.playerVolume + "%"
-                  Layout.minimumWidth: implicitWidth
-                  Layout.preferredWidth: Math.max(Style.space(30), implicitWidth)
-                  textFormat: Text.PlainText
-                  color: root.dim
-                  font.family: Style.font.menuFamily
-                  font.pixelSize: Style.font.caption
-                  horizontalAlignment: Text.AlignRight
+                Button {
+                  id: outputButton
+                  Layout.preferredHeight: playerIconMetrics.buttonHeight
+                  Layout.leftMargin: Style.spacing.md
+                  iconText: "\uf0a1"
+                  tooltipText: root.playerOutput
+                    ? "Audio output: " + root.outputLabel(root.playerOutput)
+                    : "Choose audio output"
+                  active: root.playerOutput !== ""
+                  enabled: !stopProcess.running && !outputProcess.running
+                  focusable: true
+                  foreground: root.foreground
+                  accent: root.accent
+                  onClicked: root.toggleOutputMenu()
                 }
               }
             }

@@ -42,6 +42,7 @@ try {
   fs.copyFileSync(new URL("../BarWidget.qml", import.meta.url), path.join(directory, "RadioBar.qml"))
   fs.writeFileSync(path.join(directory, "tst_player_layout.qml"), `
 import QtQuick
+import QtQuick.Window
 import QtQuick.Layouts
 import QtTest
 import qs.Ui
@@ -68,6 +69,12 @@ TestCase {
   property string playingStationName: "A long station name that must stay above the controls"
   property string playingTrackTitle: "A long track title that must stay above the controls"
   property string playerTitle: ""
+  readonly property var playingTrackParts: ({ artist: "", title: playingTrackTitle })
+  readonly property string trackCopyText: playingTrackTitle
+  property bool trackCopied: false
+  property string playingLogoPath: ""
+  readonly property int edgeInset: Style.spacing.md
+  function copyTrack() { trackCopied = true }
   property string playerError: ""
   property string streamError: ""
   property string playerOutput: ""
@@ -111,7 +118,8 @@ TestCase {
       { tag: "small-window", panelWidth: 312, fontSize: 12, stacked: false, shortSlider: true },
       { tag: "small-window-larger-font", panelWidth: 442, fontSize: 17, stacked: false, shortSlider: true },
       { tag: "small-window-large-font", panelWidth: 624, fontSize: 24, stacked: false, shortSlider: true },
-      { tag: "large-font-fixed-spacing", panelWidth: 312, fontSize: 24, spacingScaleWithFont: false, stacked: true },
+      // Fallback icon fonts can still fit one row at 312 px; force wrapping here.
+      { tag: "large-font-fixed-spacing", panelWidth: 250, fontSize: 24, spacingScaleWithFont: false, stacked: true },
       { tag: "expanded-again", panelWidth: 390, fontSize: 12, stacked: false }
     ]
   }
@@ -138,27 +146,26 @@ TestCase {
     width = data.panelWidth
     Style.fontBaseSize = data.fontSize
     Style.spacingScaleWithFont = data.spacingScaleWithFont !== false
-    waitForPolish(playerControls)
-    waitForPolish(outputControls)
+    // Font changes can polish text before scheduling the containing layouts.
+    verify(waitForPolish(root.Window.window), "Font and layout changes must settle before measuring")
     if (data.stacked) {
       verify(bounds(outputControls).top >= bounds(transportControls).bottom + Style.spacing.xs - 0.5,
         "Volume must move below playback when the window is narrow")
     } else {
       compare(bounds(outputControls).bottom, bounds(transportControls).bottom,
         "Normal windows must retain the single row")
-      verify(Math.abs(bounds(outputControls).left - bounds(transportControls).right - Style.spacing.xs) <= 0.5,
-        "Keep the same gap between playback and output buttons")
+      verify(Math.abs(muteButton.mapToItem(playerPanel, 0, 0).x - bounds(transportControls).right
+          - Style.spacing.xs - Style.spacing.md) <= 0.5,
+        "Separate the playback and volume groups with a wider gap")
       if (data.shortSlider)
         verify(volumeSlider.width < Style.space(116), "Shorten the slider before moving to two rows")
       else
         verify(volumeSlider.width >= Style.space(116), "Use spare width for the volume slider")
     }
     var controls = controlsIn(playerPanel)
-    compare(controls.length, 9, "Favorite, six playback/output buttons, slider, percentage")
-    var status = playerPanel.children.find(function(item) {
-      return item.text && item.text.indexOf(root.playingTrackTitle) === 0
-    })
-    verify(status !== undefined, "Track metadata must be present")
+    compare(controls.length, 8, "Favorite, six playback/output buttons, slider (percentage floats on hover)")
+    verify(trackLine.visible && trackLine.text !== "", "Track metadata must be present")
+    var status = playerStatus
     var statusBottom = bounds(status).bottom
     for (var i = 0; i < controls.length; i++) {
       var control = controls[i]
@@ -181,6 +188,56 @@ TestCase {
         verify(control.width >= control.implicitWidth - 0.5, "The percentage must not clip")
     }
     verify(volumeSlider.width >= volumeSlider.knobSize * 2, "Keep a usable volume track")
+    var iconButtons = transportControls.children
+      .filter(function(item) { return item instanceof Button && item.visible })
+    for (var k = 0; k < iconButtons.length; k++)
+      compare(iconButtons[k].width, iconButtons[0].width, "Transport buttons share one width")
+    var muteWidth = muteButton.width
+    playerMuted = !playerMuted
+    waitForPolish(outputControls)
+    compare(muteButton.width, muteWidth, "Mute must not change width")
+    playerMuted = !playerMuted
+    var playButton = transportControls.children[1]
+    var playWidth = playButton.width
+    playerPaused = !playerPaused
+    waitForPolish(transportControls)
+    compare(playButton.width, playWidth, "Play/pause must not change width")
+    playerPaused = !playerPaused
+  }
+
+  function test_logoAndPercentFit_data() {
+    return [
+      { tag: "small-window-hover", panelWidth: 312, fontSize: 12, drag: false },
+      { tag: "small-window-drag", panelWidth: 312, fontSize: 12, drag: true },
+      { tag: "large-font-hover", panelWidth: 312, fontSize: 24, spacingScaleWithFont: false, drag: false },
+      { tag: "large-font-drag", panelWidth: 624, fontSize: 24, drag: true }
+    ]
+  }
+
+  function test_logoAndPercentFit(data) {
+    width = data.panelWidth
+    Style.fontBaseSize = data.fontSize
+    Style.spacingScaleWithFont = data.spacingScaleWithFont !== false
+    playerStopped = false
+    playingLogoPath = Qt.resolvedUrl("logo.png")
+    tryCompare(stationLogoImage, "status", Image.Ready)
+    verify(stationLogo.visible, "A loaded local logo must be shown")
+    if (data.drag) volumeSlider.dragging = true
+    else mouseMove(volumeSlider, volumeSlider.width / 2, volumeSlider.height / 2)
+    tryCompare(volumePercent, "visible", true)
+    verify(waitForPolish(root.Window.window), "Logo and layout changes must settle before measuring")
+    var items = [stationLogo, nowPlaying, playerStatus, trackLine, volumePercent, volumeSlider]
+    for (var i = 0; i < items.length; i++) {
+      var rect = bounds(items[i])
+      verify(rect.left >= -0.5 && rect.right <= playerPanel.width + 0.5, "item " + i + " must fit horizontally")
+      verify(rect.top >= -0.5 && rect.bottom <= playerPanel.height + 0.5, "item " + i + " must fit vertically")
+    }
+    var logo = bounds(stationLogo)
+    verify(bounds(nowPlaying).left >= logo.right - 0.5, "Station name must start after the logo")
+    verify(bounds(volumePercent).bottom <= bounds(volumeSlider).top + 0.5, "Percentage floats above the slider")
+    volumeSlider.dragging = false
+    mouseMove(playerPanel, 1, 1)
+    playingLogoPath = ""
   }
 
   function test_playerState_data() {
@@ -221,7 +278,18 @@ TestCase {
     ]
   }
 
+  property real initialFontBaseSize: 0
+  property bool initialSpacingScaleWithFont: true
+
+  function initTestCase() {
+    initialFontBaseSize = Style.fontBaseSize
+    initialSpacingScaleWithFont = Style.spacingScaleWithFont
+  }
+
   function cleanup() {
+    // Layout rows change global Style; restore it so later tests start clean.
+    Style.fontBaseSize = initialFontBaseSize
+    Style.spacingScaleWithFont = initialSpacingScaleWithFont
     for (var i = 0; i < barWidget.resources.length; i++) {
       var resource = barWidget.resources[i]
       if (resource.command !== undefined) resource.running = false
@@ -265,6 +333,8 @@ TestCase {
   }
 }
 `)
+  fs.writeFileSync(path.join(directory, "logo.png"), Buffer.from(
+    "89504e470d0a1a0a0000000d4948445200000004000000040806000000a9f19e7e0000001249444154789c63f8dfc0f01f1933902e0000504f27e1eb00f8a50000000049454e44ae426082", "hex"))
   const result = spawnSync("/usr/lib/qt6/bin/qmltestrunner", ["-platform", "offscreen", "-import", directory, "-input", directory], {
     env: { ...process.env, QT_QUICK_BACKEND: "software",
       QT_NO_XDG_DESKTOP_PORTAL: "1", QT_QPA_PLATFORMTHEME: "" },

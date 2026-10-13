@@ -12,6 +12,7 @@ const context = vm.createContext({
   RadioModel: model,
   displayStations: stations,
   playingStationUuid: "",
+  playingLogoPath: "",
   playerRunning: false,
   playerStopped: false,
   localStopStatusPending: false,
@@ -53,6 +54,16 @@ assert.equal(context.selectedStation.uuid, "next")
 assert.equal(context.selectedIndex, 2)
 assert.equal(context.stationList.currentIndex, 2)
 assert.equal(visibleIndex, 2)
+
+for (const [artwork, stopped, expected] of [
+  ["file:///tmp/cache%20%23%3F/image.svg", false, "file:///tmp/cache%20%23%3F/image.svg"],
+  ["http://127.0.0.1/private.svg", false, ""],
+  ["https://icons.example/image.svg", false, ""],
+  ["file:///tmp/image.svg", true, ""],
+]) {
+  context.applyPlayerState(JSON.stringify({ ...playing, artwork, stopped }))
+  assert.equal(context.playingLogoPath, expected, "The panel uses local artwork only while playing")
+}
 
 const refreshFunctions = source.match(/  function (?:setSelection|setStationList|moveSelection|playSelected|playlistScope|previewSearch|search)\([\s\S]*?\n  \}/g).join("\n")
 const debounce = source.match(/id: searchDebounce[\s\S]*?onTriggered: ([^\n]+)/)[1]

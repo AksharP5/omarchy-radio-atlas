@@ -167,6 +167,7 @@ status() {
       '{"command":["get_property","audio-device"],"request_id":7}' \
       '{"command":["get_property","user-data/radio-atlas-failure"],"request_id":8}' \
       '{"command":["get_property","idle-active"],"request_id":9}' \
+      '{"command":["get_property","user-data/radio-atlas-artwork"],"request_id":10}' \
       | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
       | head -c "$((max_ipc_bytes + 1))" || true
   )
@@ -224,6 +225,8 @@ status() {
     volume: ([.[] | select(.request_id == 5) | .data][0] // 70),
     output: (([.[] | select(.request_id == 7) | .data][0] // "")
       | if type == "string" then (if . == "auto" then "" else sub("^pipewire/"; "") end) else "" end),
+    artwork: (([.[] | select(.request_id == 10) | .data][0] // "")
+      | if type == "string" and startswith("file:///") then . else "" end),
     loaded: $loaded,
     error: ($failure.message // ""),
     errorDetail: ($failure.detail // ""),

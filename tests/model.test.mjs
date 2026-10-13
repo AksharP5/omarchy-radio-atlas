@@ -161,6 +161,24 @@ const stations = [
 ]
 assert.equal(model.stationAt(stations, 100, 100, 200, 200, 1, 0, 0, 12).uuid, "a")
 assert.equal(model.compactTags("jazz, soul, jazz", 2), "jazz · soul")
+assert.equal(model.cleanText("\u200f  Radio\u200b  Breza \u0007"), "Radio Breza")
+assert.equal(model.stationMeta({ countryCode: "DE", codec: "MP3", bitrate: 128 }), "DE · MP3 · 128 kbps")
+assert.equal(model.stationDetails({ countryCode: "DE", codec: "MP3", bitrate: 128, tags: "rock,pop,jazz" }, 2),
+  "DE · MP3 · 128 kbps · rock · pop")
+assert.equal(model.stationDetails({ countryCode: "CN", codec: " ", bitrate: 0, tags: " , news" }, 2), "CN · news")
+assert.equal(model.stationDetails({ tags: "" }, 2), "")
+
+function track(title, station) {
+  const parts = model.trackParts(title, station)
+  return [parts.artist, parts.title]
+}
+assert.deepEqual(track("Rockwell - Somebody's Watching Me", "Rock"), ["Rockwell", "Somebody's Watching Me"])
+assert.deepEqual(track("Radiohead - Creep", "Radio"), ["Radiohead", "Creep"])
+assert.deepEqual(track("Radio Breza - Song", "Radio Breza"), ["", "Song"])
+assert.deepEqual(track("Radio Breza: Artist - Song", "Radio Breza"), ["Artist", "Song"])
+assert.deepEqual(track("Radio Breza | Song", "Radio Breza"), ["", "Song"])
+assert.deepEqual(track("Radio Breza", "Radio Breza"), ["", ""])
+assert.deepEqual(track(" - Artist - Song", ""), ["Artist", "Song"])
 
 const landingStations = [
   { uuid: "playing", name: "Playing", latitude: 0, longitude: 0 },

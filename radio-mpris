@@ -4,6 +4,7 @@
 from collections import deque
 from dataclasses import dataclass
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -264,8 +265,11 @@ class Controls:
             if kind == "shutdown":
                 self.quit_loop()
                 return
-        elif kind == "client-message" and event.get("args") == ["radio-atlas-ui-toggle"]:
-            self.toggle()
+        elif kind == "client-message":
+            if event.get("args") == ["radio-atlas-ui-toggle"]:
+                self.toggle()
+            elif event.get("args") == ["radio-atlas-reload"]:
+                self.changed()
         elif kind == "property-change":
             name, value = event.get("name"), event.get("data")
             if name == "audio-device" and value != self.selected:
@@ -340,6 +344,97 @@ class VolumeWriter:
         self.process = self.pending = None
 
 
+class Artwork:
+    """Download once per station/queue change and publish only validated local art."""
+
+    def __init__(self, controls, changed):
+        self.controls = controls
+        self.changed = changed
+        self.queue_path = Path(os.environ["XDG_RUNTIME_DIR"]) / "omarchy-radio-atlas/playlist.json"
+        self.cache_dir = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "omarchy-radio-atlas/favicons"
+        self.allow_fake_ip = os.environ.get("RADIO_ATLAS_ALLOW_FAKE_IP") == "true"
+        self.queue_stamp = None
+        self.urls = []
+        self.request = None
+        self.process = None
+        self.uri = ""
+
+    def update(self, position, active):
+        try:
+            info = self.queue_path.stat()
+            stamp = (info.st_ino, info.st_mtime_ns, info.st_size)
+        except OSError:
+            stamp = None
+        if stamp != self.queue_stamp:
+            self.queue_stamp = stamp
+            self.urls = []
+            if stamp is not None and info.st_size <= 4_194_304:
+                try:
+                    with self.queue_path.open("rb") as source:
+                        raw = source.read(4_194_305)
+                    queue = json.loads(raw) if len(raw) <= 4_194_304 else None
+                    if isinstance(queue, list) and len(queue) <= 500:
+                        self.urls = [row.get("favicon", "").strip()
+                                     if isinstance(row, dict) and isinstance(row.get("favicon"), str)
+                                     else "" for row in queue]
+                except (OSError, ValueError):
+                    pass
+        url = self.urls[position] if active and isinstance(position, int) and 0 <= position < len(self.urls) else ""
+        request = (self.queue_stamp, position, url) if url else None
+        if request == self.request:
+            return
+        self.close()
+        self.request = request
+        self.publish("")
+        if not url:
+            return
+        target = self.cache_dir / hashlib.sha256(url.encode()).hexdigest()
+        command = ["setpriv", "--pdeathsig", "TERM", "timeout", "--kill-after=1", "40",
+                   sys.executable, str(Path(__file__).resolve().with_name("radio-favicon")), url, str(target)]
+        if self.allow_fake_ip:
+            command.append("--allow-fake-ip")
+        try:
+            self.process = Gio.Subprocess.new(command, Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
+            self.process.communicate_utf8_async(None, None,
+                lambda process, result: self.finished(process, result, request, target))
+        except GLib.Error as error:
+            print(f"radio-mpris: artwork could not start: {error}", file=sys.stderr)
+
+    def publish(self, uri):
+        if uri == self.uri:
+            return
+        self.uri = uri
+        self.controls.ipc.command("set_property", "user-data/radio-atlas-artwork", uri)
+        self.changed()
+
+    def finished(self, process, result, request, target):
+        try:
+            _, _, stderr = process.communicate_utf8_finish(result)
+        except GLib.Error as error:
+            print(f"radio-mpris: artwork download failed: {error}", file=sys.stderr)
+            return
+        if process is not self.process:
+            return
+        self.process = None
+        self.update(self.controls.ipc.get("playlist-pos", -1), self.controls.active())
+        if request != self.request:
+            return
+        if not process.get_successful():
+            print(stderr.strip() or "radio-mpris: artwork unavailable", file=sys.stderr)
+            return
+        self.publish(target.as_uri())
+
+    def close(self):
+        if self.process is not None:
+            self.process.send_signal(signal.SIGTERM)
+        self.process = None
+
+    def reset(self):
+        self.close()
+        self.request = None
+        self.publish("")
+
+
 class Mpris(dbus.service.Object):
     def __init__(self, bus, name, controls):
         super().__init__(dbus.service.BusName(name, bus=bus), OBJECT)
@@ -348,6 +443,7 @@ class Mpris(dbus.service.Object):
         self.last_properties = {}
         self.change_source = None
         self.volume = VolumeWriter()
+        self.artwork = Artwork(controls, self.schedule_changed)
 
     def schedule_changed(self):
         if self.change_source is None:
@@ -367,9 +463,12 @@ class Mpris(dbus.service.Object):
         title = ipc.get("media-title", "")
         position = ipc.get("playlist-pos", -1)
         metadata = dbus.Dictionary({}, signature="sv")
+        self.artwork.update(position, not stopped)
         if not stopped:
             metadata["mpris:trackid"] = dbus.ObjectPath(f"{OBJECT}/track/{max(position, 0)}")
             metadata["xesam:title"] = dbus.String(title if isinstance(title, str) else "")
+            if self.artwork.uri:
+                metadata["mpris:artUrl"] = dbus.String(self.artwork.uri)
         return dict(
             PlaybackStatus="Stopped" if stopped else "Paused" if ipc.get("pause", False) else "Playing",
             Rate=dbus.Double(1), Metadata=metadata,
@@ -408,6 +507,7 @@ class Mpris(dbus.service.Object):
 
     def close(self):
         self.volume.close()
+        self.artwork.close()
 
     @dbus.service.signal(PROPERTIES, signature="sa{sv}as")
     def PropertiesChanged(self, interface, changed, invalidated):
@@ -498,7 +598,11 @@ def main():
         ipc = IPC(sys.argv[1])
         controls = Controls(ipc, lambda: mpris.schedule_changed(), loop.quit)
         mpris = Mpris(bus, f"{ROOT}.mpv.radio_atlas.instance{os.getpid()}", controls)
-        ipc.dispatch = controls.event
+        def dispatch(event):
+            if event.get("event") == "start-file":
+                mpris.artwork.reset()
+            controls.event(event)
+        ipc.dispatch = dispatch
         for index, property_name in enumerate([
                 "pause", "idle-active", "audio-device", "audio-device-list", "volume",
                 "media-title", "playlist-pos", "user-data/radio-atlas-failure"]):

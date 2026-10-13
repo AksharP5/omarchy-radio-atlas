@@ -141,7 +141,7 @@ BarWidget {
       : root.playerRunning
       ? (root.streamError ? root.streamError + ": " : root.playerPaused ? "Radio paused: " : "Playing: ")
         + root.safeTooltipText(root.playerTitle)
-        + "  ·  " + (root.playerMuted ? "muted" : root.playerVolume + "%")
+        + " · " + (root.playerMuted ? "muted" : root.playerVolume + "%")
       : "Open Radio Atlas"
 
     onPressed: function(mouseButton) {

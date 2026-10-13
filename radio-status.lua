@@ -86,6 +86,8 @@ local function current_status()
   local volume = mp.get_property_number("volume", last_volume)
   last_volume = math.floor(volume + 0.5)
   last_output = clean_output(mp.get_property("audio-device", ""))
+  local artwork = mp.get_property_native("user-data/radio-atlas-artwork", "")
+  if type(artwork) ~= "string" or artwork:sub(1, 8) ~= "file:///" then artwork = "" end
   return {
     running = true,
     stopped = failure == nil and mp.get_property_bool("idle-active", false),
@@ -96,6 +98,7 @@ local function current_status()
     playlistCount = mp.get_property_number("playlist-count", 0),
     volume = last_volume,
     output = last_output,
+    artwork = artwork,
     loaded = station_loaded,
     error = failure and failure.message or "",
     errorDetail = failure and failure.detail or "",
@@ -114,7 +117,8 @@ local function schedule_update()
 end
 
 for _, property in ipairs({
-  "pause", "idle-active", "mute", "media-title", "playlist-pos", "playlist-count", "volume", "audio-device"
+  "pause", "idle-active", "mute", "media-title", "playlist-pos", "playlist-count", "volume", "audio-device",
+  "user-data/radio-atlas-artwork"
 }) do
   mp.observe_property(property, "native", schedule_update)
 end
@@ -222,6 +226,7 @@ mp.register_event("shutdown", function()
     playlistCount = 0,
     volume = last_volume,
     output = last_output,
+    artwork = "",
     loaded = false,
     station = empty_station()
   })

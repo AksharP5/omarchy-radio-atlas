@@ -574,7 +574,40 @@ function compactTags(tags, maximum) {
   var output = []
   var limit = Math.max(1, Number(maximum || 2))
   for (var i = 0; i < parts.length && output.length < limit; i++) {
-    var part = parts[i].trim()
+    var part = cleanText(parts[i])
+    if (part && output.indexOf(part) === -1) output.push(part)
+  }
+  return output.join(" · ")
+}
+
+// Strip control, zero-width and bidi-control characters, collapse spaces, trim.
+function cleanText(value) {
+  return String(value === undefined || value === null ? "" : value)
+    .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+// Split stream metadata into artist/title. A leading station name is removed
+// only when it is the whole title or is followed by a separator, so
+// "Rockwell - ..." on a station called "Rock" stays intact.
+function trackParts(rawTitle, stationName) {
+  var title = cleanText(rawTitle).replace(/^[\s:|\-–—·]+/, "").trim()
+  var station = cleanText(stationName)
+  if (station && title.toLowerCase().indexOf(station.toLowerCase()) === 0) {
+    var rest = title.slice(station.length)
+    if (rest === "") title = ""
+    else if (/^(\s+[-–—|·:\/]\s+|\s*[:|·]\s*)/.test(rest))
+      title = rest.replace(/^[\s:|\-–—·\/]+/, "").trim()
+  }
+  var split = title.match(/^(.+?)\s+[-–—]\s+(.+)$/)
+  return split ? { artist: split[1].trim(), title: split[2].trim() } : { artist: "", title: title }
+}
+
+function joinParts(parts) {
+  var output = []
+  for (var i = 0; i < parts.length; i++) {
+    var part = cleanText(parts[i]).replace(/^[·|,\-\s]+|[·|,\-\s]+$/g, "")
     if (part && output.indexOf(part) === -1) output.push(part)
   }
   return output.join(" · ")
@@ -582,11 +615,14 @@ function compactTags(tags, maximum) {
 
 function stationMeta(station) {
   if (!station) return ""
-  var parts = []
-  if (station.countryCode) parts.push(station.countryCode)
-  if (station.codec) parts.push(station.codec)
-  if (Number(station.bitrate) > 0) parts.push(Number(station.bitrate) + " kbps")
-  return parts.join(" · ")
+  return joinParts([station.countryCode, station.codec,
+    Number(station.bitrate) > 0 ? Number(station.bitrate) + " kbps" : ""])
+}
+
+function stationDetails(station, tagLimit) {
+  if (!station) return ""
+  var tags = compactTags(station.tags, tagLimit)
+  return joinParts([stationMeta(station)].concat(tags ? tags.split(" · ") : []))
 }
 
 function indexByUuid(stations, uuid) {
