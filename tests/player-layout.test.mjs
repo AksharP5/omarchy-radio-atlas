@@ -118,7 +118,8 @@ TestCase {
       { tag: "small-window", panelWidth: 312, fontSize: 12, stacked: false, shortSlider: true },
       { tag: "small-window-larger-font", panelWidth: 442, fontSize: 17, stacked: false, shortSlider: true },
       { tag: "small-window-large-font", panelWidth: 624, fontSize: 24, stacked: false, shortSlider: true },
-      { tag: "large-font-fixed-spacing", panelWidth: 312, fontSize: 24, spacingScaleWithFont: false, stacked: true },
+      // Fallback icon fonts can still fit one row at 312 px; force wrapping here.
+      { tag: "large-font-fixed-spacing", panelWidth: 250, fontSize: 24, spacingScaleWithFont: false, stacked: true },
       { tag: "expanded-again", panelWidth: 390, fontSize: 12, stacked: false }
     ]
   }
