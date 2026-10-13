@@ -143,8 +143,29 @@ Item {
   property bool windowSetupReady: false
   property bool windowFrameReady: false
   property string pendingOpenPayload: ""
-  readonly property int preferredWidth: Style.space(1180)
-  readonly property int preferredHeight: Style.space(760)
+  // Never request more than the screen can actually show, so the window fits
+  // on small/hi-DPI displays (e.g. 1128x726 logical) as well as large ones.
+  // Margins account for the bar and a visible border around the card.
+  // Uses Hyprland's focused monitor because the floating window's QsWindow
+  // is not attached to a screen when these bindings first evaluate.
+  readonly property int focusedMonitorLogicalWidth: {
+    var monitor = Hyprland.focusedMonitor
+    if (!monitor) return 0
+    var scale = monitor.scale > 0 ? monitor.scale : 1
+    return Math.round(monitor.width / scale)
+  }
+  readonly property int focusedMonitorLogicalHeight: {
+    var monitor = Hyprland.focusedMonitor
+    if (!monitor) return 0
+    var scale = monitor.scale > 0 ? monitor.scale : 1
+    return Math.round(monitor.height / scale)
+  }
+  readonly property int maxWindowWidth: focusedMonitorLogicalWidth > 0
+    ? focusedMonitorLogicalWidth - Style.space(60) : Style.space(1180)
+  readonly property int maxWindowHeight: focusedMonitorLogicalHeight > 0
+    ? focusedMonitorLogicalHeight - Style.space(80) : Style.space(760)
+  readonly property int preferredWidth: Math.min(Style.space(1180), maxWindowWidth)
+  readonly property int preferredHeight: Math.min(Style.space(760), maxWindowHeight)
   readonly property string windowPath:
     Qt.resolvedUrl("radio-window").toString().replace(/^file:\/\//, "")
   readonly property int cardWidth: panel.width
