@@ -1476,7 +1476,7 @@ Item {
     color: root.background
     implicitWidth: root.preferredWidth
     implicitHeight: root.preferredHeight
-    minimumSize: Qt.size(Style.space(800), Style.space(560))
+    minimumSize: Qt.size(Math.min(Style.space(800), root.preferredWidth), Math.min(Style.space(560), root.preferredHeight))
     HyprlandWindow.opacity: root.windowFrameReady ? 1 : 0
 
     onVisibleChanged: {
