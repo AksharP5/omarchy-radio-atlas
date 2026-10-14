@@ -141,11 +141,28 @@ Item {
   property color mapLand: lightTheme ? "#a9aaa6" : "#283039"
   property color mapGrid: lightTheme ? "#3f454a" : "#7d8791"
 
-  property bool windowSetupReady: false
   property bool windowFrameReady: false
   property string pendingOpenPayload: ""
-  readonly property int preferredWidth: Style.space(1180)
-  readonly property int preferredHeight: Style.space(760)
+  // Before mapping, panel.screen can still be Quickshell's default screen.
+  readonly property var windowScreen: {
+    if (panel.backingWindowVisible) return panel.screen
+    var monitor = Hyprland.focusedMonitor
+    return monitor ? Quickshell.screens.find(function(screen) {
+      return screen.name === monitor.name
+    }) || null : null
+  }
+  readonly property size preferredWindowSize: {
+    var screen = windowScreen
+    if (!screen) return Qt.size(Style.space(1180), Style.space(760))
+    var monitor = Hyprland.monitorFor(screen)
+    var reserved = monitor && monitor.lastIpcObject.reserved || [0, 0, 0, 0]
+    var widthMargin = Math.max(Style.space(60), reserved[0] + reserved[2] + Style.space(40))
+    var heightMargin = Math.max(Style.space(80), reserved[1] + reserved[3] + Style.space(40))
+    return Qt.size(Math.max(1, Math.min(Style.space(1180), screen.width - widthMargin)),
+      Math.max(1, Math.min(Style.space(760), screen.height - heightMargin)))
+  }
+  readonly property int preferredWidth: preferredWindowSize.width
+  readonly property int preferredHeight: preferredWindowSize.height
   readonly property string windowPath:
     Qt.resolvedUrl("radio-window").toString().replace(/^file:\/\//, "")
   readonly property int cardWidth: panel.width
@@ -161,7 +178,8 @@ Item {
   readonly property int headerHeight: Math.ceil(Math.max(searchField.implicitHeight,
     randomButton.implicitHeight, helpButton.implicitHeight, closeButton.implicitHeight))
     + edgeInset * 2
-  readonly property int sidebarWidth: Math.min(Style.space(390), cardWidth * 0.39)
+  readonly property int sidebarWidth: Math.min(cardWidth,
+    Math.max(tabRow.implicitWidth + edgeInset * 2, Math.min(Style.space(390), cardWidth * 0.39)))
   readonly property var controlSections: [
     {
       title: "KEYBOARD",
@@ -208,16 +226,15 @@ Item {
   }
 
   function registerWindowSetup() {
-    windowSetupReady = false
-    if (!windowSetupProcess.running) windowSetupProcess.running = true
+    if (windowSetupProcess.running) return
+    windowSetupProcess.command = [windowPath, String(preferredWidth), String(preferredHeight)]
+    windowSetupProcess.running = true
   }
 
   function open(payloadJson) {
-    if (!windowSetupReady) {
-      pendingOpenPayload = payloadJson || "{}"
-      return
-    }
-    openWindow(payloadJson)
+    pendingOpenPayload = payloadJson || "{}"
+    Hyprland.refreshMonitors()
+    registerWindowSetup()
   }
 
   function openWindow(payloadJson) {
@@ -240,6 +257,7 @@ Item {
   }
 
   function close() {
+    pendingOpenPayload = ""
     helpVisible = false
     outputMenuOpen = false
     globe.stopKineticRotation(true)
@@ -1005,10 +1023,19 @@ Item {
 
   Process {
     id: windowSetupProcess
-    command: [root.windowPath, String(root.preferredWidth), String(root.preferredHeight)]
+    command: []
     onExited: function(exitCode) {
-      root.windowSetupReady = true
       if (!root.pendingOpenPayload) return
+      // The helper uses exit 2 when Lua window rules are unavailable.
+      if (exitCode !== 0 && exitCode !== 2) {
+        console.warn("Radio Atlas window setup failed with exit code", exitCode)
+        root.dismiss()
+        return
+      }
+      if (command[1] !== String(root.preferredWidth) || command[2] !== String(root.preferredHeight)) {
+        root.registerWindowSetup()
+        return
+      }
       var payload = root.pendingOpenPayload
       root.pendingOpenPayload = ""
       root.openWindow(payload)
@@ -1456,7 +1483,7 @@ Item {
     color: root.background
     implicitWidth: root.preferredWidth
     implicitHeight: root.preferredHeight
-    minimumSize: Qt.size(Style.space(800), Style.space(560))
+    minimumSize: Qt.size(Math.min(Style.space(800), root.preferredWidth), Math.min(Style.space(560), root.preferredHeight))
     HyprlandWindow.opacity: root.windowFrameReady ? 1 : 0
 
     onVisibleChanged: {
@@ -2478,7 +2505,7 @@ Item {
         }
       }
 
-      Item {
+      Flickable {
         id: controlsPane
         anchors.left: parent.left
         anchors.right: parent.right
@@ -2488,18 +2515,27 @@ Item {
         anchors.rightMargin: card.borderRight
         anchors.bottomMargin: card.borderBottom
         visible: root.helpVisible
+        clip: true
+        contentWidth: width
+        contentHeight: Math.max(height, controlsContent.height + Style.spacing.panelPadding * 2)
+        boundsBehavior: Flickable.StopAtBounds
         z: 2
         Accessible.role: Accessible.Pane
         Accessible.name: "Radio Atlas controls"
 
         Rectangle {
+          parent: controlsPane
           anchors.fill: parent
           color: root.background
+          z: -1
         }
+
+        QQC.ScrollBar.vertical: QQC.ScrollBar {}
 
         Column {
           id: controlsContent
-          anchors.centerIn: parent
+          anchors.horizontalCenter: parent.horizontalCenter
+          y: Math.max(Style.spacing.panelPadding, (controlsPane.height - height) / 2)
           width: Math.min(parent.width - Style.spacing.panelPadding * 2, Style.space(920))
           height: implicitHeight
           spacing: Style.space(24)
@@ -2513,11 +2549,13 @@ Item {
             font.bold: true
           }
 
-          Row {
+          Grid {
             id: controlsColumns
             width: parent.width
             height: implicitHeight
-            spacing: Style.space(72)
+            columns: width >= Style.space(640) ? 2 : 1
+            columnSpacing: Style.space(72)
+            rowSpacing: Style.space(24)
 
             Repeater {
               model: root.controlSections
@@ -2525,7 +2563,8 @@ Item {
               delegate: Column {
                 id: controlSection
                 required property var modelData
-                width: (controlsColumns.width - controlsColumns.spacing) / 2
+                width: (controlsColumns.width - controlsColumns.columnSpacing * (controlsColumns.columns - 1))
+                  / controlsColumns.columns
                 height: implicitHeight
 
                 Text {
