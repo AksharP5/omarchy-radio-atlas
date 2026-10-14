@@ -1026,6 +1026,12 @@ Item {
     command: []
     onExited: function(exitCode) {
       if (!root.pendingOpenPayload) return
+      // The helper uses exit 2 when Lua window rules are unavailable.
+      if (exitCode !== 0 && exitCode !== 2) {
+        console.warn("Radio Atlas window setup failed with exit code", exitCode)
+        root.dismiss()
+        return
+      }
       if (command[1] !== String(root.preferredWidth) || command[2] !== String(root.preferredHeight)) {
         root.registerWindowSetup()
         return

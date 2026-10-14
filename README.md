@@ -92,6 +92,8 @@ The window fits the focused display's logical size and reserved desktop area
 each time it opens. Large displays retain the full preferred size. Close and
 reopen after moving to a smaller display to fit that output. The controls help
 page scrolls when needed and uses one column in narrow windows.
+If window setup fails, that opening is canceled and the exit code is recorded
+in the shell log. Open Radio Atlas again to retry.
 
 Stop also cancels pending random tuning, including before playback starts.
 

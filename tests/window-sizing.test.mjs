@@ -8,13 +8,31 @@ import { fileURLToPath } from "node:url"
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
 const sizing = source.slice(source.indexOf("  property bool windowFrameReady"),
   source.indexOf("  readonly property string windowPath"))
-const lifecycle = source.match(/  function (?:registerWindowSetup|open|close)\([\s\S]*?\n  \}/g).join("\n")
+const lifecycle = source.match(/  function (?:registerWindowSetup|open|close|dismiss)\([\s\S]*?\n  \}/g).join("\n")
 const setup = source.match(/  Process \{\n    id: windowSetupProcess[\s\S]*?\n  \}/)[0]
 const minimumSize = source.match(/    minimumSize: (.*)/)[1]
 const shellDirectory = process.env.OMARCHY_SHELL_DIR || "/usr/share/omarchy/shell"
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-window-sizing-"))
 
 try {
+  const bin = path.join(directory, "bin")
+  fs.mkdirSync(bin)
+  fs.writeFileSync(path.join(bin, "hyprctl"), `#!/bin/sh
+if [ "$1" = "-j" ]; then
+  printf '{"configProvider":"%s"}\\n' "$RADIO_ATLAS_TEST_WINDOW_PROVIDER"
+  exit 0
+fi
+printf '%s\\n' "$RADIO_ATLAS_TEST_WINDOW_EVAL"
+`, { mode: 0o755 })
+  for (const [provider, response, exitCode] of [["lua", "ok", 0], ["lua", "rule rejected", 1], ["hyprlang", "", 2]]) {
+    const result = spawnSync(fileURLToPath(new URL("../radio-window", import.meta.url)), ["1068", "672"], {
+      env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH,
+        RADIO_ATLAS_TEST_WINDOW_PROVIDER: provider, RADIO_ATLAS_TEST_WINDOW_EVAL: response },
+      encoding: "utf8",
+    })
+    if (result.error) throw result.error
+    assert.equal(result.status, exitCode, result.stderr)
+  }
   fs.symlinkSync(path.resolve(shellDirectory), path.join(directory, "qs"))
   fs.cpSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"), { recursive: true })
@@ -42,6 +60,11 @@ TestCase {
   property bool opened: false
   property bool helpVisible: false
   property bool outputMenuOpen: false
+  property var manifest: null
+  property int dismissals: 0
+  property var shell: QtObject {
+    function hide(id) { root.dismissals++ }
+  }
   property var startedCommands: []
   property var shownSizes: []
   function openWindow(payload) {
@@ -77,9 +100,9 @@ TestCase {
       width: Math.floor((value.lastIpcObject.transform % 2 ? value.height : value.width) / value.scale),
       height: Math.floor((value.lastIpcObject.transform % 2 ? value.width : value.height) / value.scale) }] : []
   }
-  function finishSetup() {
+  function finishSetup(exitCode) {
     windowSetupProcess.running = false
-    windowSetupProcess.exited(0)
+    windowSetupProcess.exited(exitCode === undefined ? 0 : exitCode)
   }
   function init() {
     close()
@@ -87,6 +110,7 @@ TestCase {
     pendingOpenPayload = ""
     startedCommands = []
     shownSizes = []
+    dismissals = 0
     Hyprland.windowMonitor = null
     focusMonitor(monitor(1920, 1080, 1))
     Style.fontBaseSize = 12
@@ -145,6 +169,28 @@ TestCase {
     finishSetup()
     compare(shownSizes.length, 0)
     compare(panel.visible, false)
+  }
+  function test_setupFailureCancelsOpenAndAllowsRetry_data() {
+    return [{ tag: "lua-rule-rejected", code: 1, changeMonitor: false },
+      { tag: "failure-after-monitor-change", code: 127, changeMonitor: true }]
+  }
+  function test_setupFailureCancelsOpenAndAllowsRetry(data) {
+    open("{}")
+    if (data.changeMonitor) focusMonitor(monitor(2256, 1504, 2))
+    finishSetup(data.code)
+    compare(shownSizes.length, 0)
+    compare(pendingOpenPayload, "")
+    compare(windowSetupProcess.running, false, "Failures must not retry in a loop")
+    compare(dismissals, 1, "Clear the shell's active panel so the next click can retry")
+    open("{}")
+    finishSetup()
+    compare(shownSizes.length, 1)
+  }
+  function test_nonLuaSetupKeepsExistingFallback() {
+    open("{}")
+    finishSetup(2)
+    compare(shownSizes.length, 1)
+    compare(dismissals, 0)
   }
   function test_qtGeometryWinsOverStaleMonitorScale() {
     focusMonitor(monitor(2256, 1504, 1))
