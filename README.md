@@ -27,6 +27,7 @@ pause, previous, and next controls.
 - Independent volume slider, mute, and bar-wheel volume control
 - Audio output picker that routes radio to any PipeWire sink, including AirPlay speakers exposed as RAOP sinks
 - Centered, floating window with normal Omarchy window-manager behavior
+- Window size fits the focused display when opened, including scaled and rotated outputs
 - Automatic dismissal when Omarchy starts its screensaver
 - Keyboard navigation
 - Persistent world and country caches with background refresh and transient retries
@@ -86,6 +87,11 @@ click stops its player or resumes the most recently played station when stopped,
 and the mouse wheel adjusts radio volume. Volume changes through system media
 controls are saved for the next player session too. If there is no listening history,
 right click does nothing.
+
+The window fits the focused display's logical size and reserved desktop area
+each time it opens. Large displays retain the full preferred size. Close and
+reopen after moving to a smaller display to fit that output. The controls help
+page scrolls when needed and uses one column in narrow windows.
 
 Stop also cancels pending random tuning, including before playback starts.
 

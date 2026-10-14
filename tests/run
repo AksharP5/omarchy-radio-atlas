@@ -45,6 +45,8 @@ python3 "$project_dir/tests/selection-writes.test.py"
 node "$project_dir/tests/keyboard.test.mjs"
 node "$project_dir/tests/pointer-selection.test.mjs"
 node "$project_dir/tests/player-layout.test.mjs"
+node "$project_dir/tests/window-sizing.test.mjs"
+node "$project_dir/tests/controls-layout.test.mjs"
 node "$project_dir/tests/zoom-controls.test.mjs"
 python3 "$project_dir/tests/proxy.test.py"
 python3 "$project_dir/tests/favicon.test.py"
@@ -167,8 +169,6 @@ sed -n '/function paintGlobe/,/^  }/p' "$project_dir/Globe.qml" \
   | rg -Fq 'if (!isFinite(globeRadius) || globeRadius <= 0) return'
 rg -Fq '  FloatingWindow {' "$project_dir/RadioAtlas.qml"
 assert_no_match 'WlrLayershell|PanelWindow' "$project_dir/RadioAtlas.qml"
-sed -n '/function open(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -Fq 'openWindow(payloadJson)'
 sed -n '/function openWindow(payloadJson)/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -q 'windowFrameReady = false.*panel\.visible = true' -U --multiline-dotall
 sed -n '/function close()/,/^  }/p' "$project_dir/RadioAtlas.qml" \
