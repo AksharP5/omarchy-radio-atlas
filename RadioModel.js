@@ -1,6 +1,8 @@
 var radians = Math.PI / 180
 var degrees = 180 / Math.PI
 var estimatedLocationCache = ({})
+var estimatedRegionCache = ({})
+var estimatedFeatures = null
 var maximumSelectionBytes = 4194304
 
 function clamp(value, minimum, maximum) {
@@ -268,19 +270,14 @@ function countryCentre(features, code) {
   return null
 }
 
-function estimatedCountryLocation(features, code, key) {
-  var rows = Array.isArray(features) ? features : []
-  var wanted = String(code || "").toUpperCase()
-  var cacheKey = "$" + wanted + ":" + String(key || wanted)
-  if (estimatedLocationCache[cacheKey] !== undefined)
-    return estimatedLocationCache[cacheKey]
-  var bestRing = null
+function countryEstimateRegion(features, code) {
+  var bestPolygon = null
   var bestArea = 0
 
-  for (var i = 0; i < rows.length; i++) {
-    var feature = rows[i]
+  for (var i = 0; i < features.length; i++) {
+    var feature = features[i]
     if (!feature || !feature.geometry || !feature.properties) continue
-    if (String(feature.properties.code || "").toUpperCase() !== wanted) continue
+    if (String(feature.properties.code || "").toUpperCase() !== code) continue
 
     var geometry = feature.geometry
     var polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
@@ -309,13 +306,14 @@ function estimatedCountryLocation(features, code, key) {
       area = Math.abs(area)
       if (area > bestArea) {
         bestArea = area
-        bestRing = points
+        bestPolygon = [points].concat(polygons[p].slice(1))
       }
     }
     break
   }
 
-  if (!bestRing) return null
+  if (!bestPolygon) return null
+  var bestRing = bestPolygon[0]
   var minimumLongitude = Infinity
   var maximumLongitude = -Infinity
   var minimumLatitude = Infinity
@@ -326,6 +324,32 @@ function estimatedCountryLocation(features, code, key) {
     minimumLatitude = Math.min(minimumLatitude, bestRing[boundIndex][1])
     maximumLatitude = Math.max(maximumLatitude, bestRing[boundIndex][1])
   }
+
+  return {
+    polygon: bestPolygon,
+    minimumLongitude: minimumLongitude,
+    maximumLongitude: maximumLongitude,
+    minimumLatitude: minimumLatitude,
+    maximumLatitude: maximumLatitude
+  }
+}
+
+function estimatedCountryLocation(features, code, key) {
+  if (!Array.isArray(features)) return null
+  if (estimatedFeatures !== features) {
+    estimatedFeatures = features
+    estimatedRegionCache = ({})
+    estimatedLocationCache = ({})
+  }
+  var wanted = String(code || "").toUpperCase()
+  var cacheKey = "$" + wanted + ":" + String(key || wanted)
+  if (estimatedLocationCache[cacheKey] !== undefined)
+    return estimatedLocationCache[cacheKey]
+  var regionKey = "$" + wanted
+  if (estimatedRegionCache[regionKey] === undefined)
+    estimatedRegionCache[regionKey] = countryEstimateRegion(features, wanted)
+  var region = estimatedRegionCache[regionKey]
+  if (!region) return null
 
   var seed = 2166136261
   var source = String(key || wanted)
@@ -341,11 +365,11 @@ function estimatedCountryLocation(features, code, key) {
   }
 
   for (var attempt = 0; attempt < 96; attempt++) {
-    var candidateLongitude = minimumLongitude
-      + random() * (maximumLongitude - minimumLongitude)
-    var candidateLatitude = minimumLatitude
-      + random() * (maximumLatitude - minimumLatitude)
-    if (pointInRing(candidateLongitude, candidateLatitude, bestRing)) {
+    var candidateLongitude = region.minimumLongitude
+      + random() * (region.maximumLongitude - region.minimumLongitude)
+    var candidateLatitude = region.minimumLatitude
+      + random() * (region.maximumLatitude - region.minimumLatitude)
+    if (pointInPolygon(candidateLongitude, candidateLatitude, region.polygon)) {
       var location = {
         latitude: candidateLatitude,
         longitude: wrapLongitude(candidateLongitude)

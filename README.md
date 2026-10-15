@@ -80,7 +80,7 @@ Favorites, listening history, volume, and the selected audio output remain in
 | Speaker icon | Choose the audio output |
 | Tab / Shift+Tab, then Enter or Space | Navigate and activate controls, including World / Favorites / Recent |
 | `?` | Show or hide controls |
-| Escape | Hide controls, clear search, or close |
+| Escape | Dismiss the output menu, hide controls, clear search, or close |
 
 On the bar, left click opens Radio Atlas, middle click tunes randomly, right
 click stops its player or resumes the most recently played station when stopped,
@@ -270,8 +270,9 @@ The native QML tests require Qt 6.5 or newer for the globe's drag-event API.
 CI runs them on Ubuntu 26.04 with Qt 6.10.
 Keyboard, pointer, player layout, and zoom control tests use the real Omarchy UI
 components from `/usr/share/omarchy/shell`. Set `OMARCHY_SHELL_DIR` to a checkout's
-`shell` directory to test another version. CI uses a pinned checkout and disables shell
-processes and theme-file access during these tests.
+`shell` directory to test another version. CI uses a pinned checkout. UI fixtures
+load the real visual components, limit Commons imports to their style dependencies,
+and disable shell processes and theme-file access.
 Headless Qt processes also disable the desktop platform theme and automatic
 portal probes so a private test bus does not start desktop portal services.
 CI also runs native history and selection-write regressions with Quickshell on Arch Linux;

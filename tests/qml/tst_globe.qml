@@ -125,6 +125,28 @@ TestCase {
     tryVerify(function() { return Qt.colorEqual(grabImage(globe).pixel(2, 2), "#ffffff") })
   }
 
+  function test_hoverTracksStationsUnderStationaryPointer() {
+    globe.stations = [
+      { uuid: "first", name: "First", latitude: 0, longitude: 0 },
+      { uuid: "second", name: "Second", latitude: 0, longitude: 90 }
+    ]
+    waitForRendering(globe)
+    mouseMove(globe, 400, 300, 20)
+    tryVerify(function() { return globe.hoveredStation && globe.hoveredStation.uuid === "first" })
+
+    globe.focusCoordinate(0, 90)
+    waitForRendering(globe)
+    compare(globe.stationUnderPointer(400, 300).uuid, "second")
+    compare(globe.hoveredStation.uuid, "second", "Hover text must follow the station now under the pointer")
+
+    globe.stations = [{ uuid: "replacement", name: "Replacement", latitude: 0, longitude: 90 }]
+    waitForRendering(globe)
+    compare(globe.hoveredStation.uuid, "replacement", "Refreshed markers must refresh hover text")
+    globe.stations = []
+    waitForRendering(globe)
+    compare(globe.hoveredStation, null)
+  }
+
   function test_offscreenMarkersAreSkippedButEdgeMarkersRemainClickable() {
     globe.globeScale = 3
     var edgeLongitude = Math.asin((-6 - globe.width / 2) / globe.radius()) * 180 / Math.PI

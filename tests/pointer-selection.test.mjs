@@ -4,6 +4,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { linkShellUi } from "./shell-fixture.mjs"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
 const declaration = /\bListView\s*\{\s*id\s*:\s*stationList\b/.exec(source)
@@ -34,7 +35,7 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-pointer-sel
 
 try {
   // Keep the production list, selection and shell UI; isolate only shell IO.
-  fs.symlinkSync(path.resolve(shellDirectory), path.join(directory, "qs"))
+  linkShellUi(directory, shellDirectory)
   fs.symlinkSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"))
   fs.symlinkSync(fileURLToPath(new URL("../RadioModel.js", import.meta.url)),

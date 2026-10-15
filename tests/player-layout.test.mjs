@@ -4,6 +4,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { linkShellUi } from "./shell-fixture.mjs"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
 const declaration = /\b\w+(?:\.\w+)*\s*\{\s*id\s*:\s*playerPanel\b/.exec(source)
@@ -31,7 +32,7 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-player-layo
 
 try {
   // Use the real shell controls and style; stub only process, filesystem and compositor IO.
-  fs.symlinkSync(path.resolve(shellDirectory), path.join(directory, "qs"))
+  linkShellUi(directory, shellDirectory)
   fs.cpSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"), { recursive: true })
   for (const [name, property] of [
@@ -395,6 +396,29 @@ TestCase {
     })
     verify(process !== undefined, "Right click must dispatch " + data.action)
     compare(process.running, true)
+  }
+
+  function test_barWheel_data() {
+    return [
+      { tag: "horizontal-right", x: 120, y: 0, volume: 70 },
+      { tag: "horizontal-left", x: -120, y: 0, volume: 70 },
+      { tag: "volume-up", x: 0, y: 120, volume: 75 },
+      { tag: "volume-down", x: 0, y: -120, volume: 65 }
+    ]
+  }
+
+  function test_barWheel(data) {
+    var process = barWidget.resources.find(function(item) { return item.submittedVolume !== undefined })
+    process.running = false
+    barWidget.pendingVolume = -1
+    barWidget.applyPlayerState(JSON.stringify({ running: true, volume: 70 }))
+    barWidget.visible = true
+    var button = barWidget.children.find(function(item) { return item instanceof WidgetButton })
+    mouseWheel(button, button.width / 2, button.height / 2, data.x, data.y)
+    compare(barWidget.playerVolume, data.volume)
+    compare(process.running, data.y !== 0, "Only vertical scrolling may submit a volume change")
+    if (data.y !== 0) compare(process.command[2], String(data.volume))
+    else compare(barWidget.pendingVolume, -1)
   }
 
   function test_playerState(data) {

@@ -243,8 +243,10 @@ Item {
 
     opened = true
     worldExpansionMisses = 0
-    windowFrameReady = false
-    windowRevealTimer.stop()
+    if (!panel.visible) {
+      windowFrameReady = false
+      windowRevealTimer.stop()
+    }
     panel.visible = true
     fetchError = ""
     loadState()
@@ -686,16 +688,9 @@ Item {
 
       var matchingIndex = nextPlayingUuid
         ? RadioModel.indexByUuid(displayStations, nextPlayingUuid) : -1
-      if (matchingIndex < 0 && playerTitle) {
-        for (var i = 0; i < displayStations.length; i++) {
-          if (displayStations[i].name === playerTitle) { matchingIndex = i; break }
-        }
-      }
       if (playingChanged && matchingIndex >= 0) setSelection(matchingIndex)
 
-      var countryStation = nextPlayingStation || (matchingIndex >= 0 ? selectedStation : null)
-      if (playerRunning && playingChanged && countryStation)
-        highlightStationCountry(countryStation, true)
+      if (playingChanged) highlightStationCountry(nextPlayingStation, true)
       if (state.loaded === true && nextPlayingUuid && nextPlayingUuid !== recordedStationUuid) {
         recordedStationUuid = nextPlayingUuid
         recordPlayed(nextPlayingUuid)
@@ -1180,7 +1175,7 @@ Item {
       }
       root.worldExpansionMisses = 0
       root.worldStations = merged
-      if (root.mode === "world") root.results = merged
+      if (root.mode === "world") root.setStationList("world", merged, true)
       root.scheduleWorldExpansion(1600)
     }
   }
@@ -1504,6 +1499,13 @@ Item {
 
       Keys.priority: Keys.AfterItem
       Keys.onPressed: function(event) {
+        if (root.outputMenuOpen && event.key === Qt.Key_Escape) {
+          root.outputMenuOpen = false
+          keyCatcher.forceActiveFocus()
+          event.accepted = true
+          return
+        }
+
         if (searchField.activeFocus) {
           if (event.key === Qt.Key_Escape) {
             if (searchField.text) {

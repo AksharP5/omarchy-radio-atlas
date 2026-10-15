@@ -48,6 +48,15 @@ for (const update of [{ title: "New track" }, { volume: 75 }, { paused: true }])
   assert.equal(context.keyboardSelectionVisible, true)
 }
 
+context.applyPlayerState(JSON.stringify({
+  ...playing, station: { uuid: "saved", name: stations[2].name },
+}))
+assert.equal(context.playingStationUuid, "saved")
+assert.equal(context.selectedStation.uuid, "browsing",
+  "An absent playing station must not select a different station with the same name")
+assert.equal(context.stationList.currentIndex, 1)
+assert.equal(context.keyboardSelectionVisible, true)
+
 context.applyPlayerState(JSON.stringify({ ...playing, station: stations[2] }))
 assert.equal(context.playerError, "")
 assert.equal(context.selectedStation.uuid, "next")

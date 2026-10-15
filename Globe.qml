@@ -532,8 +532,9 @@ Item {
   function stationUnderPointer(x, y) {
     var nearest = null
     var nearestDistance = stationHitRadius * stationHitRadius
-    for (var i = 0; i < preparedStations.length; i++) {
-      var row = preparedStations[i]
+    var rows = preparedStations
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i]
       if (!row.visible) continue
       var deltaX = row.screenX - x
       var deltaY = row.screenY - y
@@ -624,7 +625,10 @@ Item {
     renderStrategy: Canvas.Cooperative
     onPaint: {
       var ctx = getContext("2d")
-      if (ctx) root.paintGlobe(ctx)
+      if (!ctx) return
+      root.paintGlobe(ctx)
+      if (root.hoveredStation)
+        root.hoveredStation = root.stationUnderPointer(root.hoverX, root.hoverY)
     }
   }
 

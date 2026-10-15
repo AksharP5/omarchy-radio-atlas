@@ -4,6 +4,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { linkShellUi } from "./shell-fixture.mjs"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
 // Preserve the production handler's owner and focus target; omit only the window skin.
@@ -19,7 +20,7 @@ assert.ok(fs.existsSync(path.join(shellDirectory, "Ui/Button.qml")),
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-keyboard-"))
 
 try {
-  fs.symlinkSync(path.resolve(shellDirectory), path.join(directory, "qs"))
+  linkShellUi(directory, shellDirectory)
   fs.symlinkSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"))
   fs.writeFileSync(path.join(directory, "tst_keyboard.qml"), `
@@ -75,6 +76,7 @@ TestCase {
   function init() {
     searchField.text = ""
     helpVisible = false
+    outputMenuOpen = false
     dismissals = 0
     worldRequests = 0
     randomRequests = 0
@@ -116,6 +118,17 @@ TestCase {
     keyClick(Qt.Key_Escape)
     compare(helpVisible, false)
     compare(dismissals, 0)
+  }
+
+  function test_escapeClosesOutputMenuBeforeWindow() {
+    outputMenuOpen = true
+    headerButton.forceActiveFocus()
+    keyClick(Qt.Key_Escape)
+    compare(dismissals, 0)
+    compare(outputMenuOpen, false)
+    verify(keyCatcher.activeFocus)
+    keyClick(Qt.Key_Escape)
+    compare(dismissals, 1)
   }
 
   function test_tabSwitchesViewsThenArrowsAndEnterPlay() {

@@ -312,6 +312,22 @@ assert.deepEqual(
   Array.from(estimatedStations, station => [station.latitude, station.longitude])
 )
 
+const movedCountries = [{
+  ...estimatedCountries[0],
+  geometry: { type: "Polygon", coordinates: [[[40, 50], [50, 50], [50, 60], [40, 60], [40, 50]]] }
+}]
+const movedEstimates = model.mergeGeoStations([], missingLocations, movedCountries)
+assert.equal(movedEstimates.every(station => station.latitude >= 50 && station.latitude <= 60
+  && station.longitude >= 40 && station.longitude <= 50), true,
+  "Replacing map data must invalidate cached country shapes and station locations")
+
+const southAfricanEstimate = model.mergeGeoStations([], [{
+  uuid: "00000006-1111-1111-1111-aaaaaaaaaaaa",
+  countryCode: "ZA", latitude: null, longitude: null
+}], countries)[0]
+assert.equal(model.countryAt(countries, southAfricanEstimate.latitude,
+  southAfricanEstimate.longitude).code, "ZA", "South African estimates must exclude Lesotho")
+
 const searchableStations = [
   {
     uuid: "jazz",

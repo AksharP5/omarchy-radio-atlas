@@ -4,12 +4,15 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { linkShellUi } from "./shell-fixture.mjs"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
 const sizing = source.slice(source.indexOf("  property bool windowFrameReady"),
   source.indexOf("  readonly property string windowPath"))
-const lifecycle = source.match(/  function (?:registerWindowSetup|open|close|dismiss)\([\s\S]*?\n  \}/g).join("\n")
+const lifecycle = source.match(/  function (?:registerWindowSetup|open|openWindow|close|dismiss|scheduleWindowReveal)\([\s\S]*?\n  \}/g).join("\n")
 const setup = source.match(/  Process \{\n    id: windowSetupProcess[\s\S]*?\n  \}/)[0]
+const revealTimer = source.match(/  Timer \{\n    id: windowRevealTimer[\s\S]*?\n  \}/)[0]
+const windowSignals = source.match(/    onVisibleChanged: \{[\s\S]*?(?=\n\n    BorderSurface)/)[0]
 const minimumSize = source.match(/    minimumSize: (.*)/)[1]
 const shellDirectory = process.env.OMARCHY_SHELL_DIR || "/usr/share/omarchy/shell"
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-window-sizing-"))
@@ -33,7 +36,7 @@ printf '%s\\n' "$RADIO_ATLAS_TEST_WINDOW_EVAL"
     if (result.error) throw result.error
     assert.equal(result.status, exitCode, result.stderr)
   }
-  fs.symlinkSync(path.resolve(shellDirectory), path.join(directory, "qs"))
+  linkShellUi(directory, shellDirectory)
   fs.cpSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"), { recursive: true })
   const hyprland = path.join(directory, "Quickshell/Hyprland/Hyprland.qml")
@@ -67,12 +70,16 @@ TestCase {
   }
   property var startedCommands: []
   property var shownSizes: []
-  function openWindow(payload) {
-    opened = true
-    panel.screen = windowScreen
-    panel.visible = true
-    shownSizes = shownSizes.concat([{ width: preferredWidth, height: preferredHeight, payload: payload }])
+  property int worldExpansionMisses: 0
+  property var worldStations: [{}]
+  property string fetchError: ""
+  property int randomRequests: 0
+  function loadState() {
+    shownSizes = shownSizes.concat([{ width: preferredWidth, height: preferredHeight }])
   }
+  function showWorld() {}
+  function tuneRandom() { randomRequests++ }
+  function scheduleWorldExpansion(delay) {}
   ${lifecycle}
   ${setup.replace("Process {", "QtObject {").replace("    command:", `    property bool running: false
     signal exited(int exitCode)
@@ -84,11 +91,16 @@ TestCase {
     property bool backingWindowVisible: visible
     property var screen: null
     property size minimumSize: ${minimumSize}
+    property int width: root.preferredWidth
+    property int height: root.preferredHeight
+    property real opacity: root.windowFrameReady ? 1 : 0
+    ${windowSignals}
   }
+  Item { id: keyCatcher }
   QtObject { id: globe; function stopKineticRotation(clear) {} }
   QtObject { id: worldExpandProcess; property bool running: false }
   Timer { id: worldExpandTimer }
-  Timer { id: windowRevealTimer }
+  ${revealTimer}
 
   function monitor(width, height, scale, transform, reserved) {
     return { width: width, height: height, scale: scale,
@@ -101,6 +113,7 @@ TestCase {
       height: Math.floor((value.lastIpcObject.transform % 2 ? value.width : value.height) / value.scale) }] : []
   }
   function finishSetup(exitCode) {
+    panel.screen = Quickshell.screens[0] || null
     windowSetupProcess.running = false
     windowSetupProcess.exited(exitCode === undefined ? 0 : exitCode)
   }
@@ -111,6 +124,7 @@ TestCase {
     startedCommands = []
     shownSizes = []
     dismissals = 0
+    randomRequests = 0
     Hyprland.windowMonitor = null
     focusMonitor(monitor(1920, 1080, 1))
     Style.fontBaseSize = 12
@@ -150,7 +164,21 @@ TestCase {
     compare(startedCommands[1][2], "672")
     finishSetup()
     compare(shownSizes.length, 1)
-    compare(shownSizes[0].payload, '{"action":"random"}')
+    compare(randomRequests, 1)
+  }
+  function test_summonWhileOpenKeepsWindowVisible_data() {
+    return [{ tag: "revealed", waitForReveal: true },
+      { tag: "reveal-pending", waitForReveal: false }]
+  }
+  function test_summonWhileOpenKeepsWindowVisible(data) {
+    open("{}")
+    finishSetup()
+    if (data.waitForReveal) tryCompare(panel, "opacity", 1)
+    open('{"action":"random"}')
+    finishSetup()
+    compare(randomRequests, 1)
+    if (data.waitForReveal) compare(panel.opacity, 1, "An open window must not flash hidden")
+    tryCompare(panel, "opacity", 1, 200)
   }
   function test_monitorChangesDuringSetup() {
     open("{}")

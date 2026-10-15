@@ -4,6 +4,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { linkShellUi } from "./shell-fixture.mjs"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
 const controls = source.match(/          Rectangle \{\n            id: zoomControls\n[\s\S]*?\n          \}/)?.[0]
@@ -15,7 +16,7 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-zoom-contro
 
 try {
   // Test the production controls with the real Omarchy button and theme.
-  fs.symlinkSync(path.resolve(shellDirectory), path.join(directory, "qs"))
+  linkShellUi(directory, shellDirectory)
   fs.cpSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"), { recursive: true })
   for (const name of ["Globe.qml", "RadioModel.js"])

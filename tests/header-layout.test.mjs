@@ -4,6 +4,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { linkShellUi } from "./shell-fixture.mjs"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
 const header = source.match(/      Item \{\n        id: header[\s\S]*?(?=\n      Item \{\n        id: body)/)?.[0]
@@ -14,7 +15,7 @@ assert.ok(fs.existsSync(path.join(shellDirectory, "Ui/Button.qml")),
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-header-layout-"))
 
 try {
-  fs.symlinkSync(path.resolve(shellDirectory), path.join(directory, "qs"))
+  linkShellUi(directory, shellDirectory)
   fs.symlinkSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"))
   fs.writeFileSync(path.join(directory, "tst_header_layout.qml"), `

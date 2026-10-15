@@ -59,6 +59,7 @@ BarWidget {
   }
 
   function changeVolume(delta) {
+    if (delta === 0) return
     var current = pendingVolume >= 0 ? pendingVolume : playerVolume
     pendingVolume = Math.max(0, Math.min(100, current + (delta > 0 ? 5 : -5)))
     playerVolume = pendingVolume
