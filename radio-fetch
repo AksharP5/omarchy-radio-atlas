@@ -106,7 +106,8 @@ request() {
   response_file=$(mktemp "$request_dir/response.XXXXXX")
   for base in "${bases[@]}"; do
     if setpriv --pdeathsig TERM curl --fail --silent --show-error \
-      --connect-timeout 4 --max-time "$max_time" --retry 1 --retry-delay 0 \
+      --connect-timeout 4 --max-time "$max_time" \
+      --retry 1 --retry-delay 0 --retry-max-time "$max_time" \
       --max-filesize "$max_response_bytes" --proto '=https' \
       --user-agent "$user_agent" --get "$base$path" "$@" \
       --output "$response_file" 2>"$error_file" \

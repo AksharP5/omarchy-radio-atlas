@@ -1,11 +1,14 @@
 """Directory downloads clean up after cancellation without stopping cache refreshes."""
 import fcntl
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 
@@ -110,6 +113,59 @@ target.write_text(json.dumps([dict(stationuuid="12345678-1234-1234-1234-12345678
         self.assertEqual(process.returncode, 0, error)
         self.assertEqual(len(json.loads(output)), 1)
         self.assertEqual([path.name for path in self.runtime.iterdir()], ["results.json"])
+
+    def test_long_retry_after_uses_another_directory_mirror(self):
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                if len(requests) == 1:
+                    self.send_response(503)
+                    self.send_header("Retry-After", "60")
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps([dict(
+                    stationuuid="12345678-1234-1234-1234-123456789abc",
+                    name="Available mirror", url="https://example.com/live", countrycode="US"
+                )]).encode())
+
+            def log_message(self, *_):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+
+        def stop_server():
+            server.shutdown()
+            server.server_close()
+            worker.join()
+
+        self.addCleanup(stop_server)
+        real_curl = shutil.which("curl")
+        curl = self.root / "bin/curl"
+        # Exercise curl's real retry behavior against only this test's HTTP server.
+        curl.write_text('''#!/usr/bin/python3
+import os, sys
+from urllib.parse import urlsplit
+arguments = sys.argv[1:]
+arguments[arguments.index("--proto") + 1] = "=http"
+for index, argument in enumerate(arguments):
+    if argument.startswith("https://"):
+        arguments[index] = os.environ["RADIO_ATLAS_TEST_SERVER"] + urlsplit(argument).path
+real_curl = REAL_CURL
+os.execv(real_curl, [real_curl, "--noproxy", "*", *arguments])
+'''.replace("REAL_CURL", json.dumps(real_curl)))
+        curl.chmod(0o700)
+        self.env["RADIO_ATLAS_TEST_SERVER"] = f"http://127.0.0.1:{server.server_port}"
+        process = self.start(["country", "US"], self.root / "retry")
+        output, error = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, error)
+        self.assertEqual(json.loads(output)[0]["name"], "Available mirror")
+        self.assertEqual(len(requests), 2)
 
     def test_detached_refresh_owns_its_download_after_cached_response_exits(self):
         # jq 1.6 succeeds on an empty input stream; it must not erase a cache.
