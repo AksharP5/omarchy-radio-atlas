@@ -42,6 +42,37 @@ class MPV:
             self.properties[command[1]] = command[2]
 
 
+class IPCTest(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="atlas-mpris-ipc-")
+        self.addCleanup(directory.cleanup)
+        path = str(Path(directory.name) / "mpv.sock")
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(path)
+            listener.listen(1)
+            # Invoke the watch directly so stale readiness is deterministic.
+            with patch.object(mpris.GLib, "io_add_watch", return_value=None):
+                self.ipc = mpris.IPC(path)
+            self.peer, _ = listener.accept()
+        self.addCleanup(self.ipc.close)
+        self.addCleanup(self.peer.close)
+        self.ipc.socket.settimeout(0.05)  # Bound a regression's blocking recv.
+
+    def test_stale_readiness_after_command_keeps_the_connection_alive(self):
+        reply = dict(request_id=1, error="success", data=70)
+        self.peer.sendall((json.dumps(reply) + "\n").encode())
+        self.assertEqual(self.ipc.get("volume"), 70)
+        self.assertTrue(self.ipc.readable(None, mpris.GLib.IO_IN))
+        self.assertEqual(list(self.ipc.events), [])
+
+    def test_readable_preserves_events_and_reports_disconnect(self):
+        event = dict(event="property-change", name="pause", data=True)
+        self.peer.sendall((json.dumps(event) + "\n").encode())
+        self.peer.close()
+        self.assertFalse(self.ipc.readable(None, mpris.GLib.IO_IN | mpris.GLib.IO_HUP))
+        self.assertEqual(list(self.ipc.events), [event, dict(event="shutdown")])
+
+
 class RecoveryTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="atlas-mpris-recovery-")
