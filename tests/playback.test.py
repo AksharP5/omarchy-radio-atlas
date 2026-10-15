@@ -402,6 +402,12 @@ end
             self.assertEqual(self.requests[-1], f"/station-{position}")
 
     def test_stop_cancels_resume_that_is_waiting_for_saved_state(self):
+        self.assert_stop_cancels_waiting_playback(["resume"])
+
+    def test_stop_cancels_station_start_waiting_for_saved_settings(self):
+        self.assert_stop_cancels_waiting_playback(["play", "resume-station", "selection"])
+
+    def assert_stop_cancels_waiting_playback(self, arguments):
         player, environment = self.prepare_cli()
         root = Path(self.directory.name)
         state_dir = root / "data/radio-atlas"
@@ -409,6 +415,7 @@ end
         station = dict(uuid="resume-station", name="Resume station",
                        url=f"http://127.0.0.1:{self.server.server_port}/live")
         (state_dir / "state.json").write_text(json.dumps(dict(favorites=[], recent=[station], volume=70)))
+        (self.runtime / "play-selection.json").write_text(json.dumps([station]))
         ready = root / "state-read-ready"
         binary = root / "bin"
         binary.mkdir()
@@ -420,13 +427,13 @@ end
 
         with (state_dir / "state.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            with subprocess.Popen([str(player), "resume"], env=environment, text=True,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as resume:
+            with subprocess.Popen([str(player), *arguments], env=environment, text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as play:
                 try:
                     deadline = time.monotonic() + 5
-                    while not ready.exists() and resume.poll() is None and time.monotonic() < deadline:
+                    while not ready.exists() and play.poll() is None and time.monotonic() < deadline:
                         time.sleep(0.01)
-                    self.assertTrue(ready.exists(), "Resume must reach the blocked state read")
+                    self.assertTrue(ready.exists(), "Playback must reach the blocked state read")
                     with subprocess.Popen([str(player), "stop"], env=environment, text=True,
                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE) as stop:
                         try:
@@ -437,17 +444,19 @@ end
                             self.assertTrue(generation.exists(), "Stop must cancel the pending request")
                             fcntl.flock(lock, fcntl.LOCK_UN)
                             stopped, stop_error = stop.communicate(timeout=10)
-                            _, resume_error = resume.communicate(timeout=10)
+                            _, play_error = play.communicate(timeout=10)
                         finally:
+                            fcntl.flock(lock, fcntl.LOCK_UN)
                             stop.kill()
                             stop.wait()
                 finally:
-                    resume.kill()
-                    resume.wait()
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                    play.kill()
+                    play.wait()
         self.assertEqual(stop.returncode, 0, stop_error)
         self.assertFalse(json.loads(stopped)["running"])
-        self.assertEqual(resume.returncode, 4, resume_error)
-        self.assertIn("Radio playback was canceled", resume_error)
+        self.assertEqual(play.returncode, 4, play_error)
+        self.assertIn("Radio playback was canceled", play_error)
         self.assertFalse((self.runtime / "mpv.sock").exists())
         # A genuinely new Resume after Stop still starts the saved station.
         result = subprocess.run([str(player), "resume"], env=environment,

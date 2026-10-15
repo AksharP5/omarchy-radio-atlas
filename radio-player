@@ -559,10 +559,20 @@ play_station() {
   fi
 
   if ! load_playlist "$temporary_playlist"; then
+    # Stop must remain able to cancel startup while saved-state reads wait.
+    flock -u 8
     status >/dev/null
     if [[ -S $socket ]] || player_alive; then
       rm -f "$temporary_playlist" "$temporary_queue"
       echo 'Radio player could not load this station' >&2
+      exit 4
+    fi
+    local saved_settings
+    saved_settings=$("$state_path" get 2>/dev/null) || saved_settings='{}'
+    flock -x 8
+    if [[ $(player_generation) != "$starting_generation" ]]; then
+      rm -f "$temporary_playlist" "$temporary_queue"
+      echo 'Radio playback was canceled' >&2
       exit 4
     fi
     mv "$temporary_queue" "$queue_file"
@@ -586,7 +596,7 @@ play_station() {
       --network-timeout=30
       --load-unsafe-playlists=no
       --load-scripts=no
-      --volume="$(configured_volume)"
+      --volume="$(jq -r '(.volume // 70) | round' <<< "$saved_settings")"
       --volume-max=100
       --input-ipc-server="$socket"
       --script="$status_script"
@@ -595,7 +605,7 @@ play_station() {
       --really-quiet
     )
     local selected_output
-    selected_output=$(configured_output)
+    selected_output=$(jq -r '.output // ""' <<< "$saved_settings")
     if [[ -n $selected_output ]]; then
       player_arguments+=(--audio-device="pipewire/$selected_output")
     else
