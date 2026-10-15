@@ -398,6 +398,30 @@ TestCase {
     compare(process.running, true)
   }
 
+  function test_barCancelsPendingResume_data() {
+    return [
+      { tag: "preparing", running: false },
+      { tag: "player-started", running: true }
+    ]
+  }
+
+  function test_barCancelsPendingResume(data) {
+    barWidget.applyPlayerState(JSON.stringify({ running: false }))
+    barWidget.visible = true
+    var button = barWidget.children.find(function(item) { return item instanceof WidgetButton })
+    mouseClick(button, button.width / 2, button.height / 2, Qt.RightButton)
+    var resume = barWidget.resources.find(function(item) {
+      return item.command && item.command[1] === "resume" && item.running
+    })
+    verify(resume !== undefined, "Right click must begin Resume")
+    barWidget.applyPlayerState(JSON.stringify({ running: data.running }))
+    mouseClick(button, button.width / 2, button.height / 2, Qt.RightButton)
+    var stop = barWidget.resources.find(function(item) {
+      return item.command && item.command[1] === "stop" && item.running
+    })
+    verify(stop !== undefined, "A second right click must cancel the pending Resume")
+  }
+
   function test_barWheel_data() {
     return [
       { tag: "horizontal-right", x: 120, y: 0, volume: 70 },

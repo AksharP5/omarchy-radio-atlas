@@ -53,9 +53,11 @@ BarWidget {
   }
 
   function runPlayerAction(action) {
-    if (actionProcess.running) return
-    actionProcess.command = [root.playerPath, action]
-    actionProcess.running = true
+    if (stopProcess.running) return
+    var process = action === "stop" ? stopProcess : actionProcess
+    if (process.running) return
+    process.command = [root.playerPath, action]
+    process.running = true
   }
 
   function changeVolume(delta) {
@@ -95,6 +97,14 @@ BarWidget {
 
   Process {
     id: actionProcess
+    command: []
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.statusReady = true
+    }
+  }
+
+  Process {
+    id: stopProcess
     command: []
     onExited: function(exitCode) {
       if (exitCode === 0) root.statusReady = true
@@ -149,6 +159,10 @@ BarWidget {
       if (!root.bar) return
       if (mouseButton === Qt.RightButton) {
         if (!root.playerStateReady) return
+        if (actionProcess.running && actionProcess.command[1] === "resume") {
+          root.runPlayerAction("stop")
+          return
+        }
         if (root.playerStopped) {
           root.runPlayerAction("toggle")
           return
