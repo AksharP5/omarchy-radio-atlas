@@ -223,6 +223,27 @@ TestCase {
     playerPaused = !playerPaused
   }
 
+  function test_controlsWrapWithoutFeedback() {
+    width = 1000
+    Style.fontBaseSize = 17
+    verify(waitForPolish(root.Window.window))
+    var minimumWidth = transportControls.implicitWidth + outputControls.implicitWidth
+      - volumeSlider.Layout.preferredWidth + volumeSlider.Layout.minimumWidth
+      + playerControls.columnSpacing + root.edgeInset * 2
+    // Exercise the gap where a column-dependent child margin used to toggle wrapping.
+    var narrowWidth = Math.floor(minimumWidth - Style.spacing.md / 2)
+    width = narrowWidth
+    verify(waitForPolish(root.Window.window), "Wrapping must settle below the single-row minimum")
+    compare(playerControls.columns, 1)
+    verify(bounds(outputControls).top >= bounds(transportControls).bottom + Style.spacing.xs - 0.5)
+    width = Math.ceil(minimumWidth + 1)
+    verify(waitForPolish(root.Window.window))
+    compare(playerControls.columns, 2)
+    width = narrowWidth
+    verify(waitForPolish(root.Window.window), "Shrinking again must settle on two rows")
+    compare(playerControls.columns, 1)
+  }
+
   function test_logoAndPercentFit_data() {
     return [
       { tag: "small-window-hover", panelWidth: 312, fontSize: 12, drag: false },

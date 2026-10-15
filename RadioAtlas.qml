@@ -2257,7 +2257,7 @@ Item {
               columns: width < transportControls.implicitWidth
                 + outputControls.implicitWidth - volumeSlider.Layout.preferredWidth
                 + volumeSlider.Layout.minimumWidth + columnSpacing ? 1 : 2
-              columnSpacing: Style.spacing.xs
+              columnSpacing: Style.spacing.xs + Style.spacing.md
               rowSpacing: Style.spacing.xs
 
               Row {
@@ -2323,7 +2323,6 @@ Item {
 
                 Button {
                   id: muteButton
-                  Layout.leftMargin: playerControls.columns > 1 ? Style.spacing.md : 0
                   iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
                   Layout.preferredWidth: playerIconMetrics.muteWidth
                   Layout.preferredHeight: playerIconMetrics.buttonHeight
