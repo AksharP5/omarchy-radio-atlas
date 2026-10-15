@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -131,8 +130,9 @@ WRITER
                        QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software",
                        QT_NO_XDG_DESKTOP_PORTAL="1", QT_QPA_PLATFORMTHEME="", QT_QUICK_CONTROLS_STYLE="Basic")
     environment.pop("HYPRLAND_INSTANCE_SIGNATURE", None)
-    listener = socket.socket(socket.AF_UNIX)
-    listener.bind(str(runtime / "mpv.sock"))
+    listener = subprocess.Popen([sys.executable, str(project / "tests/mpv-fixture.py"),
+                                 str(runtime / "mpv.sock")], stdout=subprocess.PIPE, text=True)
+    assert listener.stdout.readline().strip() == "ready"
     log_path = directory / "selection.log"
     with log_path.open("w") as log:
         process = subprocess.Popen([quickshell, "--no-color", "-p", str(directory)],
@@ -227,5 +227,7 @@ WRITER
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-            listener.close()
+            listener.terminate()
+            listener.wait(timeout=5)
+            listener.stdout.close()
 print("Native selection write tests passed")

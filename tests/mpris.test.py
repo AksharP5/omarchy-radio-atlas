@@ -251,6 +251,27 @@ class RecoveryTest(unittest.TestCase):
             self.assertIsNone(self.controls.stopped_position)
             self.ipc.properties["playlist-pos"] = 1
 
+    def test_delayed_start_file_after_stop_keeps_the_stopped_station(self):
+        self.controls.stop()
+        self.ipc.properties.update({"playlist-pos": -1, "idle-active": True})
+        self.controls.event(dict(event="start-file"))
+
+        self.controls.play()
+
+        self.assertEqual(self.ipc.commands[-2:], [
+            ("playlist-play-index", 1), ("set_property", "pause", False)])
+
+    def test_new_station_load_replaces_the_stopped_resume_position(self):
+        self.controls.stop()
+        self.ipc.properties.update({"playlist-pos": 2, "idle-active": False})
+        self.controls.event(dict(event="start-file"))
+        self.ipc.properties.update({"playlist-pos": -1, "idle-active": True})
+
+        self.controls.play()
+
+        self.assertEqual(self.ipc.commands[-2:], [
+            ("playlist-play-index", "current"), ("set_property", "pause", False)])
+
 
 class PropertiesTest(unittest.TestCase):
     def setUp(self):

@@ -139,6 +139,7 @@ mp.register_event("end-file", function(event)
   if event.reason == "eof" or event.reason == "error" or empty_playlist then
     failure = {
       position = station_position,
+      entry_id = event.playlist_entry_id,
       message = station_loaded and "Stream disconnected" or "Station could not be played",
       detail = empty_playlist and "Station playlist is empty" or clean_text(event.error, 200)
     }
@@ -151,6 +152,9 @@ end)
 -- Block automatic advancement until failures and playlist expansion are handled.
 mp.add_hook("on_after_end_file", 50, function()
   if failure then
+    -- A newer selection can arrive while this end-file event is being handled.
+    local position = mp.get_property_number("playlist-current-pos", -1)
+    if mp.get_property_number("playlist/" .. position .. "/id", -1) ~= failure.entry_id then return end
     mp.commandv("stop", "keep-playlist")
     return
   end
@@ -169,13 +173,20 @@ end)
 mp.register_event("idle", function()
   station_loaded = false
   -- Retain native Next/Previous navigation without reopening the failed stream.
-  if failure then mp.set_property_number("playlist-current-pos", failure.position) end
+  if failure and mp.get_property_number("playlist-current-pos", -1) < 0 then
+    mp.set_property_number("playlist-current-pos", failure.position)
+  end
   schedule_update()
 end)
 mp.register_script_message("radio-atlas-reload", function()
   queue = nil
   schedule_update()
 end)
+mp.register_script_message("radio-atlas-loadlist", function(path)
+  local _, error = mp.commandv("loadlist", path, "replace")
+  mp.commandv("script-message", "radio-atlas-loaded", path, error or "")
+end)
+mp.set_property_bool("user-data/radio-atlas-load-ready", true)
 local function toggle_playback()
   if failure then
     if failure.position < 0 then return end

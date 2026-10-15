@@ -261,7 +261,8 @@ class Controls:
         kind = event.get("event")
         if kind in {"start-file", "end-file", "idle", "shutdown"}:
             self.cancel()
-            if kind == "start-file":
+            # Commands can defer start-file until after a newer Stop.
+            if kind == "start-file" and not self.ipc.get("idle-active", True):
                 self.stopped_position = None
             if kind == "shutdown":
                 self.quit_loop()

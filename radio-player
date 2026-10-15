@@ -148,6 +148,65 @@ send_command() {
     <<< "$response" >/dev/null 2>&1
 }
 
+load_playlist() {
+  [[ -S $socket ]] || return 1
+  # Wait for Lua execution while holding player.lock, so a later Stop stays later.
+  python3 - "$socket" "$1" "$max_ipc_bytes" <<'PY'
+import json
+import socket
+import sys
+import time
+
+path, playlist, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
+try:
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(3)
+        connection.connect(path)
+        deadline = time.monotonic() + 3
+
+        def send(request_id, *command):
+            connection.sendall((json.dumps(dict(command=command, request_id=request_id)) + "\n").encode())
+
+        send(1, "get_property", "user-data/radio-atlas-load-ready")
+        serialized = False
+        with connection.makefile("rb") as responses:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("playlist load timed out")
+                connection.settimeout(remaining)
+                line = responses.readline(limit + 1)
+                if not line:
+                    raise EOFError("mpv closed before loading the playlist")
+                if len(line) > limit:
+                    raise ValueError("mpv reply exceeds the size limit")
+                reply = json.loads(line)
+                if not isinstance(reply, dict):
+                    raise ValueError("invalid mpv reply")
+                if reply.get("request_id") == 1:
+                    serialized = reply.get("error") == "success" and reply.get("data") is True
+                    if serialized:
+                        send(2, "script-message", "radio-atlas-loadlist", playlist)
+                    else:
+                        # Existing players keep the script from before a plugin update.
+                        send(2, "loadlist", playlist, "replace")
+                elif reply.get("request_id") == 2:
+                    if reply.get("error") != "success":
+                        raise RuntimeError(reply.get("error", "playlist load failed"))
+                    if not serialized:
+                        break
+                elif serialized and reply.get("event") == "client-message":
+                    args = reply.get("args", [])
+                    if isinstance(args, list) and len(args) == 3 and args[:2] == ["radio-atlas-loaded", playlist]:
+                        if args[2]:
+                            raise RuntimeError(args[2])
+                        break
+except (OSError, EOFError, ValueError, RuntimeError) as error:
+    print(f"Radio player could not load this station: {error}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 status() {
   if [[ ! -S $socket ]]; then
     cleanup_dead_player
@@ -499,9 +558,7 @@ play_station() {
     exit 4
   fi
 
-  local load_command
-  load_command=$(jq -cn --arg path "$temporary_playlist" '{command:["loadlist",$path,"replace"]}')
-  if ! send_command "$load_command"; then
+  if ! load_playlist "$temporary_playlist"; then
     status >/dev/null
     if [[ -S $socket ]] || player_alive; then
       rm -f "$temporary_playlist" "$temporary_queue"
@@ -518,7 +575,11 @@ play_station() {
       --audio-client-name="Radio Atlas"
       --idle=yes
       --pause=no
+      --keep-open=no
+      --loop-file=no
       --loop-playlist=inf
+      --playlist-start=0
+      --shuffle=no
       --cache-secs=20
       --demuxer-max-bytes=8MiB
       --demuxer-max-back-bytes=2MiB
@@ -537,6 +598,8 @@ play_station() {
     selected_output=$(configured_output)
     if [[ -n $selected_output ]]; then
       player_arguments+=(--audio-device="pipewire/$selected_output")
+    else
+      player_arguments+=(--audio-device=auto)
     fi
     RADIO_ATLAS_STATUS_FILE="$status_file" \
     RADIO_ATLAS_QUEUE_FILE="$queue_file" \

@@ -3,8 +3,8 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -33,9 +33,12 @@ class SavedStationsTest(unittest.TestCase):
                         RADIO_ATLAS_TEST_CURL_PAYLOAD=str(self.payload_file),
                         RADIO_ATLAS_TEST_RESOLVE_LOG=str(self.requests_file))
         self.state_file.write_text(json.dumps(dict(favorites=[], recent=[], volume=70)))
-        endpoint = socket.socket(socket.AF_UNIX)
-        endpoint.bind(str(self.runtime / "mpv.sock"))
-        endpoint.close()
+        endpoint = subprocess.Popen([sys.executable, str(PROJECT / "tests/mpv-fixture.py"),
+                                     str(self.runtime / "mpv.sock")], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(endpoint.stdout.close)
+        self.addCleanup(endpoint.wait, timeout=5)
+        self.addCleanup(endpoint.terminate)
+        self.assertEqual(endpoint.stdout.readline().strip(), "ready")
         start_time = Path(f"/proc/{os.getpid()}/stat").read_text().split()[21]
         (self.runtime / "player.pid").write_text(f"{os.getpid()} {start_time}\n")
 

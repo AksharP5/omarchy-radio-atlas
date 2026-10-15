@@ -730,7 +730,7 @@ fi
 jq -e '.[0].uuid == "87654321-4321-4321-4321-cba987654321"' \
   "$runtime_dir/playlist.json" >/dev/null
 
-/usr/bin/socat UNIX-LISTEN:"$runtime_dir/mpv.sock" EXEC:/usr/bin/cat &
+python3 "$project_dir/tests/mpv-fixture.py" "$runtime_dir/mpv.sock" >/dev/null &
 listener_pid=$!
 track_player_pid "$listener_pid"
 for _ in $(seq 1 50); do
@@ -772,12 +772,14 @@ fi
 
 printf '%s\n' '[{"uuid":"existing","name":"Existing","url":"https://example.com/existing"}]' \
   > "$runtime_dir/playlist.json"
+touch "$runtime_dir/reject-playlist"
 if RADIO_ATLAS_TEST_SOCAT_MODE=error PATH="$project_dir/tests/fixtures:$PATH" \
   "$project_dir/radio-player" play 12345678-1234-1234-1234-123456789abc results \
   >/dev/null 2>&1; then
   echo "Rejected playlist was reported as loaded" >&2
   exit 1
 fi
+rm "$runtime_dir/reject-playlist"
 jq -e 'length == 1 and .[0].uuid == "existing"' \
   "$runtime_dir/playlist.json" >/dev/null
 

@@ -143,8 +143,150 @@ class PlaybackTest(unittest.TestCase):
                         return
             self.fail("mpv closed IPC before replying")
 
-    def test_disconnect_stays_selected_and_retry_reopens_same_stream(self):
-        self.start(["/short", "/live"])
+    def hold_disconnect(self):
+        script = self.runtime / "held-status.lua"
+        script.write_text((PROJECT / "radio-status.lua").read_text() + '''
+local pending_end = nil
+local disconnected = false
+mp.register_event("end-file", function(event) disconnected = event.reason == "eof" end)
+mp.add_hook("on_after_end_file", 40, function(hook)
+  if not disconnected then return end
+  hook:defer()
+  pending_end = hook
+end)
+mp.register_script_message("radio-atlas-test-release-end", function()
+  pending_end:cont()
+  pending_end = nil
+end)
+''')
+        return script
+
+    def test_navigation_during_disconnect_takes_precedence(self):
+        self.start(["/short", "/other"], script=self.hold_disconnect())
+        for action in ("next", "previous"):
+            self.wait_status(lambda s: s.get("error") == "Stream disconnected")
+            self.native_commands(["script-message", "radio-atlas-" + action],
+                                 ["script-message", "radio-atlas-test-release-end"])
+            state = self.wait_status(lambda s: s.get("loaded") and s["playlistPosition"] == 1)
+            self.assertEqual(state["error"], "")
+            if action == "next":
+                self.native_commands(["playlist-play-index", 0])
+        self.assertEqual(self.requests, ["/short", "/other", "/short", "/other"])
+
+    def test_station_replacement_during_disconnect_takes_precedence(self):
+        self.start(["/short", "/other"], script=self.hold_disconnect())
+        self.wait_status(lambda s: s.get("error") == "Stream disconnected")
+        replacement = self.runtime / "replacement.m3u"
+        replacement.write_text(f"#EXTM3U\nhttp://127.0.0.1:{self.server.server_port}/replacement\n")
+        (self.runtime / "playlist.json").write_text(json.dumps([
+            dict(uuid="replacement", name="Replacement station")]))
+        self.native_commands(["loadlist", str(replacement), "replace"],
+                             ["script-message", "radio-atlas-reload"],
+                             ["script-message", "radio-atlas-test-release-end"])
+        state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "replacement")
+        self.assertEqual(state["error"], "")
+        self.assertEqual(self.requests, ["/short", "/replacement"])
+
+    def test_selection_waits_for_lua_before_releasing_player_lock(self):
+        gate = self.runtime / "failure-stop.fifo"
+        os.mkfifo(gate)
+        descriptor = os.open(gate, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, descriptor)
+        ready = self.runtime / "failure-stop-ready"
+        script = self.runtime / "blocked-status.lua"
+        # Freeze the exact gap between the failure's identity check and Stop.
+        script.write_text((PROJECT / "radio-status.lua").read_text() + f'''
+local commandv = mp.commandv
+local held = false
+mp.commandv = function(command, ...)
+  if command == "stop" and failure and not held then
+    held = true
+    local marker = assert(io.open({json.dumps(str(ready))}, "w")); marker:close()
+    local gate = assert(io.open({json.dumps(str(gate))}, "r")); gate:read("*l"); gate:close()
+  end
+  return commandv(command, ...)
+end
+''')
+        self.start(["/short", "/other"], script=script)
+        self.addCleanup(os.write, descriptor, b"release\n")
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(ready.exists(), "The stream must reach the held failure Stop")
+        queue = (self.runtime / "playlist.json").read_text()
+        (self.runtime / "play-selection.json").write_text(queue)
+
+        with socket.socket(socket.AF_UNIX) as observer:
+            observer.settimeout(3)
+            observer.connect(str(self.runtime / "mpv.sock"))
+            with subprocess.Popen([str(PROJECT / "radio-player"), "play", "station-1", "selection"],
+                                  env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True) as player:
+                try:
+                    with observer.makefile("r") as events:
+                        for line in events:
+                            event = json.loads(line)
+                            if event.get("args", [])[:1] == ["radio-atlas-loadlist"]:
+                                break
+                    self.assertIsNone(player.poll(), "Enqueuing the Lua message must not complete Play")
+                    self.assertEqual((self.runtime / "playlist.json").read_text(), queue)
+                    with (self.runtime / "player.lock").open("a") as lock:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    os.write(descriptor, b"release\n")
+                    _, error = player.communicate(timeout=5)
+                finally:
+                    os.write(descriptor, b"release\n")
+                    player.kill()
+                    player.wait()
+        self.assertEqual(player.returncode, 0, error)
+        self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.native_commands(["stop", "keep-playlist"],
+                             ["script-message", "radio-atlas-clear-failure"])
+        self.assertEqual(self.wait_status(lambda s: s.get("stopped"))["error"], "")
+        self.assertEqual(self.requests, ["/short", "/other"])
+
+    def test_selection_works_with_a_player_started_before_load_handshake(self):
+        source = (PROJECT / "radio-status.lua").read_text()
+        start = source.index('mp.register_script_message("radio-atlas-loadlist"')
+        end = source.index("local function toggle_playback()", start)
+        script = self.runtime / "old-status.lua"
+        script.write_text(source[:start] + source[end:])
+        self.start(["/live", "/other"], script=script)
+        self.wait_status(lambda s: s.get("loaded"))
+        (self.runtime / "play-selection.json").write_text((self.runtime / "playlist.json").read_text())
+        self.action("play", "station-1", "selection")
+        self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+        self.assertEqual(self.requests, ["/live", "/other"])
+
+    def test_failed_lua_playlist_load_preserves_current_queue(self):
+        source = (PROJECT / "radio-status.lua").read_text()
+        script = self.runtime / "failed-load-status.lua"
+        script.write_text(source.replace('mp.commandv("loadlist", path, "replace")',
+                                         'mp.commandv("loadlist", path .. ".missing", "replace")'))
+        self.start(["/live", "/other"], script=script)
+        self.wait_status(lambda s: s.get("loaded"))
+        queue = (self.runtime / "playlist.json").read_text()
+        (self.runtime / "play-selection.json").write_text(queue)
+        result = subprocess.run([str(PROJECT / "radio-player"), "play", "station-1", "selection"],
+                                env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 4, result.stderr)
+        self.assertEqual((self.runtime / "playlist.json").read_text(), queue)
+        self.assertEqual(self.requests, ["/live"])
+
+    def test_disconnect_overrides_mpv_repeat_and_keep_open(self):
+        player, environment = self.prepare_cli()
+        (Path(environment["XDG_CONFIG_HOME"]) / "mpv/mpv.conf").write_text(
+            "loop-file=inf\nkeep-open=always\n")
+        stations = [dict(uuid=f"station-{index}", name=path,
+                         url=f"http://127.0.0.1:{self.server.server_port}{path}")
+                    for index, path in enumerate(["/short", "/live"])]
+        (self.runtime / "results.json").write_text(json.dumps(stations))
+        result = subprocess.run([str(player), "play", "station-0"], env=environment,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.log = (self.runtime / "mpv.log").open()
+        self.addCleanup(self.log.close)
         state = self.wait_status(lambda s: s.get("error") == "Stream disconnected")
         self.assertEqual(state["station"]["uuid"], "station-0")
         self.assertFalse(state["loaded"])
@@ -220,6 +362,44 @@ class PlaybackTest(unittest.TestCase):
         state = self.wait_status(lambda s: s.get("loaded"))
         self.assertFalse(state["paused"], "Selecting a station must start playback despite pause=yes in mpv.conf")
         self.assertEqual(state["error"], "")
+
+    def test_system_default_output_overrides_mpv_configured_device(self):
+        player, environment = self.prepare_cli()
+        (Path(environment["XDG_CONFIG_HOME"]) / "mpv/mpv.conf").write_text(
+            "audio-device=pipewire/configured-speaker\n")
+        station = dict(uuid="startup-station", name="Startup station",
+                       url=f"http://127.0.0.1:{self.server.server_port}/live")
+        (self.runtime / "results.json").write_text(json.dumps([station]))
+
+        result = subprocess.run([str(player), "play", station["uuid"]],
+                                env=environment, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.log = (self.runtime / "mpv.log").open()
+        self.addCleanup(self.log.close)
+        self.assertEqual(self.wait_status(lambda s: s.get("loaded"))["output"], "")
+
+    def test_selected_station_and_queue_override_mpv_playlist_defaults(self):
+        player, environment = self.prepare_cli()
+        (Path(environment["XDG_CONFIG_HOME"]) / "mpv/mpv.conf").write_text(
+            "playlist-start=1\nshuffle=yes\n")
+        stations = [dict(uuid=f"station-{index}", name=f"Station {index}",
+                         url=f"http://127.0.0.1:{self.server.server_port}/station-{index}")
+                    for index in range(3)]
+        (self.runtime / "results.json").write_text(json.dumps(stations))
+
+        result = subprocess.run([str(player), "play", "station-0"],
+                                env=environment, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.log = (self.runtime / "mpv.log").open()
+        self.addCleanup(self.log.close)
+        state = self.wait_status(lambda s: s.get("loaded"))
+        self.assertEqual(state["station"]["uuid"], "station-0")
+        self.assertEqual(self.requests, ["/station-0"])
+        for position in (1, 2):
+            self.action("next")
+            state = self.wait_status(lambda s: s.get("loaded") and s["playlistPosition"] == position)
+            self.assertEqual(state["station"]["uuid"], f"station-{position}")
+            self.assertEqual(self.requests[-1], f"/station-{position}")
 
     def test_stop_cancels_resume_that_is_waiting_for_saved_state(self):
         player, environment = self.prepare_cli()
