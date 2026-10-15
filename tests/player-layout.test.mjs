@@ -22,6 +22,8 @@ for (const token of source.slice(opening).matchAll(tokens)) {
 }
 assert.ok(closing > opening, "Could not find the end of the production player panel")
 const panel = source.slice(declaration.index, closing)
+const outputMenu = source.match(/          Rectangle \{\n            id: outputMenu[\s\S]*?(?=\n        \}\n      \}\n\n      Flickable)/)?.[0]
+assert.ok(outputMenu, "Could not find the production output menu")
 const shellDirectory = process.env.OMARCHY_SHELL_DIR || "/usr/share/omarchy/shell"
 assert.ok(fs.existsSync(path.join(shellDirectory, "Ui/Button.qml")),
   "Set OMARCHY_SHELL_DIR to an Omarchy checkout’s shell directory")
@@ -44,6 +46,7 @@ try {
 import QtQuick
 import QtQuick.Window
 import QtQuick.Layouts
+import QtQuick.Controls as QQC
 import QtTest
 import qs.Ui
 import qs.Commons
@@ -78,6 +81,14 @@ TestCase {
   property string playerError: ""
   property string streamError: ""
   property string playerOutput: ""
+  property bool outputMenuOpen: false
+  property var audioOutputs: []
+  property string outputsError: ""
+  property string lastOutput: ""
+  readonly property var outputChoices: [{ id: "", label: "System default" }].concat(audioOutputs)
+  function outputLabel(sink) { return sink }
+  function toggleOutputMenu() { outputMenuOpen = !outputMenuOpen }
+  function selectOutput(sink) { lastOutput = sink; outputMenuOpen = false }
   property color foreground: "white"
   property color background: "black"
   property color accent: "cyan"
@@ -93,6 +104,7 @@ TestCase {
   QtObject { id: stopProcess; property bool running: false }
   QtObject { id: playerActionProcess; property bool running: false }
   QtObject { id: outputProcess; property bool running: false }
+  QtObject { id: outputsProcess; property bool running: false }
 
   QtObject {
     id: barHost
@@ -109,7 +121,13 @@ TestCase {
   }
   RadioBar { id: barWidget; bar: barHost; visible: false; z: 10 }
 
-  ${panel}
+  Rectangle { anchors.fill: parent; color: root.background }
+  Item {
+    id: sidebar
+    anchors.fill: parent
+    ${panel}
+    ${outputMenu}
+  }
 
   function test_controlsFit_data() {
     return [
@@ -205,6 +223,27 @@ TestCase {
     playerPaused = !playerPaused
   }
 
+  function test_controlsWrapWithoutFeedback() {
+    width = 1000
+    Style.fontBaseSize = 17
+    verify(waitForPolish(root.Window.window))
+    var minimumWidth = transportControls.implicitWidth + outputControls.implicitWidth
+      - volumeSlider.Layout.preferredWidth + volumeSlider.Layout.minimumWidth
+      + playerControls.columnSpacing + root.edgeInset * 2
+    // Exercise the gap where a column-dependent child margin used to toggle wrapping.
+    var narrowWidth = Math.floor(minimumWidth - Style.spacing.md / 2)
+    width = narrowWidth
+    verify(waitForPolish(root.Window.window), "Wrapping must settle below the single-row minimum")
+    compare(playerControls.columns, 1)
+    verify(bounds(outputControls).top >= bounds(transportControls).bottom + Style.spacing.xs - 0.5)
+    width = Math.ceil(minimumWidth + 1)
+    verify(waitForPolish(root.Window.window))
+    compare(playerControls.columns, 2)
+    width = narrowWidth
+    verify(waitForPolish(root.Window.window), "Shrinking again must settle on two rows")
+    compare(playerControls.columns, 1)
+  }
+
   function test_logoAndPercentFit_data() {
     return [
       { tag: "small-window-hover", panelWidth: 312, fontSize: 12, drag: false },
@@ -269,6 +308,52 @@ TestCase {
     compare(stopButton.enabled, false)
   }
 
+  function test_outputMenuFits_data() {
+    return [
+      { tag: "laptop", panelWidth: 390, panelHeight: 626, fontSize: 12, outputs: 20 },
+      // The sidebar inside an 875x427 window, below its 65px header.
+      { tag: "short-large-font", panelWidth: 341, panelHeight: 362, fontSize: 17, outputs: 20 },
+      { tag: "short-no-other-outputs", panelWidth: 341, panelHeight: 362, fontSize: 17, outputs: 0 }
+    ]
+  }
+
+  function chooseOutput(index, expected) {
+    outputList.positionViewAtIndex(index, ListView.Contain)
+    verify(waitForPolish(root.Window.window))
+    var option = outputList.itemAtIndex(index)
+    verify(option !== null, "The selected output must be instantiated")
+    var point = option.mapToItem(root, option.width / 2, option.height / 2)
+    verify(point.y >= 0 && point.y < height, "The output must be reachable in the window")
+    lastOutput = "pending"
+    mouseClick(option)
+    compare(lastOutput, expected)
+    compare(outputMenuOpen, false)
+    outputMenuOpen = true
+    verify(waitForPolish(root.Window.window))
+  }
+
+  function test_outputMenuFits(data) {
+    width = data.panelWidth
+    height = data.panelHeight
+    Style.fontBaseSize = data.fontSize
+    audioOutputs = Array.from({ length: data.outputs }, function(_, i) {
+      return { id: "sink-" + i, label: "Output " + (i + 1) }
+    })
+    outputMenuOpen = true
+    verify(waitForPolish(root.Window.window))
+    verify(outputMenu.y >= 0, "The output menu must stay below the window header")
+    verify(outputMenu.x >= 0 && outputMenu.x + outputMenu.width <= width)
+    verify(outputMenu.y + outputMenu.height <= outputMenu.buttonPosition.y,
+      "The output menu must stay above its button")
+    verify(outputList.height > 0)
+    if (data.tag === "laptop") compare(outputList.height, Style.space(320))
+    chooseOutput(0, "")
+    if (data.outputs === 0) return
+    chooseOutput(1, "sink-0")
+    chooseOutput(data.outputs, "sink-" + (data.outputs - 1))
+    verify(outputList.contentY > 0, "The last output must be reached by scrolling")
+  }
+
   function test_barRightClick_data() {
     return [
       { tag: "playing", running: true, paused: false, stopped: false, action: "stop" },
@@ -288,8 +373,11 @@ TestCase {
 
   function cleanup() {
     // Layout rows change global Style; restore it so later tests start clean.
+    outputMenuOpen = false
+    audioOutputs = []
     Style.fontBaseSize = initialFontBaseSize
     Style.spacingScaleWithFont = initialSpacingScaleWithFont
+    height = 600
     for (var i = 0; i < barWidget.resources.length; i++) {
       var resource = barWidget.resources[i]
       if (resource.command !== undefined) resource.running = false
