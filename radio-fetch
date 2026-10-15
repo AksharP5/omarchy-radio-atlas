@@ -22,14 +22,17 @@ country_cache_minutes=1440
 search_dir=""
 world_more_response=""
 world_more_result=""
+request_dir=""
 bases=()
 
 cleanup() {
   [[ -z $search_dir ]] || rm -rf "$search_dir"
   [[ -z $world_more_response ]] || rm -f "$world_more_response"
   [[ -z $world_more_result ]] || rm -f "$world_more_result"
+  [[ -z $request_dir ]] || rm -rf -- "$request_dir"
 }
 trap cleanup EXIT
+request_dir=$(mktemp -d "$runtime_dir/fetch.XXXXXX")
 
 discover_bases() {
   local ip hostname
@@ -99,8 +102,8 @@ request() {
   local base error_file max_time response_file
   max_time=12
   (( max_records >= 500 )) && max_time=45
-  error_file=$(mktemp "$runtime_dir/request.XXXXXX")
-  response_file=$(mktemp "$runtime_dir/response.XXXXXX")
+  error_file=$(mktemp "$request_dir/request.XXXXXX")
+  response_file=$(mktemp "$request_dir/response.XXXXXX")
   for base in "${bases[@]}"; do
     if setpriv --pdeathsig TERM curl --fail --silent --show-error \
       --connect-timeout 4 --max-time "$max_time" --retry 1 --retry-delay 0 \
@@ -204,6 +207,8 @@ refresh_world_cache_in_background() {
   (
     exec 9>"$cache_dir/world.lock"
     flock -n 9 || exit 0
+    request_dir=$(mktemp -d "$runtime_dir/fetch.XXXXXX")
+    trap 'rm -rf -- "$request_dir"' EXIT
     refresh_world_cache
   ) </dev/null >/dev/null 2>&1 &
 }
@@ -233,6 +238,8 @@ refresh_country_cache_in_background() {
   (
     exec 9>"$country_cache_dir/$code.lock"
     flock -n 9 || exit 0
+    request_dir=$(mktemp -d "$runtime_dir/fetch.XXXXXX")
+    trap 'rm -rf -- "$request_dir"' EXIT
     refresh_country_cache "$code" "$target"
   ) </dev/null >/dev/null 2>&1 &
 }
