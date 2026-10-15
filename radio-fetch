@@ -165,7 +165,7 @@ store_results() {
   local target=$1
   local temporary
   temporary=$(mktemp "${target%/*}/results.XXXXXX")
-  if ! jq -ce "$normalize" > "$temporary"; then
+  if ! jq -ce "$normalize" > "$temporary" || [[ ! -s $temporary ]]; then
     rm -f "$temporary"
     return 1
   fi

@@ -112,6 +112,18 @@ target.write_text(json.dumps([dict(stationuuid="12345678-1234-1234-1234-12345678
         self.assertEqual([path.name for path in self.runtime.iterdir()], ["results.json"])
 
     def test_detached_refresh_owns_its_download_after_cached_response_exits(self):
+        # jq 1.6 succeeds on an empty input stream; it must not erase a cache.
+        jq = self.root / "bin/jq"
+        jq.write_text('''#!/usr/bin/python3
+import os, subprocess, sys
+if len(sys.argv) == 3 and sys.argv[1] == "-ce":
+    data = sys.stdin.buffer.read()
+    if not data:
+        raise SystemExit(0)
+    raise SystemExit(subprocess.run(["/usr/bin/jq", *sys.argv[1:]], input=data).returncode)
+os.execv("/usr/bin/jq", ["jq", *sys.argv[1:]])
+''')
+        jq.chmod(0o700)
         cached = [dict(uuid="12345678-1234-1234-1234-123456789abc", name="Cached station",
                        url="https://example.com/cached", countryCode="US", latitude=40, longitude=-74)]
         for action, relative in [(["world"], "world.json"), (["country", "US"], "countries/US.json")]:
