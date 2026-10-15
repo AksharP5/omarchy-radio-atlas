@@ -100,24 +100,9 @@ playable_filter='def playable:
     and (.url | test("^https?://"; "i"))
     and (.url | test("[\\r\\n]") | not);'
 
-configured_volume() {
-  local volume
-  volume=$("$state_path" get 2>/dev/null \
-    | jq -r '(.volume // 70) | tonumber | round | if . < 0 then 0 elif . > 100 then 100 else . end') \
-    || volume=70
-  printf '%s\n' "$volume"
-}
-
 persist_volume() {
   local volume=$1
   "$state_path" volume "$volume" >/dev/null
-}
-configured_output() {
-  local output
-  output=$("$state_path" get 2>/dev/null \
-    | jq -r '(.output // "") | if (type == "string" and test("^([A-Za-z0-9._:+-]{0,160})$")) then . else "" end') \
-    || output=""
-  printf '%s\n' "$output"
 }
 
 write_status() {
@@ -208,35 +193,44 @@ PY
 }
 
 status() {
-  if [[ ! -S $socket ]]; then
-    cleanup_dead_player
-    write_status "$(jq -cn --argjson volume "$(configured_volume)" --arg output "$(configured_output)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,output:$output,loaded:false,station:{}}')"
-    return
+  local response=""
+  if [[ -S $socket ]]; then
+    response=$(
+      printf '%s\n' \
+        '{"command":["get_property","pause"],"request_id":1}' \
+        '{"command":["get_property","media-title"],"request_id":2}' \
+        '{"command":["get_property","playlist-pos"],"request_id":3}' \
+        '{"command":["get_property","playlist-count"],"request_id":4}' \
+        '{"command":["get_property","volume"],"request_id":5}' \
+        '{"command":["get_property","mute"],"request_id":6}' \
+        '{"command":["get_property","audio-device"],"request_id":7}' \
+        '{"command":["get_property","user-data/radio-atlas-failure"],"request_id":8}' \
+        '{"command":["get_property","idle-active"],"request_id":9}' \
+        '{"command":["get_property","user-data/radio-atlas-artwork"],"request_id":10}' \
+        | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
+        | head -c "$((max_ipc_bytes + 1))" || true
+    )
   fi
-
-  local response
-  response=$(
-    printf '%s\n' \
-      '{"command":["get_property","pause"],"request_id":1}' \
-      '{"command":["get_property","media-title"],"request_id":2}' \
-      '{"command":["get_property","playlist-pos"],"request_id":3}' \
-      '{"command":["get_property","playlist-count"],"request_id":4}' \
-      '{"command":["get_property","volume"],"request_id":5}' \
-      '{"command":["get_property","mute"],"request_id":6}' \
-      '{"command":["get_property","audio-device"],"request_id":7}' \
-      '{"command":["get_property","user-data/radio-atlas-failure"],"request_id":8}' \
-      '{"command":["get_property","idle-active"],"request_id":9}' \
-      '{"command":["get_property","user-data/radio-atlas-artwork"],"request_id":10}' \
-      | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
-      | head -c "$((max_ipc_bytes + 1))" || true
-  )
   if (( $(printf '%s' "$response" | wc -c) > max_ipc_bytes )); then
     response=""
   fi
 
   if ! jq -e 'select(.request_id == 1)' <<< "$response" >/dev/null 2>&1; then
+    if (( $# == 0 )); then
+      # Wait for settings without blocking Stop, then recheck the player once.
+      local saved_settings
+      flock -u 8
+      flock -x 7
+      saved_settings=$("$state_path" get 2>/dev/null) || saved_settings='{}'
+      flock -x 8
+      status "$saved_settings"
+      return
+    fi
     cleanup_dead_player
-    write_status "$(jq -cn --argjson volume "$(configured_volume)" --arg output "$(configured_output)" '{running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,volume:$volume,output:$output,loaded:false,station:{}}')"
+    write_status "$(jq -c '{
+      running:false,paused:false,muted:false,title:"",playlistPosition:-1,playlistCount:0,
+      volume:((.volume // 70) | round),output:(.output // ""),loaded:false,station:{}
+    }' <<< "$1")"
     return
   fi
 
@@ -561,12 +555,12 @@ play_station() {
   if ! load_playlist "$temporary_playlist"; then
     # Stop must remain able to cancel startup while saved-state reads wait.
     flock -u 8
-    status >/dev/null
-    if [[ -S $socket ]] || player_alive; then
+    if player_alive || send_command '{"command":["get_property","pause"]}'; then
       rm -f "$temporary_playlist" "$temporary_queue"
       echo 'Radio player could not load this station' >&2
       exit 4
     fi
+    cleanup_dead_player
     local saved_settings
     saved_settings=$("$state_path" get 2>/dev/null) || saved_settings='{}'
     flock -x 8
@@ -711,8 +705,9 @@ case "$action" in
       set -e
       stop_player
     )
+    # Status can wait while a later Stop advances the generation again.
     jq -c --arg canceledGeneration "$canceled_generation" \
-      --arg stopGeneration "$(player_generation)" \
+      --arg stopGeneration "$((canceled_generation + 1))" \
       '. + {canceledGeneration:$canceledGeneration,stopGeneration:$stopGeneration}' \
       <<< "$stopped_status"
     ;;

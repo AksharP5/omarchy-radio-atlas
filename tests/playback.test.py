@@ -402,12 +402,18 @@ end
             self.assertEqual(self.requests[-1], f"/station-{position}")
 
     def test_stop_cancels_resume_that_is_waiting_for_saved_state(self):
-        self.assert_stop_cancels_waiting_playback(["resume"])
+        self.assert_stop_can_run_during_state_read(["resume"], 4)
 
     def test_stop_cancels_station_start_waiting_for_saved_settings(self):
-        self.assert_stop_cancels_waiting_playback(["play", "resume-station", "selection"])
+        self.assert_stop_can_run_during_state_read(["play", "resume-station", "selection"], 4)
 
-    def assert_stop_cancels_waiting_playback(self, arguments):
+    def test_saved_status_read_does_not_block_stop(self):
+        self.assert_stop_can_run_during_state_read(["status"], 0)
+
+    def test_overlapping_stops_acknowledge_their_own_generation(self):
+        self.assert_stop_can_run_during_state_read(["stop"], 0)
+
+    def assert_stop_can_run_during_state_read(self, arguments, expected_code):
         player, environment = self.prepare_cli()
         root = Path(self.directory.name)
         state_dir = root / "data/radio-atlas"
@@ -433,18 +439,22 @@ end
                     deadline = time.monotonic() + 5
                     while not ready.exists() and play.poll() is None and time.monotonic() < deadline:
                         time.sleep(0.01)
-                    self.assertTrue(ready.exists(), "Playback must reach the blocked state read")
+                    self.assertTrue(ready.exists(), "The command must reach the blocked state read")
+                    generation = self.runtime / "player.generation"
+                    previous_generation = generation.read_text() if generation.exists() else "0\n"
                     with subprocess.Popen([str(player), "stop"], env=environment, text=True,
                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE) as stop:
                         try:
-                            generation = self.runtime / "player.generation"
                             deadline = time.monotonic() + 5
-                            while not generation.exists() and stop.poll() is None and time.monotonic() < deadline:
+                            while (not generation.exists() or generation.read_text() == previous_generation) \
+                                    and stop.poll() is None and time.monotonic() < deadline:
                                 time.sleep(0.01)
                             self.assertTrue(generation.exists(), "Stop must cancel the pending request")
+                            self.assertNotEqual(generation.read_text(), previous_generation,
+                                                "The newer Stop must cancel while the state read waits")
                             fcntl.flock(lock, fcntl.LOCK_UN)
                             stopped, stop_error = stop.communicate(timeout=10)
-                            _, play_error = play.communicate(timeout=10)
+                            play_output, play_error = play.communicate(timeout=10)
                         finally:
                             fcntl.flock(lock, fcntl.LOCK_UN)
                             stop.kill()
@@ -455,8 +465,13 @@ end
                     play.wait()
         self.assertEqual(stop.returncode, 0, stop_error)
         self.assertFalse(json.loads(stopped)["running"])
-        self.assertEqual(play.returncode, 4, play_error)
-        self.assertIn("Radio playback was canceled", play_error)
+        self.assertEqual(play.returncode, expected_code, play_error)
+        if expected_code == 4:
+            self.assertIn("Radio playback was canceled", play_error)
+        if arguments == ["stop"]:
+            self.assertEqual(json.loads(play_output)["stopGeneration"], "1")
+            self.assertEqual(json.loads(stopped)["canceledGeneration"], "1")
+            self.assertEqual(json.loads(stopped)["stopGeneration"], "2")
         self.assertFalse((self.runtime / "mpv.sock").exists())
         # A genuinely new Resume after Stop still starts the saved station.
         result = subprocess.run([str(player), "resume"], env=environment,
@@ -587,6 +602,39 @@ end
         self.action("next")
         self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
         self.assertEqual(self.requests, ["/empty.m3u", "/empty.m3u", "/other"])
+
+    def test_status_waiting_for_settings_detects_a_new_player(self):
+        root = Path(self.directory.name)
+        binary = root / "bin"
+        binary.mkdir()
+        ready = root / "settings-read-ready"
+        wrapper = binary / "flock"
+        wrapper.write_text('#!/bin/sh\nif [ "$2" = 7 ]; then : > "$RADIO_ATLAS_TEST_SETTINGS_READY"; fi\n'
+                           'exec /usr/bin/flock "$@"\n')
+        wrapper.chmod(0o700)
+        environment = dict(self.env, PATH=f"{binary}:{self.env['PATH']}",
+                           RADIO_ATLAS_TEST_SETTINGS_READY=str(ready))
+        with (self.runtime / "settings.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            with subprocess.Popen([str(PROJECT / "radio-player"), "status"], env=environment,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as status:
+                try:
+                    deadline = time.monotonic() + 5
+                    while not ready.exists() and status.poll() is None and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(ready.exists(), "Status must reach the settings lock")
+                    self.start(["/live"])
+                    self.wait_status(lambda s: s.get("loaded"))
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                    output, error = status.communicate(timeout=5)
+                finally:
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                    status.kill()
+                    status.wait()
+        self.assertEqual(status.returncode, 0, error)
+        self.assertTrue(json.loads(output)["running"])
+        self.assertTrue(json.loads(self.status_path.read_text())["loaded"])
+        self.assertTrue((self.runtime / "mpv.sock").exists())
 
     def test_status_command_does_not_overwrite_player_status(self):
         state = dict(running=True, loaded=True, station=dict(uuid="station-0"))
