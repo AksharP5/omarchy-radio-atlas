@@ -1590,6 +1590,8 @@ Item {
           id: title
           anchors.left: parent.left
           anchors.leftMargin: root.edgeInset
+          anchors.right: searchField.left
+          anchors.rightMargin: Style.spacing.sm
           anchors.verticalCenter: parent.verticalCenter
           text: "RADIO ATLAS"
           textFormat: Text.PlainText
@@ -1597,6 +1599,7 @@ Item {
           font.family: Style.font.menuFamily
           font.pixelSize: Style.font.heading
           font.bold: true
+          elide: Text.ElideRight
         }
 
         TextField {
@@ -2449,6 +2452,7 @@ Item {
               spacing: Style.spacing.xs
 
               Text {
+                id: outputMenuTitle
                 anchors.left: parent.left
                 anchors.leftMargin: Style.spacing.xs
                 text: "AUDIO OUTPUT"
@@ -2462,7 +2466,9 @@ Item {
               ListView {
                 id: outputList
                 width: parent.width
-                height: Math.min(contentHeight, Style.space(320))
+                height: Math.min(contentHeight, Style.space(320), Math.max(0,
+                  outputMenu.buttonPosition.y - Style.spacing.xs - Style.spacing.sm
+                    - Style.spacing.md * 2 - outputMenuTitle.height - outputMenuColumn.spacing))
                 model: root.outputChoices
                 spacing: Style.spacing.xs
                 clip: true
