@@ -121,7 +121,8 @@ class IPC:
 
     def readable(self, _source, condition):
         try:
-            if condition & GLib.IO_IN:
+            # A synchronous command may have drained the socket since GLib polled it.
+            if condition & GLib.IO_IN and select.select([self.socket], [], [], 0)[0]:
                 for message in self.receive():
                     if "event" in message:
                         self.defer(message)
