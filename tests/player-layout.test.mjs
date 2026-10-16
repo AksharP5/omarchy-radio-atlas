@@ -422,6 +422,22 @@ TestCase {
     verify(stop !== undefined, "A second right click must cancel the pending Resume")
   }
 
+  function test_barVolumeCompletionKeepsLatestStatus() {
+    var process = barWidget.resources.find(function(item) { return item.submittedVolume !== undefined })
+    process.running = false
+    barWidget.pendingVolume = -1
+    barWidget.applyPlayerState(JSON.stringify({ running: true, volume: 70 }))
+    barWidget.changeVolume(5)
+    compare(process.submittedVolume, 75)
+    barWidget.applyPlayerState(JSON.stringify({ running: true, volume: 80 }))
+    compare(barWidget.reportedVolume, 80)
+    process.running = false
+    process.exited(0)
+    compare(barWidget.pendingVolume, -1)
+    compare(barWidget.playerVolume, 80, "An older command completion must preserve the latest player volume")
+    compare(barWidget.reportedVolume, 80)
+  }
+
   function test_barWheel_data() {
     return [
       { tag: "horizontal-right", x: 120, y: 0, volume: 70 },

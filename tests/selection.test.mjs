@@ -74,6 +74,17 @@ for (const [artwork, stopped, expected] of [
   assert.equal(context.playingLogoPath, expected, "The panel uses local artwork only while playing")
 }
 
+const volumeComplete = source.match(/id: volumeProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
+context.root = context
+context.submittedVolume = 75
+context.pendingVolume = 75
+context.playerVolume = 75
+context.applyPlayerState(JSON.stringify({ ...playing, volume: 80 }))
+vm.runInContext(`(function(exitCode) {${volumeComplete}})(0)`, context)
+assert.equal(context.pendingVolume, -1)
+assert.equal(context.playerVolume, 80, "An older volume command must preserve the latest player report")
+assert.equal(context.reportedVolume, 80)
+
 const refreshFunctions = source.match(/  function (?:setSelection|setStationList|moveSelection|playSelected|playlistScope|previewSearch|search)\([\s\S]*?\n  \}/g).join("\n")
 const debounce = source.match(/id: searchDebounce[\s\S]*?onTriggered: ([^\n]+)/)[1]
 const complete = source.match(/id: fetchProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]

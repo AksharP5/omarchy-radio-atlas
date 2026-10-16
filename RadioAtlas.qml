@@ -1208,10 +1208,9 @@ Item {
 
       root.statusReady = true
       root.playerError = ""
-      root.reportedVolume = submittedVolume
       if (root.pendingVolume === submittedVolume) {
         root.pendingVolume = -1
-        root.playerVolume = submittedVolume
+        root.playerVolume = root.reportedVolume
         return
       }
       Qt.callLater(root.flushPlayerVolume)
