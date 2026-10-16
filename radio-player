@@ -22,8 +22,6 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 fetch_path=${RADIO_ATLAS_FETCH_PATH:-$script_dir/radio-fetch}
 state_path="$script_dir/radio-state"
 status_script="$script_dir/radio-status.lua"
-version=$(jq -r '.version' "$script_dir/manifest.json")
-user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
 install -d -m 700 "$runtime_dir" "$state_dir"
 exec 7>"$runtime_dir/settings.lock"
 exec 8>"$runtime_dir/player.lock"
@@ -234,57 +232,53 @@ status() {
     return
   fi
 
-  local position station loaded station_uuid loaded_uuid failure
-  failure=$(jq -sc '[.[] | select(.request_id == 8 and .error == "success") | .data
-    | select(type == "object" and (.position | type == "number")
-      and (.message | type == "string") and (.detail | type == "string"))][0] // null' <<< "$response")
-  position=$(jq -r 'select(.request_id == 3) | .data' <<< "$response" | head -n 1)
-  if [[ $failure != null ]]; then
-    position=$(jq -r '.position' <<< "$failure")
+  local queue_source=/dev/null previous_source=/dev/null
+  if [[ -s $queue_file ]] && (( $(stat -c '%s' -- "$queue_file") <= max_json_bytes )); then
+    queue_source=$queue_file
   fi
-  station='{}'
-  if [[ $position =~ ^[0-9]+$ ]] && valid_runtime_array "$queue_file"; then
-    station=$(jq -c --argjson position "$position" '
-      (.[$position] // {})
-      | {
+  if [[ -s $status_file ]] && (( $(stat -c '%s' -- "$status_file") <= max_ipc_bytes )); then
+    previous_source=$status_file
+  fi
+  jq -sc --rawfile queue "$queue_source" --rawfile previous "$previous_source" '
+    def property($id): [.[] | select(.request_id == $id) | .data][0];
+    ([.[] | select(.request_id == 8 and .error == "success") | .data
+      | select(type == "object" and (.position | type == "number")
+        and (.message | type == "string") and (.detail | type == "string"))][0] // null) as $failure
+    | ($failure.position // property(3) // -1) as $position
+    | ($position | tostring | if test("^[0-9]+$") then tonumber else null end) as $index
+    | ($queue | try fromjson catch null) as $rows
+    | (if $index != null and ($rows | type == "array" and length <= 500) then
+        try (($rows[$index] // {}) | {
           uuid: (if (.uuid | type) == "string" then .uuid[:64] else "" end),
           name: (if (.name | type) == "string" then .name[:160] else "" end),
           country: (if (.country | type) == "string" then .country[:100] else "" end),
           countryCode: (if (.countryCode | type) == "string" then .countryCode[:2] else "" end),
           latitude: (if (.latitude | type) == "number" then .latitude else null end),
           longitude: (if (.longitude | type) == "number" then .longitude else null end)
-        }
-    ' "$queue_file" 2>/dev/null || printf '{}')
-  fi
-  loaded=false
-  station_uuid=$(jq -r '.uuid // ""' <<< "$station")
-  if [[ -n $station_uuid && -s $status_file ]] \
-    && (( $(stat -c '%s' -- "$status_file") <= max_ipc_bytes )); then
-    loaded_uuid=$(jq -r 'select(.loaded == true) | .station.uuid // ""' "$status_file" 2>/dev/null || true)
-    [[ $loaded_uuid == "$station_uuid" ]] && loaded=true
-  fi
-
-  [[ $failure == null ]] || loaded=false
-  printf '%s\n' "$(jq -sc --argjson station "$station" --argjson loaded "$loaded" \
-    --argjson failure "$failure" '{
+        }) catch {}
+      else {} end) as $station
+    | ($previous | try fromjson catch {}) as $last
+    | ($failure == null and ($station.uuid // "") != ""
+        and (try ($last.loaded == true and $last.station.uuid == $station.uuid) catch false)) as $loaded
+    | {
     running: true,
-    stopped: ($failure == null and ([.[] | select(.request_id == 9) | .data][0] // false)),
-    paused: ($failure != null or ([.[] | select(.request_id == 1) | .data][0] // false)),
-    muted: ([.[] | select(.request_id == 6) | .data][0] // false),
-    title: (([.[] | select(.request_id == 2) | .data][0] // "")
+    stopped: ($failure == null and (property(9) // false)),
+    paused: ($failure != null or (property(1) // false)),
+    muted: (property(6) // false),
+    title: ((property(2) // "")
       | if type == "string" then gsub("[\\r\\n\\t]"; " ")[:512] else "" end),
-    playlistPosition: ($failure.position // [.[] | select(.request_id == 3) | .data][0] // -1),
-    playlistCount: ([.[] | select(.request_id == 4) | .data][0] // 0),
-    volume: ([.[] | select(.request_id == 5) | .data][0] // 70),
-    output: (([.[] | select(.request_id == 7) | .data][0] // "")
+    playlistPosition: $position,
+    playlistCount: (property(4) // 0),
+    volume: (property(5) // 70),
+    output: ((property(7) // "")
       | if type == "string" then (if . == "auto" then "" else sub("^pipewire/"; "") end) else "" end),
-    artwork: (([.[] | select(.request_id == 10) | .data][0] // "")
+    artwork: ((property(10) // "")
       | if type == "string" and startswith("file:///") then . else "" end),
     loaded: $loaded,
     error: ($failure.message // ""),
     errorDetail: ($failure.detail // ""),
     station: $station
-  }' <<< "$response")"
+  }' <<< "$response"
 }
 
 set_volume() {
@@ -641,6 +635,9 @@ play_station() {
   fi
 
   if [[ $uuid =~ ^[0-9A-Fa-f-]{20,}$ ]]; then
+    local version user_agent
+    version=$(jq -r '.version' "$script_dir/manifest.json")
+    user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
     curl --fail --silent --max-time 4 --proto '=https' \
       --user-agent "$user_agent" \
       "https://all.api.radio-browser.info/json/url/$uuid" >/dev/null 2>&1 7>&- 8>&- &

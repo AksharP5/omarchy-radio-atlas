@@ -658,30 +658,44 @@ exec "$RADIO_ATLAS_TEST_REAL_STATE" "$@"
         self.assertTrue(json.loads(self.status_path.read_text())["loaded"])
         self.assertTrue((self.runtime / "mpv.sock").exists())
 
-    def test_status_command_does_not_overwrite_player_status(self):
+    def test_status_validates_snapshots_without_overwriting_player_status(self):
         state = dict(running=True, loaded=True, station=dict(uuid="station-0"))
-        self.status_path.write_text(json.dumps(state))
-        (self.runtime / "playlist.json").write_text('[{"uuid":"station-0"}]')
+        queue = '[{"uuid":"station-0"}]'
+        previous = json.dumps(state)
+        cases = [
+            (queue, previous, True, "station-0"),
+            ("[", previous, False, None),
+            (json.dumps([dict(uuid="station-0")] * 501), previous, False, None),
+            (json.dumps([dict(uuid="station-0", name="x" * 4194304)]), previous, False, None),
+            (queue, "{", False, "station-0"),
+            (queue, json.dumps({**state, "padding": "x" * 65536}), False, "station-0"),
+        ]
         server = socket.socket(socket.AF_UNIX)
         self.addCleanup(server.close)
         server.bind(str(self.runtime / "mpv.sock"))
         server.listen(1)
 
         def reply():
-            connection, _ = server.accept()
-            with connection, connection.makefile("r") as requests:
-                for value in [False, "Test", 0, 1, 70, False, "auto", None]:
-                    request = json.loads(requests.readline())
-                    response = dict(request_id=request["request_id"], error="success", data=value)
-                    connection.sendall((json.dumps(response) + "\n").encode())
+            for _ in cases:
+                connection, _ = server.accept()
+                with connection, connection.makefile("r") as requests:
+                    for value in [False, "Test", 0, 1, 70, False, "auto", None, False, ""]:
+                        request = json.loads(requests.readline())
+                        response = dict(request_id=request["request_id"], error="success", data=value)
+                        connection.sendall((json.dumps(response) + "\n").encode())
 
         responder = threading.Thread(target=reply, daemon=True)
         responder.start()
-        snapshot = self.action("status")
+        for queue, previous, loaded, uuid in cases:
+            with self.subTest(loaded=loaded, station=uuid, queue_bytes=len(queue), status_bytes=len(previous)):
+                (self.runtime / "playlist.json").write_text(queue)
+                self.status_path.write_text(previous)
+                snapshot = self.action("status")
+                self.assertEqual(snapshot["loaded"], loaded)
+                self.assertEqual(snapshot["station"].get("uuid"), uuid)
+                self.assertEqual(snapshot["title"], "Test")
+                self.assertEqual(self.status_path.read_text(), previous)
         responder.join(timeout=5)
-        self.assertTrue(snapshot["loaded"])
-        self.assertEqual(snapshot["title"], "Test")
-        self.assertEqual(json.loads(self.status_path.read_text()), state)
 
 
 if __name__ == "__main__":
