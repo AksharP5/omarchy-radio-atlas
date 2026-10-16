@@ -413,7 +413,12 @@ end
     def test_overlapping_stops_acknowledge_their_own_generation(self):
         self.assert_stop_can_run_during_state_read(["stop"], 0)
 
-    def assert_stop_can_run_during_state_read(self, arguments, expected_code):
+    def test_volume_shortcut_does_not_hold_stop_lock_after_status(self):
+        self.assert_stop_can_run_during_state_read(["volume-up"], 0, after_status=True)
+        saved = Path(self.directory.name) / "data/radio-atlas/state.json"
+        self.assertEqual(json.loads(saved.read_text())["volume"], 75)
+
+    def assert_stop_can_run_during_state_read(self, arguments, expected_code, *, after_status=False):
         player, environment = self.prepare_cli()
         root = Path(self.directory.name)
         state_dir = root / "data/radio-atlas"
@@ -422,6 +427,23 @@ end
                        url=f"http://127.0.0.1:{self.server.server_port}/live")
         (state_dir / "state.json").write_text(json.dumps(dict(favorites=[], recent=[station], volume=70)))
         (self.runtime / "play-selection.json").write_text(json.dumps([station]))
+        if after_status:
+            # Complete status's first read before delaying the volume preflight.
+            state = player.with_name("radio-state")
+            real_state = state.with_name("radio-state-real")
+            state.rename(real_state)
+            state.write_text('''#!/bin/sh
+if [ "$1" = get ] && [ ! -e "$RADIO_ATLAS_TEST_FIRST_STATE_READ" ]; then
+  : > "$RADIO_ATLAS_TEST_FIRST_STATE_READ"
+  cat "$RADIO_ATLAS_TEST_SAVED_STATE"
+  exit
+fi
+exec "$RADIO_ATLAS_TEST_REAL_STATE" "$@"
+''')
+            state.chmod(0o700)
+            environment.update(RADIO_ATLAS_TEST_FIRST_STATE_READ=str(root / "first-state-read"),
+                               RADIO_ATLAS_TEST_SAVED_STATE=str(state_dir / "state.json"),
+                               RADIO_ATLAS_TEST_REAL_STATE=str(real_state))
         ready = root / "state-read-ready"
         binary = root / "bin"
         binary.mkdir()

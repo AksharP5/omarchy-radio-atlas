@@ -365,6 +365,8 @@ adjust_volume() {
   local delta=$1
   local current
   current=$(status | jq -r '.volume | round')
+  # The status fallback can leave the shared playback lock held.
+  flock -u 8
   local next=$((current + delta))
   (( next < 0 )) && next=0
   (( next > 100 )) && next=100
