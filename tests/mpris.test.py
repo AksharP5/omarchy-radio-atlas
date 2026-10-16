@@ -558,9 +558,24 @@ class SessionTest(unittest.TestCase):
         self.addCleanup(connection.close)
         env = dict(os.environ, PATH=f"{binary}:{os.environ['PATH']}",
                    XDG_RUNTIME_DIR=str(root), XDG_DATA_HOME=str(root / "data"),
+                   XDG_CONFIG_HOME=str(root / "config"), XDG_STATE_HOME=str(root / "state"),
                    XDG_CACHE_HOME=str(root / "cache #?"),
+                   PIPEWIRE_RUNTIME_DIR=str(root), PIPEWIRE_REMOTE="pipewire-0",
+                   PIPEWIRE_CONFIG_DIR="/usr/share/pipewire",
+                   PULSE_SERVER="unix:" + str(root / "pulse/native"),
                    DBUS_SESSION_BUS_ADDRESS=address)
         self.connection, self.env, self.stop = connection, env, stop
+        # --ao=null still discovers audio backends for the device-list observer.
+        pipewire = subprocess.Popen(["pipewire"], env=env, stdout=log, stderr=log,
+                                    start_new_session=True)
+        self.addCleanup(stop, pipewire)
+        deadline = time.monotonic() + 5
+        while not (root / "pipewire-0").is_socket() and pipewire.poll() is None \
+                and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not (root / "pipewire-0").is_socket() or pipewire.poll() is not None:
+            log.seek(0)
+            self.fail(f"Private PipeWire did not start: {log.read()}")
 
     def start_session(self, *arguments):
         session = subprocess.Popen([
