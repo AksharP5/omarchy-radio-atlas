@@ -418,6 +418,17 @@ end
         saved = Path(self.directory.name) / "data/radio-atlas/state.json"
         self.assertEqual(json.loads(saved.read_text())["volume"], 75)
 
+    def test_invalid_volume_does_not_change_live_playback(self):
+        self.start(["/live"])
+        self.wait_status(lambda state: state.get("loaded"))
+        for volume in ("0101", "18446744073709551616"):
+            with self.subTest(volume=volume):
+                self.action("volume", "40")
+                result = subprocess.run([str(PROJECT / "radio-player"), "volume", volume],
+                                        env=self.env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(self.action("status")["volume"], 40)
+                self.assertEqual(result.returncode, 2, result.stderr)
+
     def assert_stop_can_run_during_state_read(self, arguments, expected_code, *, after_status=False):
         player, environment = self.prepare_cli()
         root = Path(self.directory.name)

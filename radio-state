@@ -107,12 +107,15 @@ write_state() {
   mv "$temporary" "$state_file"
 }
 
+# Validated scalar changes preserve the schema; the encoded size can still grow.
 write_volume() {
   local volume=$1
+  [[ $volume =~ ^0*(100|[0123456789]{1,2})$ ]] \
+    || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
   local temporary
   temporary=$(mktemp "$state_dir/state.XXXXXX")
   jq -c --argjson volume "$volume" '.volume = $volume' "$state_file" > "$temporary"
-  if ! valid_state_file "$temporary"; then
+  if ! file_within_limit "$temporary"; then
     rm -f "$temporary"
     echo 'Radio Atlas could not save the volume safely' >&2
     return 4
@@ -121,11 +124,13 @@ write_volume() {
 }
 
 write_output() {
-  local output=$1
+  local output=$1 LC_ALL=C
+  [[ $output =~ ^[A-Za-z0-9._:+-]{0,160}$ ]] \
+    || { echo 'Invalid audio output' >&2; exit 2; }
   local temporary
   temporary=$(mktemp "$state_dir/state.XXXXXX")
   jq -c --arg output "$output" '.output = $output' "$state_file" > "$temporary"
-  if ! valid_state_file "$temporary"; then
+  if ! file_within_limit "$temporary"; then
     rm -f "$temporary"
     echo 'Radio Atlas could not save the audio output safely' >&2
     return 4
@@ -178,18 +183,10 @@ case "$action" in
     write_state '.recent = ([$station] + [.recent[] | select(.uuid != $station.uuid)])[:30]' "$station"
     ;;
   volume)
-    volume=${2:-}
-    [[ $volume =~ ^[0-9]+$ ]] \
-      || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
-    (( volume >= 0 && volume <= 100 )) \
-      || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
-    write_volume "$volume"
+    write_volume "${2:-}"
     ;;
   output)
-    output=${2:-}
-    [[ $output =~ ^[A-Za-z0-9._:+-]{0,160}$ ]] \
-      || { echo 'Invalid audio output' >&2; exit 2; }
-    write_output "$output"
+    write_output "${2:-}"
     ;;
   *)
     echo "Unknown action: $action" >&2

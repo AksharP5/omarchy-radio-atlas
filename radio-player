@@ -283,8 +283,8 @@ status() {
 
 set_volume() {
   local volume=${1:-}
-  [[ $volume =~ ^[0-9]+$ ]] || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
-  (( volume >= 0 && volume <= 100 )) || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
+  [[ $volume =~ ^0*(100|[0123456789]{1,2})$ ]] \
+    || { echo 'Volume must be an integer from 0 to 100' >&2; exit 2; }
   "$state_path" get >/dev/null
   local command
   command=$(jq -cn --argjson volume "$volume" '{command:["set_property","volume",$volume]}')
@@ -394,7 +394,7 @@ list_outputs() {
 }
 
 set_output() {
-  local requested=${1-}
+  local requested=${1-} LC_ALL=C
   if [[ -n $requested ]]; then
     [[ $requested =~ ^[A-Za-z0-9._:+-]{1,160}$ ]] || {
       echo 'Unknown audio output' >&2

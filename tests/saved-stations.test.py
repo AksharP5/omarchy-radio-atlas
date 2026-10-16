@@ -101,6 +101,32 @@ class SavedStationsTest(unittest.TestCase):
                 self.assertIn("saved state is invalid", result.stderr)
                 self.assertEqual(self.state_file.read_text(), original)
 
+    def test_mutations_validate_decimal_volume_and_ascii_output(self):
+        original = self.state_file.read_text()
+        for action, argument in [("volume", "0101"), ("volume", "18446744073709551616"),
+                                 ("output", "café")]:
+            with self.subTest(action=action, argument=argument):
+                result = subprocess.run([str(PROJECT / "radio-state"), action, argument],
+                                        env={**self.env, "LC_ALL": "en_US.UTF-8"},
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(self.state_file.read_text(), original)
+        state = self.run_action("radio-state", "volume", "00042")
+        self.assertEqual(state["volume"], 42)
+
+    def test_scalar_mutations_cannot_grow_state_past_byte_limit(self):
+        state = dict(favorites=[], recent=[], volume=0, padding="")
+        overhead = len(json.dumps(state, separators=(",", ":")))
+        state["padding"] = "x" * (4194304 - overhead)
+        original = json.dumps(state, separators=(",", ":"))
+        self.state_file.write_text(original)
+        for action, argument in [("volume", "100"), ("output", "test-sink")]:
+            with self.subTest(action=action):
+                result = subprocess.run([str(PROJECT / "radio-state"), action, argument],
+                                        env=self.env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 4, result.stderr)
+                self.assertEqual(self.state_file.read_text(), original)
+
     def test_failed_later_batch_keeps_the_original_queue(self):
         rows = self.save_favorites(500)
         self.env["RADIO_ATLAS_TEST_RESOLVE_FAIL_UUID"] = rows[-1]["uuid"]
