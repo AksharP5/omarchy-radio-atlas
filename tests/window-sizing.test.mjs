@@ -74,10 +74,11 @@ TestCase {
   property var worldStations: [{}]
   property string fetchError: ""
   property int randomRequests: 0
+  property int worldRequests: 0
   function loadState() {
     shownSizes = shownSizes.concat([{ width: preferredWidth, height: preferredHeight }])
   }
-  function showWorld() {}
+  function showWorld() { worldRequests++ }
   function tuneRandom() { randomRequests++ }
   function scheduleWorldExpansion(delay) {}
   ${lifecycle}
@@ -125,6 +126,8 @@ TestCase {
     shownSizes = []
     dismissals = 0
     randomRequests = 0
+    worldRequests = 0
+    worldStations = [{}]
     Hyprland.windowMonitor = null
     focusMonitor(monitor(1920, 1080, 1))
     Style.fontBaseSize = 12
@@ -190,6 +193,17 @@ TestCase {
     compare(startedCommands[1][2], "460")
     finishSetup()
     compare(shownSizes.length, 1)
+  }
+  function test_invalidPayloadOpensWorld_data() {
+    return [{ tag: "null", payload: "null" }, { tag: "malformed", payload: "{" }]
+  }
+  function test_invalidPayloadOpensWorld(data) {
+    worldStations = []
+    open(data.payload)
+    finishSetup()
+    compare(panel.visible, true)
+    compare(worldRequests, 1, "Invalid payloads must still complete normal startup")
+    compare(randomRequests, 0)
   }
   function test_closeCancelsPendingOpen() {
     open("{}")

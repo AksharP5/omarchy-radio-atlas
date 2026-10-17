@@ -239,7 +239,7 @@ Item {
 
   function openWindow(payloadJson) {
     var payload = ({})
-    try { payload = JSON.parse(payloadJson || "{}") } catch (error) { payload = ({}) }
+    try { payload = JSON.parse(payloadJson || "{}") || ({}) } catch (error) { payload = ({}) }
 
     opened = true
     worldExpansionMisses = 0
