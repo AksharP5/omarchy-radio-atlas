@@ -45,6 +45,6 @@ setpriv --pdeathsig TERM /usr/bin/python3 "$script_dir/radio-mpris" "$runtime_di
     set -e
     ip link set lo up
     exec setpriv --inh-caps=-net_admin --ambient-caps=-net_admin "$@"
-  ' radio-atlas-network "$script_dir/radio-sandbox" "$proxy_socket" "$@" &
+  ' radio-atlas-network "$script_dir/radio-sandbox" "$runtime_dir" "$@" &
 sandbox_pid=$!
 wait "$sandbox_pid"

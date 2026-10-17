@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-proxy_socket=$1
+runtime_dir=$1
 shift
 bridge_pid=""
 
@@ -14,8 +14,11 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-setpriv --pdeathsig TERM socat TCP4-LISTEN:18765,bind=127.0.0.1,reuseaddr,fork,max-children=32 \
-  UNIX-CONNECT:"$proxy_socket" >/dev/null 2>&1 &
+(
+  cd -- "$runtime_dir" || exit
+  exec setpriv --pdeathsig TERM socat TCP4-LISTEN:18765,bind=127.0.0.1,reuseaddr,fork,max-children=32 \
+    UNIX-CONNECT:proxy.sock
+) >/dev/null 2>&1 &
 bridge_pid=$!
 for _ in $(seq 1 100); do
   if (: > /dev/tcp/127.0.0.1/18765) 2>/dev/null; then

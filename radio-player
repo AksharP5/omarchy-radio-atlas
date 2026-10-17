@@ -116,6 +116,12 @@ write_status() {
   printf '%s\n' "$state"
 }
 
+# Connect by filename so runtime paths cannot become socat options.
+player_ipc() (
+  cd -- "$runtime_dir" || return
+  exec socat -T 1 - UNIX-CONNECT:mpv.sock
+)
+
 send_command() {
   local payload=$1
   local request_id=9001
@@ -123,7 +129,7 @@ send_command() {
   [[ -S $socket ]] || return 1
   payload=$(jq -c --argjson requestId "$request_id" '. + {request_id: $requestId}' <<< "$payload") || return 1
   response=$(printf '%s\n' "$payload" \
-    | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
+    | player_ipc 2>/dev/null \
     | head -c "$((max_ipc_bytes + 1))") || return 1
   (( $(printf '%s' "$response" | wc -c) <= max_ipc_bytes )) || return 1
   jq -e --argjson requestId "$request_id" \
@@ -205,7 +211,7 @@ status() {
         '{"command":["get_property","user-data/radio-atlas-failure"],"request_id":8}' \
         '{"command":["get_property","idle-active"],"request_id":9}' \
         '{"command":["get_property","user-data/radio-atlas-artwork"],"request_id":10}' \
-        | socat -T 1 - "UNIX-CONNECT:$socket" 2>/dev/null \
+        | player_ipc 2>/dev/null \
         | head -c "$((max_ipc_bytes + 1))" || true
     )
   fi

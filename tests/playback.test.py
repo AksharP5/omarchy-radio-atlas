@@ -418,6 +418,26 @@ end
         saved = Path(self.directory.name) / "data/radio-atlas/state.json"
         self.assertEqual(json.loads(saved.read_text())["volume"], 75)
 
+    def test_controls_work_with_a_comma_in_the_runtime_directory(self):
+        root = Path(self.directory.name) / "runtime,local"
+        root.mkdir()
+        self.runtime.rename(root / "omarchy-radio-atlas")
+        self.runtime = root / "omarchy-radio-atlas"
+        self.status_path = self.runtime / "status.json"
+        self.env.update(XDG_RUNTIME_DIR=str(root), RADIO_ATLAS_STATUS_FILE=str(self.status_path),
+                        RADIO_ATLAS_QUEUE_FILE=str(self.runtime / "playlist.json"))
+        self.start(["/live", "/other"])
+        self.wait_status(lambda state: state.get("loaded"))
+
+        self.assertTrue(self.action("status")["running"])
+        self.assertEqual(self.action("volume", "42")["volume"], 42)
+        self.action("toggle")
+        self.wait_status(lambda state: state.get("paused"))
+        self.action("next")
+        state = self.wait_status(lambda state: state.get("loaded") and state["playlistPosition"] == 1)
+        self.assertTrue(state["paused"], "Next must preserve a deliberate pause")
+        self.assertEqual(self.action("status")["station"]["uuid"], "station-1")
+
     def test_invalid_volume_does_not_change_live_playback(self):
         self.start(["/live"])
         self.wait_status(lambda state: state.get("loaded"))
