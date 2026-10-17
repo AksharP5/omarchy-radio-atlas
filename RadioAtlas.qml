@@ -739,7 +739,6 @@ Item {
     var sink = String(value || "")
     if (outputProcess.running) return
     playerError = ""
-    outputProcess.submittedOutput = sink
     outputProcess.output = ""
     outputProcess.errorOutput = ""
     outputProcess.command = sink
@@ -1263,7 +1262,6 @@ Item {
 
   Process {
     id: outputProcess
-    property string submittedOutput: ""
     property string output: ""
     property string errorOutput: ""
     command: []
@@ -1279,7 +1277,6 @@ Item {
       if (exitCode === 0) {
         root.statusReady = true
         root.playerError = ""
-        root.playerOutput = outputProcess.submittedOutput
         root.outputMenuOpen = false
         return
       }

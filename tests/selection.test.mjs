@@ -85,6 +85,21 @@ assert.equal(context.pendingVolume, -1)
 assert.equal(context.playerVolume, 80, "An older volume command must preserve the latest player report")
 assert.equal(context.reportedVolume, 80)
 
+const outputComplete = source.match(/id: outputProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
+vm.runInContext(source.match(/  function selectOutput\([\s\S]*?\n  \}/)[0], context)
+context.playerPath = "/radio-player"
+for (const output of ["current-speaker", ""]) {
+  context.outputProcess = { running: false }
+  context.outputMenuOpen = true
+  context.selectOutput("previous-speaker")
+  assert.equal(context.outputProcess.command[2], "previous-speaker")
+  context.applyPlayerState(JSON.stringify({ ...playing, output }))
+  vm.runInContext(`(function(exitCode) {${outputComplete}})(0)`, context)
+  assert.equal(context.playerOutput, output,
+    "An older output command must preserve the latest player report")
+  assert.equal(context.outputMenuOpen, false)
+}
+
 const refreshFunctions = source.match(/  function (?:setSelection|setStationList|moveSelection|playSelected|playlistScope|previewSearch|search)\([\s\S]*?\n  \}/g).join("\n")
 const debounce = source.match(/id: searchDebounce[\s\S]*?onTriggered: ([^\n]+)/)[1]
 const complete = source.match(/id: fetchProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
