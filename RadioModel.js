@@ -387,6 +387,14 @@ function estimatedCountryLocation(features, code, key) {
 // countries beyond the USA can be added by dropping in another boundary file.
 // The USA ships bundled as assets/us-stations.json (50 states + DC + PR).
 
+/**
+ * Returns the subdivision (state/province) feature containing the given
+ * coordinates, or null if the point is not inside any known subdivision.
+ * @param {Array} features - GeoJSON features with polygon boundaries
+ * @param {number} latitude - Latitude of the point to look up
+ * @param {number} longitude - Longitude of the point to look up
+ * @returns {Object|null} The matching feature's properties or null
+ */
 function subdivisionAt(features, latitude, longitude) {
   var rows = Array.isArray(features) ? features : []
   for (var i = 0; i < rows.length; i++) {
@@ -402,6 +410,13 @@ function subdivisionAt(features, latitude, longitude) {
   return null
 }
 
+/**
+ * Returns the centroid (representative point) of the largest polygon for a
+ * subdivision matching the given name, or null if not found.
+ * @param {Array} features - GeoJSON features with polygon boundaries
+ * @param {string} code - Subdivision name (case-insensitive)
+ * @returns {Object|null} `{latitude, longitude}` centroid or null
+ */
 function subdivisionCentre(features, code) {
   var rows = Array.isArray(features) ? features : []
   var wanted = String(code || "").toUpperCase()
@@ -451,18 +466,48 @@ function subdivisionCentre(features, code) {
   return null
 }
 
-function stationsForSubdivision(stations, code, maximum) {
+/**
+ * Returns up to `maximum` stations belonging to the named subdivision.
+ * Matches the API's `state` text field first, then falls back to reverse
+ * geocoding the station's GPS position against `subdivisions` boundaries.
+ * @param {Array} stations - Station records to filter
+ * @param {string} code - Subdivision name (case-insensitive)
+ * @param {number} [maximum] - Maximum stations to return
+ * @param {Array} [subdivisions] - Boundary features for GPS fallback
+ * @returns {Array} Matching stations, capped at `maximum`
+ */
+function stationsForSubdivision(stations, code, maximum, subdivisions) {
   var rows = Array.isArray(stations) ? stations : []
   var wanted = String(code || "").toUpperCase()
   var output = []
   var limit = Math.max(1, Number(maximum || 150))
   for (var i = 0; i < rows.length && output.length < limit; i++) {
-    var state = rows[i] && rows[i].state
-    if (String(state || "").toUpperCase() === wanted) output.push(rows[i])
+    var row = rows[i]
+    var state = String((row && row.state) || "").toUpperCase()
+    if (state === wanted) { output.push(row); continue }
+    // Same fallback as stationLocation: stations with GPS but no state text
+    // belong to the state their position falls in.
+    if (wanted && Array.isArray(subdivisions)) {
+      var latitude = Number(row && row.latitude)
+      var longitude = Number(row && row.longitude)
+      if (isFinite(latitude) && isFinite(longitude)) {
+        var subdivision = subdivisionAt(subdivisions, latitude, longitude)
+        if (subdivision && String(subdivision.name || "").toUpperCase() === wanted)
+          output.push(row)
+      }
+    }
   }
   return output
 }
 
+/**
+ * Derives a sorted, deduplicated list of subdivision names for a country
+ * from the station data.
+ * @param {Array} stations - Station records with `state` and `countryCode`
+ * @param {string} countryCode - ISO country code (e.g. "US")
+ * @param {number} [maximum] - Cap on the number of subdivisions
+ * @returns {Array} Sorted list of `{name, code}` objects
+ */
 function subdivisionsForCountry(stations, countryCode, maximum) {
   var rows = Array.isArray(stations) ? stations : []
   var code = String(countryCode || "").toUpperCase()
@@ -752,10 +797,25 @@ var stateAbbreviations = {
   "PUERTO RICO": "PR"
 }
 
+/**
+ * Returns the two-letter abbreviation for a US state/territory name
+ * (e.g. "North Carolina" → "NC"). Returns empty string for unknown names.
+ * @param {string} name - Full state or territory name
+ * @returns {string} Two-letter abbreviation or empty string
+ */
 function stateAbbreviation(name) {
   return stateAbbreviations[String(name || "").toUpperCase()] || ""
 }
 
+/**
+ * Returns the location label for a station (e.g. "US - NC"). Uses the API
+ * `state` field for US stations when available, otherwise reverse-geocodes
+ * the station's GPS position against `subdivisions` boundaries. Non-US
+ * stations return just their country code.
+ * @param {Object} station - Station record
+ * @param {Array} [subdivisions] - Boundary features for GPS fallback
+ * @returns {string} Location label
+ */
 function stationLocation(station, subdivisions) {
   var country = String(station.countryCode || "").toUpperCase()
   if (country !== "US") return country
@@ -776,6 +836,13 @@ function stationLocation(station, subdivisions) {
   return country
 }
 
+/**
+ * Returns the metadata summary for a station row: location, codec, and
+ * bitrate (e.g. "US - NC · MP3 · 320 kbps").
+ * @param {Object} station - Station record
+ * @param {Array} [subdivisions] - Boundary features for GPS fallback
+ * @returns {string} Metadata string
+ */
 function stationMeta(station, subdivisions) {
   if (!station) return ""
   return joinParts([stationLocation(station, subdivisions), station.codec,

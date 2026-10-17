@@ -230,6 +230,8 @@ Item {
     if (coordinate) focusCoordinate(coordinate.latitude, coordinate.longitude)
   }
 
+  // Smoothly animates the globe so the named subdivision is centered.
+  // Longitude takes the shortest path around the globe.
   function focusSubdivision(name) {
     var coordinate = RadioModel.subdivisionCentre(subdivisions, name)
     if (coordinate) focusCoordinate(coordinate.latitude, coordinate.longitude)
@@ -275,6 +277,8 @@ Item {
     return output
   }
 
+  // Precomputes projection data for subdivision boundary rings from the
+  // raw GeoJSON features, mirroring prepareCountryGeometry().
   function prepareSubdivisionGeometry() {
     var output = []
     var rows = Array.isArray(subdivisions) ? subdivisions : []
@@ -489,6 +493,10 @@ Item {
     }
   }
 
+  // Draws subdivision boundary lines. Rings partially behind the globe are
+  // clipped at the rim: the visible portion is drawn and closed with an arc
+  // along the sphere edge (same approach as paintCountries), so borders stay
+  // visible while rotating instead of vanishing entirely.
   function paintSubdivisions(ctx, centreX, centreY, globeRadius) {
     var rows = preparedSubdivisions
     if (rows.length === 0) return
@@ -524,17 +532,69 @@ Item {
             + cosLatitude * hiddenHorizontal
           if (projected[hiddenOffset + 2] < 0 && hiddenIndex < 0) hiddenIndex = pointIndex
         }
-        if (hiddenIndex >= 0) continue
-        ctx.beginPath()
-        for (var visibleIndex = 0; visibleIndex < points; visibleIndex++) {
-          var visibleOffset = visibleIndex * 3
-          var screenX = centreX + projected[visibleOffset] * globeRadius
-          var screenY = centreY - projected[visibleOffset + 1] * globeRadius
-          if (visibleIndex === 0) ctx.moveTo(screenX, screenY)
-          else ctx.lineTo(screenX, screenY)
+        // Draw only the visible portion of the ring. If part of the ring is
+        // behind the globe, interpolate the entering/leaving edge points and
+        // close along the globe's rim with an arc instead of dropping the ring.
+        if (hiddenIndex < 0) {
+          ctx.beginPath()
+          for (var visibleIndex = 0; visibleIndex < points; visibleIndex++) {
+            var visibleOffset = visibleIndex * 3
+            var screenX = centreX + projected[visibleOffset] * globeRadius
+            var screenY = centreY - projected[visibleOffset + 1] * globeRadius
+            if (visibleIndex === 0) ctx.moveTo(screenX, screenY)
+            else ctx.lineTo(screenX, screenY)
+          }
+          ctx.closePath()
+          ctx.stroke()
+          continue
         }
-        ctx.closePath()
-        ctx.stroke()
+        var previousOffset = hiddenIndex * 3
+        var previousX = projected[previousOffset]
+        var previousY = projected[previousOffset + 1]
+        var previousDepth = projected[previousOffset + 2]
+        var drawing = false
+        var startAngle = 0
+        for (var step = 1; step <= points; step++) {
+          var currentIndex = (hiddenIndex + step) % points
+          var currentOffset = currentIndex * 3
+          var currentX = projected[currentOffset]
+          var currentY = projected[currentOffset + 1]
+          var currentDepth = projected[currentOffset + 2]
+          var previousVisible = previousDepth >= 0
+          var currentVisible = currentDepth >= 0
+          if (!previousVisible && currentVisible) {
+            var enteringRatio = previousDepth / (previousDepth - currentDepth)
+            var enteringX = previousX + (currentX - previousX) * enteringRatio
+            var enteringY = previousY + (currentY - previousY) * enteringRatio
+            var enteringLength = Math.sqrt(enteringX * enteringX + enteringY * enteringY) || 1
+            enteringX /= enteringLength
+            enteringY /= enteringLength
+            startAngle = Math.atan2(-enteringY, enteringX)
+            ctx.beginPath()
+            ctx.moveTo(centreX + enteringX * globeRadius, centreY - enteringY * globeRadius)
+            ctx.lineTo(centreX + currentX * globeRadius, centreY - currentY * globeRadius)
+            drawing = true
+          } else if (previousVisible && currentVisible && drawing) {
+            ctx.lineTo(centreX + currentX * globeRadius, centreY - currentY * globeRadius)
+          } else if (previousVisible && !currentVisible && drawing) {
+            var leavingRatio = previousDepth / (previousDepth - currentDepth)
+            var leavingX = previousX + (currentX - previousX) * leavingRatio
+            var leavingY = previousY + (currentY - previousY) * leavingRatio
+            var leavingLength = Math.sqrt(leavingX * leavingX + leavingY * leavingY) || 1
+            leavingX /= leavingLength
+            leavingY /= leavingLength
+            var endAngle = Math.atan2(-leavingY, leavingX)
+            var clockwiseArc = (startAngle - endAngle + Math.PI * 2) % (Math.PI * 2)
+            ctx.lineTo(centreX + leavingX * globeRadius, centreY - leavingY * globeRadius)
+            ctx.stroke()
+            ctx.arc(centreX, centreY, globeRadius, endAngle, startAngle, clockwiseArc > Math.PI)
+            ctx.closePath()
+            drawing = false
+          }
+          previousX = currentX
+          previousY = currentY
+          previousDepth = currentDepth
+        }
       }
     }
   }

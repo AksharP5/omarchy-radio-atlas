@@ -499,33 +499,41 @@ Item {
     keyCatcher.forceActiveFocus()
   }
 
+  // Loads bundled US state boundaries and builds a sorted subdivision name
+  // list for the sidebar picker. Assigns subdivisionList in one shot so QML
+  // bindings update (mutations like push/sort do not trigger them).
   function loadSubdivisions() {
     subdivisions = (USStates.usStates && USStates.usStates.features) || []
-    subdivisionList = []
+    // Build a local array then assign once — mutations (push/sort) don't
+    // notify QML bindings, which would leave the picker hidden.
+    var names = []
     var seen = {}
     for (var i = 0; i < subdivisions.length; i++) {
-      var name = String(subdivisions[i].properties.name || "")
-      if (!name || seen[name]) continue
-      seen[name] = true
-      subdivisionList.push(name)
+      var featureName = String(subdivisions[i].properties.name || "")
+      if (!featureName || seen[featureName]) continue
+      seen[featureName] = true
+      names.push(featureName)
     }
-    subdivisionList.sort()
+    names.sort()
+    subdivisionList = names
   }
 
+  // Selects a subdivision: zooms the globe to its centroid and replaces the
+  // station list with that state's stations. Always updates the list, even
+  // when empty, so a state without stations does not show the previous
+  // state's results.
   function browseState(name) {
     var wanted = String(name || "").toUpperCase()
     if (!wanted) {
       activeSubdivisionName = ""
-      globe.activeSubdivisionName = ""
       return
     }
     activeSubdivisionName = wanted
-    globe.activeSubdivisionName = wanted
     globe.focusSubdivision(wanted)
-    var stateStations = RadioModel.stationsForSubdivision(worldStations, wanted, 150)
-    if (stateStations.length > 0) {
-      setStationList("country", stateStations)
-    }
+    // Always update the list, even when empty — a state with no loaded
+    // stations should show an empty list, not the previous state's results.
+    var stateStations = RadioModel.stationsForSubdivision(worldStations, wanted, 150, subdivisions)
+    setStationList("country", stateStations)
   }
 
   function applyCountryStations(code, stations) {
@@ -533,7 +541,12 @@ Item {
     var countryStations = RadioModel.mergeStations(results, stations, 500)
     worldStations = RadioModel.prioritizeStations(
       countryStations, worldStations, worldStationLimit)
-    setStationList("country", countryStations, true)
+    // If a state was selected while the country request was running, re-filter
+    // the fresh results so they don't overwrite the state selection.
+    var display = activeSubdivisionName !== ""
+      ? RadioModel.stationsForSubdivision(countryStations, activeSubdivisionName, 150, subdivisions)
+      : countryStations
+    setStationList("country", display, true)
   }
 
   function applyCountryCache(raw) {
