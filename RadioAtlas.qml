@@ -8,6 +8,7 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "RadioModel.js" as RadioModel
+import "assets/us-states.js" as USStates
 
 Item {
   id: root
@@ -33,9 +34,15 @@ Item {
   property string mode: "world"
   onModeChanged: if (mode !== "random") randomPlaybackPending = false
   property string activeCountryCode: ""
+  onActiveCountryCodeChanged: {
+    if (activeCountryCode === "US") loadSubdivisions()
+  }
   property string activeCountryName: ""
   property string browsedCountryCode: ""
   property bool countryCacheLoaded: false
+  property var subdivisions: []
+  property var subdivisionList: []
+  property string activeSubdivisionName: ""
   property bool helpVisible: false
   property int selectedIndex: -1
   property var selectedStation: null
@@ -341,6 +348,7 @@ Item {
     selectedStation = stations[selectedIndex]
     stationList.currentIndex = selectedIndex
     stationList.positionViewAtIndex(selectedIndex, ListView.Contain)
+    highlightStationCountry(selectedStation, true)
   }
 
   function moveSelection(delta) {
@@ -483,10 +491,41 @@ Item {
     setStationList("country", cachedStations)
     activeCountryCode = countryCode
     activeCountryName = countryName
+    activeSubdivisionName = ""
     fetchError = ""
     searchField.text = countryName
+    if (countryCode === "US") loadSubdivisions()
     startFetch("country", countryCode)
     keyCatcher.forceActiveFocus()
+  }
+
+  function loadSubdivisions() {
+    subdivisions = (USStates.usStates && USStates.usStates.features) || []
+    subdivisionList = []
+    var seen = {}
+    for (var i = 0; i < subdivisions.length; i++) {
+      var name = String(subdivisions[i].properties.name || "")
+      if (!name || seen[name]) continue
+      seen[name] = true
+      subdivisionList.push(name)
+    }
+    subdivisionList.sort()
+  }
+
+  function browseState(name) {
+    var wanted = String(name || "").toUpperCase()
+    if (!wanted) {
+      activeSubdivisionName = ""
+      globe.activeSubdivisionName = ""
+      return
+    }
+    activeSubdivisionName = wanted
+    globe.activeSubdivisionName = wanted
+    globe.focusSubdivision(wanted)
+    var stateStations = RadioModel.stationsForSubdivision(worldStations, wanted, 150)
+    if (stateStations.length > 0) {
+      setStationList("country", stateStations)
+    }
   }
 
   function applyCountryStations(code, stations) {
@@ -553,6 +592,12 @@ Item {
       showWorld(false)
     }
     setSelection(index)
+    var code = String(station.countryCode || "").toUpperCase()
+    if (code === "US" && activeCountryCode !== "US") {
+      activeCountryCode = "US"
+      activeCountryName = "United States of America"
+      loadSubdivisions()
+    }
     playSelected()
   }
 
@@ -1701,6 +1746,8 @@ Item {
             stations: root.currentGeoStations
             selectedStation: root.playingStation || root.selectedStation
             activeCountryCode: root.activeCountryCode
+            subdivisions: root.subdivisions
+            activeSubdivisionName: root.activeSubdivisionName
             backgroundColor: root.mapBackground
             sphereColor: root.mapSphere
             landColor: root.mapLand
@@ -1717,6 +1764,7 @@ Item {
             onPointerMoved: root.keyboardSelectionVisible = false
             onStationActivated: function(station) { root.activateMapStation(station) }
             onCountryActivated: function(code, name) { root.browseCountry(code, name) }
+            onSubdivisionActivated: function(name) { root.browseState(name) }
           }
 
           Rectangle {
@@ -1932,11 +1980,68 @@ Item {
             }
           }
 
+          // State picker, visible when the USA is browsed
+          Rectangle {
+            id: statePicker
+            visible: root.activeCountryCode === "US" && root.subdivisionList.length > 0
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: tabs.bottom
+            height: visible ? Style.spacing.controlHeight + root.edgeInset * 2 : 0
+            clip: true
+            color: root.background
+
+            property real edgeInset: root.edgeInset
+
+            ListView {
+              id: stateList
+              anchors.fill: parent
+              anchors.leftMargin: edgeInset
+              anchors.rightMargin: edgeInset
+              anchors.topMargin: edgeInset
+              anchors.bottomMargin: edgeInset
+              orientation: ListView.Horizontal
+              spacing: Style.spacing.xs
+              clip: true
+              model: root.subdivisionList
+              currentIndex: root.activeSubdivisionName !== ""
+                ? root.subdivisionList.indexOf(root.activeSubdivisionName) : -1
+              boundsBehavior: Flickable.StopAtBounds
+              cacheBuffer: 400
+
+              delegate: Rectangle {
+                id: stateChip
+                required property string modelData
+                readonly property bool isActive: root.activeSubdivisionName === modelData.toUpperCase()
+                width: stateChipLabel.implicitWidth + Style.spacing.md * 2
+                height: parent.height
+                radius: Style.cornerRadius
+                color: isActive ? root.accent : root.background
+                border.color: isActive ? root.accent : root.faint
+                border.width: 1
+
+                Text {
+                  id: stateChipLabel
+                  anchors.centerIn: parent
+                  text: modelData
+                  color: isActive ? root.background : root.foreground
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
+
+                TapHandler {
+                  onTapped: root.browseState(modelData)
+                }
+              }
+            }
+          }
+
           ListView {
             id: stationList
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.top: tabs.bottom
+            anchors.top: statePicker.visible ? statePicker.bottom : tabs.bottom
             anchors.bottom: playerPanel.top
             clip: true
             model: root.displayStations
@@ -1980,7 +2085,7 @@ Item {
                   ? Style.hoverFillFor(root.foreground, root.accent)
                   : "transparent")
 
-              Accessible.name: modelData.name + ", " + RadioModel.stationMeta(modelData)
+              Accessible.name: modelData.name + ", " + RadioModel.stationMeta(modelData, root.subdivisions)
               Accessible.role: Accessible.ListItem
               Accessible.selected: root.selectedIndex === index
               Accessible.onPressAction: {
@@ -2034,7 +2139,7 @@ Item {
                 anchors.rightMargin: Style.spacing.sm
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: Style.space(9)
-                text: RadioModel.stationDetails(stationRow.modelData, 2)
+                text: RadioModel.stationDetails(stationRow.modelData, 2, root.subdivisions)
                 horizontalAlignment: Text.AlignLeft
                 textFormat: Text.PlainText
                 color: root.dim

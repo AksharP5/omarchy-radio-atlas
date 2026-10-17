@@ -383,6 +383,104 @@ function estimatedCountryLocation(features, code, key) {
   return centre
 }
 
+// Subdivision (state/province) support. Generic over any admin-1 GeoJSON so
+// countries beyond the USA can be added by dropping in another boundary file.
+// The USA ships bundled as assets/us-stations.json (50 states + DC + PR).
+
+function subdivisionAt(features, latitude, longitude) {
+  var rows = Array.isArray(features) ? features : []
+  for (var i = 0; i < rows.length; i++) {
+    var feature = rows[i]
+    if (!feature || !feature.geometry) continue
+    var geometry = feature.geometry
+    var polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
+    if (!Array.isArray(polygons)) continue
+    for (var p = 0; p < polygons.length; p++) {
+      if (pointInPolygon(longitude, latitude, polygons[p])) return feature.properties || null
+    }
+  }
+  return null
+}
+
+function subdivisionCentre(features, code) {
+  var rows = Array.isArray(features) ? features : []
+  var wanted = String(code || "").toUpperCase()
+  for (var i = 0; i < rows.length; i++) {
+    var feature = rows[i]
+    if (!feature || !feature.geometry || !feature.properties) continue
+    if (String(feature.properties.name || "").toUpperCase() !== wanted) continue
+    var geometry = feature.geometry
+    var polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
+    if (!Array.isArray(polygons)) return null
+    var best = null
+    for (var p = 0; p < polygons.length; p++) {
+      var ring = polygons[p] && polygons[p][0]
+      if (!Array.isArray(ring) || ring.length < 3) continue
+      var points = []
+      var previousLongitude = Number(ring[0][0])
+      for (var n = 0; n < ring.length; n++) {
+        var longitude = Number(ring[n][0])
+        var latitude = Number(ring[n][1])
+        if (!isFinite(longitude) || !isFinite(latitude)) continue
+        if (points.length > 0) {
+          while (longitude - previousLongitude > 180) longitude -= 360
+          while (longitude - previousLongitude < -180) longitude += 360
+        }
+        points.push([longitude, latitude])
+        previousLongitude = longitude
+      }
+      if (points.length < 3) continue
+      var crossSum = 0
+      var longitudeSum = 0
+      var latitudeSum = 0
+      for (var pointIndex = 0, previous = points.length - 1;
+           pointIndex < points.length; previous = pointIndex++) {
+        var first = points[previous]
+        var second = points[pointIndex]
+        var cross = first[0] * second[1] - second[0] * first[1]
+        crossSum += cross
+        longitudeSum += (first[0] + second[0]) * cross
+        latitudeSum += (first[1] + second[1]) * cross
+      }
+      var area = Math.abs(crossSum)
+      if (area < 1e-9 || (best && area <= best.area)) continue
+      best = { area: area, latitude: latitudeSum / (3 * crossSum), longitude: wrapLongitude(longitudeSum / (3 * crossSum)) }
+    }
+    return best ? { latitude: best.latitude, longitude: best.longitude } : null
+  }
+  return null
+}
+
+function stationsForSubdivision(stations, code, maximum) {
+  var rows = Array.isArray(stations) ? stations : []
+  var wanted = String(code || "").toUpperCase()
+  var output = []
+  var limit = Math.max(1, Number(maximum || 150))
+  for (var i = 0; i < rows.length && output.length < limit; i++) {
+    var state = rows[i] && rows[i].state
+    if (String(state || "").toUpperCase() === wanted) output.push(rows[i])
+  }
+  return output
+}
+
+function subdivisionsForCountry(stations, countryCode, maximum) {
+  var rows = Array.isArray(stations) ? stations : []
+  var code = String(countryCode || "").toUpperCase()
+  var seen = {}
+  var output = []
+  var limit = Math.max(1, Number(maximum || 100))
+  for (var i = 0; i < rows.length && output.length < limit; i++) {
+    var row = rows[i]
+    if (String(row && row.countryCode || "").toUpperCase() !== code) continue
+    var name = String(row && row.state || "").trim()
+    if (!name || seen[name]) continue
+    seen[name] = true
+    output.push({ name: name, code: name.toUpperCase() })
+  }
+  output.sort(function (a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0) })
+  return output
+}
+
 function stationPosition(station, width, height, scale, centreLatitude, centreLongitude) {
   if (!station || station.latitude === null || station.longitude === null) return null
   var point = project(station.latitude, station.longitude, centreLatitude, centreLongitude)
@@ -637,16 +735,57 @@ function joinParts(parts) {
   return output.join(" · ")
 }
 
-function stationMeta(station) {
+var stateAbbreviations = {
+  "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR",
+  "CALIFORNIA": "CA", "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE",
+  "FLORIDA": "FL", "GEORGIA": "GA", "HAWAII": "HI", "IDAHO": "ID",
+  "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA", "KANSAS": "KS",
+  "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME", "MARYLAND": "MD",
+  "MASSACHUSETTS": "MA", "MICHIGAN": "MI", "MINNESOTA": "MN", "MISSISSIPPI": "MS",
+  "MISSOURI": "MO", "MONTANA": "MT", "NEBRASKA": "NE", "NEVADA": "NV",
+  "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ", "NEW MEXICO": "NM", "NEW YORK": "NY",
+  "NORTH CAROLINA": "NC", "NORTH DAKOTA": "ND", "OHIO": "OH", "OKLAHOMA": "OK",
+  "OREGON": "OR", "PENNSYLVANIA": "PA", "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC",
+  "SOUTH DAKOTA": "SD", "TENNESSEE": "TN", "TEXAS": "TX", "UTAH": "UT",
+  "VERMONT": "VT", "VIRGINIA": "VA", "WASHINGTON": "WA", "WEST VIRGINIA": "WV",
+  "WISCONSIN": "WI", "WYOMING": "WY", "DISTRICT OF COLUMBIA": "DC",
+  "PUERTO RICO": "PR"
+}
+
+function stateAbbreviation(name) {
+  return stateAbbreviations[String(name || "").toUpperCase()] || ""
+}
+
+function stationLocation(station, subdivisions) {
+  var country = String(station.countryCode || "").toUpperCase()
+  if (country !== "US") return country
+  var state = stateAbbreviation(station.state)
+  if (state) return "US - " + state
+  // The API omits state for many US stations. The dot always has a position
+  // (real GPS or an estimated point inside the country), so reverse-geocode
+  // that position against the bundled state boundaries to recover it.
+  var latitude = Number(station.latitude)
+  var longitude = Number(station.longitude)
+  if (isFinite(latitude) && isFinite(longitude) && Array.isArray(subdivisions)) {
+    var subdivision = subdivisionAt(subdivisions, latitude, longitude)
+    if (subdivision && subdivision.name) {
+      state = stateAbbreviation(subdivision.name)
+      if (state) return "US - " + state
+    }
+  }
+  return country
+}
+
+function stationMeta(station, subdivisions) {
   if (!station) return ""
-  return joinParts([station.countryCode, station.codec,
+  return joinParts([stationLocation(station, subdivisions), station.codec,
     Number(station.bitrate) > 0 ? Number(station.bitrate) + " kbps" : ""])
 }
 
-function stationDetails(station, tagLimit) {
+function stationDetails(station, tagLimit, subdivisions) {
   if (!station) return ""
   var tags = compactTags(station.tags, tagLimit)
-  return joinParts([stationMeta(station)].concat(tags ? tags.split(" · ") : []))
+  return joinParts([stationMeta(station, subdivisions)].concat(tags ? tags.split(" · ") : []))
 }
 
 function indexByUuid(stations, uuid) {
