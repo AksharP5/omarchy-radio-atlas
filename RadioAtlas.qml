@@ -97,9 +97,9 @@ Item {
   property var pendingFavoriteRequests: []
   property var pendingRecentRequest: null
 
-  readonly property string fetchPath: Qt.resolvedUrl("radio-fetch").toString().replace(/^file:\/\//, "")
-  readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
-  readonly property string statePath: Qt.resolvedUrl("radio-state").toString().replace(/^file:\/\//, "")
+  readonly property string fetchPath: decodeURIComponent(Qt.resolvedUrl("radio-fetch").toString().replace(/^file:\/\//, ""))
+  readonly property string playerPath: decodeURIComponent(Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, ""))
+  readonly property string statePath: decodeURIComponent(Qt.resolvedUrl("radio-state").toString().replace(/^file:\/\//, ""))
   readonly property string runtimePath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas"
   readonly property string countryCachePath:
     (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache")
@@ -164,7 +164,7 @@ Item {
   readonly property int preferredWidth: preferredWindowSize.width
   readonly property int preferredHeight: preferredWindowSize.height
   readonly property string windowPath:
-    Qt.resolvedUrl("radio-window").toString().replace(/^file:\/\//, "")
+    decodeURIComponent(Qt.resolvedUrl("radio-window").toString().replace(/^file:\/\//, ""))
   readonly property int cardWidth: panel.width
   readonly property int cardHeight: panel.height
   // Base outer inset (close-button edge spacing) used for every pane edge.
@@ -891,7 +891,7 @@ Item {
   }
 
   FileView {
-    path: Qt.resolvedUrl("assets/countries.json").toString().replace(/^file:\/\//, "")
+    path: decodeURIComponent(Qt.resolvedUrl("assets/countries.json").toString().replace(/^file:\/\//, ""))
     watchChanges: false
     printErrors: true
     onLoaded: {
@@ -907,7 +907,7 @@ Item {
 
   FileView {
     id: countryNamesFile
-    path: Qt.resolvedUrl("assets/country-search.json").toString().replace(/^file:\/\//, "")
+    path: decodeURIComponent(Qt.resolvedUrl("assets/country-search.json").toString().replace(/^file:\/\//, ""))
     blockLoading: true
     watchChanges: false
     printErrors: true

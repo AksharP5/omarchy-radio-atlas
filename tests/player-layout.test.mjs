@@ -25,10 +25,13 @@ assert.ok(closing > opening, "Could not find the end of the production player pa
 const panel = source.slice(declaration.index, closing)
 const outputMenu = source.match(/          Rectangle \{\n            id: outputMenu[\s\S]*?(?=\n        \}\n      \}\n\n      Flickable)/)?.[0]
 assert.ok(outputMenu, "Could not find the production output menu")
+const localPaths = source.match(/^  readonly property string (?:fetchPath|playerPath|statePath|windowPath):[^\n]*(?:\n    [^\n]+)?/gm)
+const countriesPath = source.match(/    path: ([^\n]*countries\.json[^\n]*)/)[1]
+const countryNamesPath = source.match(/    path: ([^\n]*country-search\.json[^\n]*)/)[1]
 const shellDirectory = process.env.OMARCHY_SHELL_DIR || "/usr/share/omarchy/shell"
 assert.ok(fs.existsSync(path.join(shellDirectory, "Ui/Button.qml")),
   "Set OMARCHY_SHELL_DIR to an Omarchy checkout’s shell directory")
-const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-player-layout-"))
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-player-layout-%25 # ?-"))
 
 try {
   // Use the real shell controls and style; stub only process, filesystem and compositor IO.
@@ -59,6 +62,9 @@ TestCase {
   height: 600
   visible: true
   when: windowShown
+  ${localPaths.join("\n")}
+  property string countriesPath: ${countriesPath}
+  property string countryNamesPath: ${countryNamesPath}
   property bool playerRunning: true
   property bool playerPaused: false
   property bool playerStopped: false
@@ -128,6 +134,17 @@ TestCase {
     anchors.fill: parent
     ${panel}
     ${outputMenu}
+  }
+
+  function test_localPaths() {
+    var directory = ${JSON.stringify(directory)}
+    compare(fetchPath, directory + "/radio-fetch")
+    compare(playerPath, directory + "/radio-player")
+    compare(statePath, directory + "/radio-state")
+    compare(windowPath, directory + "/radio-window")
+    compare(countriesPath, directory + "/assets/countries.json")
+    compare(countryNamesPath, directory + "/assets/country-search.json")
+    compare(barWidget.playerPath, playerPath)
   }
 
   function test_controlsFit_data() {

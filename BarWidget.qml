@@ -20,7 +20,7 @@ BarWidget {
   property string playerTitle: ""
   property bool statusReady: false
   property bool playerStateReady: false
-  readonly property string playerPath: Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, "")
+  readonly property string playerPath: decodeURIComponent(Qt.resolvedUrl("radio-player").toString().replace(/^file:\/\//, ""))
   readonly property string statusPath: Quickshell.env("XDG_RUNTIME_DIR") + "/omarchy-radio-atlas/status.json"
 
   function singleLineText(value, limit) {
