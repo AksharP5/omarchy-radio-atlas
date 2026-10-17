@@ -10,6 +10,8 @@ Item {
   readonly property string selectedStationUuid: selectedStation ? String(selectedStation.uuid || "") : ""
   readonly property real stationHitRadius: 12
   property string activeCountryCode: ""
+  property var subdivisions: []
+  property string activeSubdivisionName: ""
 
   property real centreLatitude: 18
   property real centreLongitude: -20
@@ -47,6 +49,7 @@ Item {
   property int kineticLaunchGeneration: 0
   property bool suppressNextTap: false
   property var preparedCountries: []
+  property var preparedSubdivisions: []
   property var preparedGrid: []
   property var preparedStations: []
   property var sphereGradient: null
@@ -54,6 +57,7 @@ Item {
 
   signal stationActivated(var station)
   signal countryActivated(string code, string name)
+  signal subdivisionActivated(string name)
   signal interactionStarted()
   signal pointerMoved()
 
@@ -77,6 +81,7 @@ Item {
 
   function stopKineticRotation(clearLanding) {
     kineticLaunchGeneration += 1
+    stopFocusAnimation()
     kineticAnimation.running = false
     kineticVelocityX = 0
     kineticVelocityY = 0
@@ -154,6 +159,22 @@ Item {
     easing.type: Easing.OutCubic
   }
 
+  NumberAnimation {
+    id: latitudeAnimation
+    target: root
+    property: "centreLatitude"
+    duration: 240
+    easing.type: Easing.OutQuint
+  }
+
+  NumberAnimation {
+    id: longitudeAnimation
+    target: root
+    property: "centreLongitude"
+    duration: 240
+    easing.type: Easing.OutQuint
+  }
+
   function stopZoomAnimation() {
     zoomAnimation.stop()
   }
@@ -181,6 +202,11 @@ Item {
     zoomBy(1 / (factor || 1.5))
   }
 
+  function stopFocusAnimation() {
+    latitudeAnimation.stop()
+    longitudeAnimation.stop()
+  }
+
   function focusCoordinate(latitude, longitude) {
     var nextLatitude = Number(latitude)
     var nextLongitude = Number(longitude)
@@ -188,12 +214,26 @@ Item {
 
     stopKineticRotation(true)
     stopZoomAnimation()
-    centreLatitude = RadioModel.clamp(nextLatitude, -78, 78)
-    centreLongitude = RadioModel.wrapLongitude(nextLongitude)
+    stopFocusAnimation()
+    // Take the shortest path around the globe for longitude.
+    var delta = RadioModel.wrapLongitude(nextLongitude - centreLongitude)
+    latitudeAnimation.from = centreLatitude
+    latitudeAnimation.to = RadioModel.clamp(nextLatitude, -78, 78)
+    longitudeAnimation.from = centreLongitude
+    longitudeAnimation.to = centreLongitude + delta
+    latitudeAnimation.start()
+    longitudeAnimation.start()
   }
 
   function focusCountry(code) {
     var coordinate = RadioModel.countryCentre(countries, code)
+    if (coordinate) focusCoordinate(coordinate.latitude, coordinate.longitude)
+  }
+
+  // Smoothly animates the globe so the named subdivision is centered.
+  // Longitude takes the shortest path around the globe.
+  function focusSubdivision(name) {
+    var coordinate = RadioModel.subdivisionCentre(subdivisions, name)
     if (coordinate) focusCoordinate(coordinate.latitude, coordinate.longitude)
   }
 
@@ -231,6 +271,32 @@ Item {
       if (rings.length === 0) continue
       output.push({
         code: String(feature.properties && feature.properties.code || "").toUpperCase(),
+        rings: rings
+      })
+    }
+    return output
+  }
+
+  // Precomputes projection data for subdivision boundary rings from the
+  // raw GeoJSON features, mirroring prepareCountryGeometry().
+  function prepareSubdivisionGeometry() {
+    var output = []
+    var rows = Array.isArray(subdivisions) ? subdivisions : []
+    for (var i = 0; i < rows.length; i++) {
+      var feature = rows[i]
+      if (!feature || !feature.geometry) continue
+      var geometry = feature.geometry
+      var polygons = geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates
+      if (!Array.isArray(polygons)) continue
+      var rings = []
+      for (var p = 0; p < polygons.length; p++) {
+        var ring = polygons[p] && polygons[p][0]
+        var prepared = prepareCoordinates(ring, false)
+        if (prepared.length >= 9) rings.push({ world: prepared, projected: new Array(prepared.length) })
+      }
+      if (rings.length === 0) continue
+      output.push({
+        name: String(feature.properties && feature.properties.name || "").toUpperCase(),
         rings: rings
       })
     }
@@ -427,6 +493,112 @@ Item {
     }
   }
 
+  // Draws subdivision boundary lines. Rings partially behind the globe are
+  // clipped at the rim: the visible portion is drawn and closed with an arc
+  // along the sphere edge (same approach as paintCountries), so borders stay
+  // visible while rotating instead of vanishing entirely.
+  function paintSubdivisions(ctx, centreX, centreY, globeRadius) {
+    var rows = preparedSubdivisions
+    if (rows.length === 0) return
+    var latitude = centreLatitude * Math.PI / 180
+    var longitude = centreLongitude * Math.PI / 180
+    var sinLatitude = Math.sin(latitude)
+    var cosLatitude = Math.cos(latitude)
+    var sinLongitude = Math.sin(longitude)
+    var cosLongitude = Math.cos(longitude)
+    var activeName = activeSubdivisionName.toUpperCase()
+    var stroke = withAlpha(outlineColor, 0.55)
+    var activeStroke = withAlpha(accentColor, 0.95)
+    for (var i = 0; i < rows.length; i++) {
+      var subdivision = rows[i]
+      var active = subdivision.name === activeName
+      ctx.strokeStyle = active ? activeStroke : stroke
+      ctx.lineWidth = active ? 1.4 : 0.5
+      for (var ringIndex = 0; ringIndex < subdivision.rings.length; ringIndex++) {
+        var geometry = subdivision.rings[ringIndex]
+        var ring = geometry.world
+        var projected = geometry.projected
+        var points = Math.floor(ring.length / 3)
+        var hiddenIndex = -1
+        for (var pointIndex = 0; pointIndex < points; pointIndex++) {
+          var hiddenOffset = pointIndex * 3
+          var hiddenHorizontal = ring[hiddenOffset] * cosLongitude
+            + ring[hiddenOffset + 1] * sinLongitude
+          projected[hiddenOffset] = ring[hiddenOffset + 1] * cosLongitude
+            - ring[hiddenOffset] * sinLongitude
+          projected[hiddenOffset + 1] = cosLatitude * ring[hiddenOffset + 2]
+            - sinLatitude * hiddenHorizontal
+          projected[hiddenOffset + 2] = sinLatitude * ring[hiddenOffset + 2]
+            + cosLatitude * hiddenHorizontal
+          if (projected[hiddenOffset + 2] < 0 && hiddenIndex < 0) hiddenIndex = pointIndex
+        }
+        // Draw only the visible portion of the ring. If part of the ring is
+        // behind the globe, interpolate the entering/leaving edge points and
+        // close along the globe's rim with an arc instead of dropping the ring.
+        if (hiddenIndex < 0) {
+          ctx.beginPath()
+          for (var visibleIndex = 0; visibleIndex < points; visibleIndex++) {
+            var visibleOffset = visibleIndex * 3
+            var screenX = centreX + projected[visibleOffset] * globeRadius
+            var screenY = centreY - projected[visibleOffset + 1] * globeRadius
+            if (visibleIndex === 0) ctx.moveTo(screenX, screenY)
+            else ctx.lineTo(screenX, screenY)
+          }
+          ctx.closePath()
+          ctx.stroke()
+          continue
+        }
+        var previousOffset = hiddenIndex * 3
+        var previousX = projected[previousOffset]
+        var previousY = projected[previousOffset + 1]
+        var previousDepth = projected[previousOffset + 2]
+        var drawing = false
+        var startAngle = 0
+        for (var step = 1; step <= points; step++) {
+          var currentIndex = (hiddenIndex + step) % points
+          var currentOffset = currentIndex * 3
+          var currentX = projected[currentOffset]
+          var currentY = projected[currentOffset + 1]
+          var currentDepth = projected[currentOffset + 2]
+          var previousVisible = previousDepth >= 0
+          var currentVisible = currentDepth >= 0
+          if (!previousVisible && currentVisible) {
+            var enteringRatio = previousDepth / (previousDepth - currentDepth)
+            var enteringX = previousX + (currentX - previousX) * enteringRatio
+            var enteringY = previousY + (currentY - previousY) * enteringRatio
+            var enteringLength = Math.sqrt(enteringX * enteringX + enteringY * enteringY) || 1
+            enteringX /= enteringLength
+            enteringY /= enteringLength
+            startAngle = Math.atan2(-enteringY, enteringX)
+            ctx.beginPath()
+            ctx.moveTo(centreX + enteringX * globeRadius, centreY - enteringY * globeRadius)
+            ctx.lineTo(centreX + currentX * globeRadius, centreY - currentY * globeRadius)
+            drawing = true
+          } else if (previousVisible && currentVisible && drawing) {
+            ctx.lineTo(centreX + currentX * globeRadius, centreY - currentY * globeRadius)
+          } else if (previousVisible && !currentVisible && drawing) {
+            var leavingRatio = previousDepth / (previousDepth - currentDepth)
+            var leavingX = previousX + (currentX - previousX) * leavingRatio
+            var leavingY = previousY + (currentY - previousY) * leavingRatio
+            var leavingLength = Math.sqrt(leavingX * leavingX + leavingY * leavingY) || 1
+            leavingX /= leavingLength
+            leavingY /= leavingLength
+            var endAngle = Math.atan2(-leavingY, leavingX)
+            var clockwiseArc = (startAngle - endAngle + Math.PI * 2) % (Math.PI * 2)
+            ctx.lineTo(centreX + leavingX * globeRadius, centreY - leavingY * globeRadius)
+            ctx.stroke()
+            ctx.arc(centreX, centreY, globeRadius, endAngle, startAngle, clockwiseArc > Math.PI)
+            ctx.closePath()
+            drawing = false
+          }
+          previousX = currentX
+          previousY = currentY
+          previousDepth = currentDepth
+        }
+      }
+    }
+  }
+
   function paintSignals(ctx) {
     var rows = preparedStations
     var latitude = centreLatitude * Math.PI / 180
@@ -519,6 +691,7 @@ Item {
     ctx.clip()
     paintGrid(ctx, centreX, centreY, globeRadius)
     paintCountries(ctx, centreX, centreY, globeRadius)
+    paintSubdivisions(ctx, centreX, centreY, globeRadius)
     paintSignals(ctx)
     ctx.restore()
 
@@ -560,6 +733,16 @@ Item {
     var coordinate = RadioModel.unproject(
       normalizedX, normalizedY, centreLatitude, centreLongitude)
     if (!coordinate) return
+    // When the USA is active and subdivision boundaries are loaded, prefer
+    // the state hit over the country hit so tapping a state selects it.
+    if (activeCountryCode === "US" && subdivisions.length > 0) {
+      var subdivision = RadioModel.subdivisionAt(
+        subdivisions, coordinate.latitude, coordinate.longitude)
+      if (subdivision && subdivision.name) {
+        subdivisionActivated(String(subdivision.name))
+        return
+      }
+    }
     var country = RadioModel.countryAt(
       countries, coordinate.latitude, coordinate.longitude)
     if (!country || !country.code || country.code === "-99") return
@@ -581,6 +764,11 @@ Item {
     globeCanvas.requestPaint()
   }
   onActiveCountryCodeChanged: globeCanvas.requestPaint()
+  onSubdivisionsChanged: {
+    preparedSubdivisions = prepareSubdivisionGeometry()
+    globeCanvas.requestPaint()
+  }
+  onActiveSubdivisionNameChanged: globeCanvas.requestPaint()
   onBackgroundColorChanged: globeCanvas.requestPaint()
   onSphereColorChanged: globeCanvas.requestPaint()
   onLandColorChanged: globeCanvas.requestPaint()
