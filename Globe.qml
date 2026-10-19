@@ -627,7 +627,8 @@ Item {
       var ctx = getContext("2d")
       if (!ctx) return
       root.paintGlobe(ctx)
-      if (root.hoveredStation)
+      if (hoverHandler.hovered && !tapHandler.pressed
+          && !dragHandler.active && !kineticAnimation.running)
         root.hoveredStation = root.stationUnderPointer(root.hoverX, root.hoverY)
     }
   }

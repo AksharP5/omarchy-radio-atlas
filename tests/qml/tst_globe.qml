@@ -135,16 +135,25 @@ TestCase {
     tryVerify(function() { return globe.hoveredStation && globe.hoveredStation.uuid === "first" })
 
     globe.focusCoordinate(0, 90)
-    waitForRendering(globe)
+    tryVerify(function() { return globe.hoveredStation && globe.hoveredStation.uuid === "second" },
+      5000, "Hover text must follow the station now under the pointer")
     compare(globe.stationUnderPointer(400, 300).uuid, "second")
-    compare(globe.hoveredStation.uuid, "second", "Hover text must follow the station now under the pointer")
 
     globe.stations = [{ uuid: "replacement", name: "Replacement", latitude: 0, longitude: 90 }]
-    waitForRendering(globe)
-    compare(globe.hoveredStation.uuid, "replacement", "Refreshed markers must refresh hover text")
+    tryVerify(function() { return globe.hoveredStation && globe.hoveredStation.uuid === "replacement" },
+      5000, "Refreshed markers must refresh hover text")
     globe.stations = []
+    tryCompare(globe, "hoveredStation", null)
+
+    globe.stations = [{ uuid: "arriving", name: "Arriving", latitude: 0, longitude: 90 }]
+    tryVerify(function() { return globe.hoveredStation && globe.hoveredStation.uuid === "arriving" },
+      5000, "New markers must be found without moving the pointer")
+
+    mouseMove(globe, -10, -10, 20)
+    tryCompare(globe, "hoveredStation", null)
+    globe.stations = [{ uuid: "outside", name: "Outside", latitude: 0, longitude: 90 }]
     waitForRendering(globe)
-    compare(globe.hoveredStation, null)
+    compare(globe.hoveredStation, null, "Repainting must preserve a pointer exit")
   }
 
   function test_offscreenMarkersAreSkippedButEdgeMarkersRemainClickable() {
