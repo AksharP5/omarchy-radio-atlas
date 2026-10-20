@@ -606,11 +606,14 @@ Item {
     }
     setSelection(index)
     var code = String(station.countryCode || "").toUpperCase()
+    // Load subdivisions for US BEFORE centering — that sets activeCountryCode.
     if (code === "US" && activeCountryCode !== "US") {
       activeCountryCode = "US"
       activeCountryName = "United States of America"
       loadSubdivisions()
     }
+    // Center the globe on the station's GPS coordinates.
+    highlightStationCountry(station, true)
     playSelected()
   }
 
