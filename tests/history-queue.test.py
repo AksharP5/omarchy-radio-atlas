@@ -20,10 +20,10 @@ if not quickshell:
 
 source = (project / "RadioAtlas.qml").read_text()
 functions = "\n".join(re.findall(
-    r"  function (?:recordPlayed|startRecordPlayed|writeSelection)\([\s\S]*?\n  \}", source))
+    r"  function (?:recordPlayed|startRecordPlayed|writeSelection|playlistStation)\([\s\S]*?\n  \}", source))
 views = "\n".join(re.search(
     rf"  FileView \{{\n    id: {name}[\s\S]*?\n  \}}", source).group()
-    for name in ["historyPlaylistFile", "historySelectionFile"])
+    for name in ["playlistFile", "historySelectionFile"])
 writer = re.search(r"  Process \{\n    id: historyProcess[\s\S]*?\n  \}", source).group()
 first = dict(uuid="11111111-1234-1234-1234-111111111111", name="First", url="https://example.com/first")
 queued = dict(uuid="22222222-1234-1234-1234-222222222222", name="Queued", url="https://example.com/queued")

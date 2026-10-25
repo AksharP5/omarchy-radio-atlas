@@ -809,6 +809,9 @@ Item {
     var index = RadioModel.indexByUuid(displayStations, uuid)
     if (remoteMode && index >= 0) {
       request.rows = [displayStations[index]]
+    } else if (uuid === playingStationUuid) {
+      var station = playlistStation(uuid)
+      if (station) request.rows = [station]
     }
     pendingFavoriteRequests = pendingFavoriteRequests.concat([request])
     startNextFavorite()
@@ -838,24 +841,27 @@ Item {
     stateProcess.running = true
   }
 
-  function recordPlayed(uuid) {
-    if (!uuid) return
-    var station = null
+  function playlistStation(uuid) {
     try {
-      historyPlaylistFile.readSucceeded = false
-      historyPlaylistFile.reload()
-      var raw = historyPlaylistFile.text()
-      if (!historyPlaylistFile.readSucceeded) throw new Error("Playback queue is unavailable")
+      playlistFile.readSucceeded = false
+      playlistFile.reload()
+      var raw = playlistFile.text()
+      if (!playlistFile.readSucceeded) throw new Error("Playback queue is unavailable")
       if (raw.length > 4194304) throw new Error("Playback queue is too large")
       var stations = JSON.parse(raw)
       if (!Array.isArray(stations) || stations.length > 500)
         throw new Error("Playback queue is not a station list")
       var index = RadioModel.indexByUuid(stations, uuid)
-      if (index >= 0) station = stations[index]
+      return index >= 0 ? stations[index] : null
     } catch (error) {
-      console.warn("Played station could not be captured:", error)
+      console.warn("Playback station could not be captured:", error)
+      return null
     }
-    pendingRecentRequest = { uuid: uuid, station: station }
+  }
+
+  function recordPlayed(uuid) {
+    if (!uuid) return
+    pendingRecentRequest = { uuid: uuid, station: playlistStation(uuid) }
     startRecordPlayed()
   }
 
@@ -967,7 +973,7 @@ Item {
   }
 
   FileView {
-    id: historyPlaylistFile
+    id: playlistFile
     property bool readSucceeded: false
     path: root.runtimePath + "/playlist.json"
     preload: false

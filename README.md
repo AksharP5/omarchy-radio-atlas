@@ -125,6 +125,8 @@ the globe.
 Search, world, favorites, and recent-list refreshes preserve your selected station
 when it remains in the results, including its keyboard highlight. Track-title,
 volume, and pause updates preserve your station-list selection.
+Favoriting the playing station keeps its details even when it is outside the
+visible list and playback changes before the save finishes.
 Theme colors update the globe immediately. Background station expansion stops
 after three consecutive attempts add no stations, including failed requests;
 reopening Radio Atlas allows expansion to try again.
