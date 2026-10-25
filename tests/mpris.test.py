@@ -546,6 +546,11 @@ class SessionTest(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
+            # Session exit can leave the asynchronous status refresh in its group.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
         bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"],
                                stdout=subprocess.PIPE, stderr=log, text=True,
