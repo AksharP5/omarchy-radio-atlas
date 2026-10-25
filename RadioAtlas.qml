@@ -2423,6 +2423,9 @@ Item {
           Rectangle {
             id: outputMenu
             visible: root.outputMenuOpen
+            onVisibleChanged: {
+              if (!visible && outputList.activeFocus) keyCatcher.forceActiveFocus()
+            }
             readonly property point buttonPosition: {
               sidebar.width
               sidebar.height

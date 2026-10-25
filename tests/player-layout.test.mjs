@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url"
 import { linkShellUi } from "./shell-fixture.mjs"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
+const card = source.match(/    BorderSurface \{[\s\S]*?(?=      Item \{\n        id: header)/)[0]
+  .replace("BorderSurface {", "Item {")
+  .replace(/^      (color|borderSpec|radius):.*\n/gm, "")
 const declaration = /\b\w+(?:\.\w+)*\s*\{\s*id\s*:\s*playerPanel\b/.exec(source)
 assert.ok(declaration, "Could not find the production player panel")
 const opening = source.indexOf("{", declaration.index)
@@ -23,7 +26,7 @@ for (const token of source.slice(opening).matchAll(tokens)) {
 }
 assert.ok(closing > opening, "Could not find the end of the production player panel")
 const panel = source.slice(declaration.index, closing)
-const outputMenu = source.match(/          Rectangle \{\n            id: outputMenu[\s\S]*?(?=\n        \}\n      \}\n\n      Flickable)/)?.[0]
+const outputMenu = source.match(/          MouseArea \{\n            visible: root.outputMenuOpen[\s\S]*?(?=\n        \}\n      \}\n\n      Flickable)/)?.[0]
 assert.ok(outputMenu, "Could not find the production output menu")
 const localPaths = source.match(/^  readonly property string (?:fetchPath|playerPath|statePath|windowPath):[^\n]*(?:\n    [^\n]+)?/gm)
 const countriesPath = source.match(/    path: ([^\n]*countries\.json[^\n]*)/)[1]
@@ -88,6 +91,7 @@ TestCase {
   property string playerError: ""
   property string streamError: ""
   property string playerOutput: ""
+  property bool helpVisible: false
   property bool outputMenuOpen: false
   property var audioOutputs: []
   property string outputsError: ""
@@ -108,6 +112,8 @@ TestCase {
   function playerAction(action) { lastAction = action }
   function playSelected() { lastAction = "selected" }
   function stopPlayer() { lastAction = "stop"; randomPlaybackPending = false }
+  function isHelpKey(event) { return event.key === Qt.Key_Question }
+  function dismiss() { lastAction = "dismiss" }
   QtObject { id: stopProcess; property bool running: false }
   QtObject { id: playerActionProcess; property bool running: false }
   QtObject { id: outputProcess; property bool running: false }
@@ -129,11 +135,14 @@ TestCase {
   RadioBar { id: barWidget; bar: barHost; visible: false; z: 10 }
 
   Rectangle { anchors.fill: parent; color: root.background }
-  Item {
-    id: sidebar
-    anchors.fill: parent
-    ${panel}
-    ${outputMenu}
+  ${card}
+    TextInput { id: searchField }
+    Item {
+      id: sidebar
+      anchors.fill: parent
+      ${panel}
+      ${outputMenu}
+    }
   }
 
   function test_localPaths() {
@@ -409,6 +418,42 @@ TestCase {
     }
     keyClick(Qt.Key_Space)
     compare(lastOutput, "")
+  }
+
+  function test_closedOutputMenuReleasesKeyboard_data() {
+    return [{ tag: "keyboard" }, { tag: "pointer" }, { tag: "outside-click" }, { tag: "escape" }]
+  }
+
+  function test_closedOutputMenuReleasesKeyboard(data) {
+    width = 390
+    playerRunning = true
+    audioOutputs = [{ id: "sink", label: "Test output" }]
+    outputMenuOpen = true
+    verify(waitForPolish(root.Window.window))
+    outputButton.forceActiveFocus()
+    keyClick(Qt.Key_Tab)
+    keyClick(Qt.Key_Tab)
+    var option = outputList.itemAtIndex(1)
+    verify(option.activeFocus)
+    if (data.tag === "keyboard") keyClick(Qt.Key_Return)
+    else if (data.tag === "pointer") mouseClick(option)
+    else if (data.tag === "outside-click") mouseClick(sidebar, 1, 1)
+    else keyClick(Qt.Key_Escape)
+    compare(outputMenuOpen, false)
+    lastOutput = "unchanged"
+    lastAction = ""
+    keyClick(Qt.Key_Space)
+    compare(lastAction, "toggle", "Space must reach playback after the menu closes")
+    keyClick(Qt.Key_Return)
+    compare(lastAction, "selected", "Enter must play the selected station")
+    compare(lastOutput, "unchanged", "Hidden output choices must not consume playback keys")
+  }
+
+  function test_closingOutputMenuPreservesSearchFocus() {
+    outputMenuOpen = true
+    searchField.forceActiveFocus()
+    outputMenuOpen = false
+    verify(searchField.activeFocus)
   }
 
   function test_barRightClick_data() {
