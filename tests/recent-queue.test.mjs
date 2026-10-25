@@ -3,7 +3,7 @@ import fs from "node:fs"
 import vm from "node:vm"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
-const functions = source.match(/  function (?:recordPlayed|startRecordPlayed|writeSelection)\([\s\S]*?\n  \}/g).join("\n")
+const functions = source.match(/  function (?:recordPlayed|startRecordPlayed|writeSelection|playlistStation)\([\s\S]*?\n  \}/g).join("\n")
 const complete = source.match(/id: historyProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const model = vm.createContext({})
 vm.runInContext(fs.readFileSync(new URL("../RadioModel.js", import.meta.url), "utf8"), model)
@@ -26,7 +26,7 @@ function session() {
     statePath: "/radio-state",
     historySelectionPath: "/history-selection.json",
     requestLocalStateReload() {},
-    historyPlaylistFile: {
+    playlistFile: {
       readSucceeded: false,
       reload() { this.readSucceeded = true },
       text() { return JSON.stringify(context.runtimeStations) },

@@ -3,7 +3,7 @@ import fs from "node:fs"
 import vm from "node:vm"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
-const functions = source.match(/  function (?:toggleFavorite|startFavorite|startNextFavorite|writeSelection|applyLocalState)\([\s\S]*?\n  \}/g).join("\n")
+const functions = source.match(/  function (?:toggleFavorite|startFavorite|startNextFavorite|writeSelection|applyLocalState|playlistStation)\([\s\S]*?\n  \}/g).join("\n")
 const complete = source.match(/id: stateProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const completeHistory = source.match(/id: historyProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const model = vm.createContext({})
@@ -21,6 +21,13 @@ function session() {
     RadioModel: model,
     remoteMode: true,
     displayStations: rows.slice(0, 2),
+    playingStationUuid: "",
+    runtimeStations: [],
+    playlistFile: {
+      readSucceeded: false,
+      reload() { this.readSucceeded = true },
+      text() { return JSON.stringify(context.runtimeStations) },
+    },
     pendingFavoriteRequests: [],
     pendingRecentRequest: null,
     localError: "",
@@ -97,6 +104,20 @@ repeated.context.toggleFavorite(rows[2].uuid)
 repeated.drain()
 assert.deepEqual([...repeated.saved.values()], [rows[2]],
   "Repeated toggles must cancel each other without losing another Favorite")
+
+for (const queued of [false, true]) {
+  const run = session()
+  if (queued) run.context.toggleFavorite(rows[0].uuid)
+  run.context.remoteMode = !queued
+  run.context.playingStationUuid = rows[2].uuid
+  run.context.runtimeStations = [rows[2]]
+  run.context.toggleFavorite(rows[2].uuid)
+  run.context.runtimeStations = [rows[1]]
+  run.context.playingStationUuid = rows[1].uuid
+  run.drain()
+  assert.deepEqual([...run.saved.values()], queued ? [rows[0], rows[2]] : [rows[2]],
+    "Favoriting the playing station retains its details outside the visible list when playback changes")
+}
 
 const failed = session()
 failed.context.toggleFavorite(rows[0].uuid)

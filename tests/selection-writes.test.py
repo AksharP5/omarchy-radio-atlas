@@ -1,4 +1,5 @@
 """Native selection writes must succeed before Play or Favorite uses them."""
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -19,10 +20,10 @@ if not quickshell:
 
 source = (project / "RadioAtlas.qml").read_text()
 functions = "\n".join(re.findall(
-    r"  function (?:writeSelection|playStation|toggleFavorite|startNextFavorite)\([\s\S]*?\n  \}", source))
+    r"  function (?:writeSelection|playStation|toggleFavorite|startNextFavorite|playlistStation)\([\s\S]*?\n  \}", source))
 views = "\n".join(re.search(
     rf"  FileView \{{\n    id: {name}[\s\S]*?\n  \}}", source).group()
-    for name in ["playSelectionFile", "favoriteSelectionFile"])
+    for name in ["playSelectionFile", "favoriteSelectionFile", "playlistFile"])
 writer = re.search(r"  Process \{\n    id: stateProcess[\s\S]*?\n  \}", source).group()
 writer = writer.replace("onExited: function(exitCode) {", 'onExited: function(exitCode) {\n      console.log("OPERATION_DONE")')
 old = dict(uuid="11111111-1234-1234-1234-111111111111", name="Old station", url="https://example.com/old")
@@ -62,6 +63,7 @@ import Quickshell.Io
 import "RadioModel.js" as RadioModel
 ShellRoot {
   id: root
+  property string runtimePath: RUNTIME
   property string playSelectionPath: PLAY_SELECTION
   property string favoriteSelectionPath: FAVORITE_SELECTION
   property string playerPath: PLAYER_PATH
@@ -71,6 +73,7 @@ ShellRoot {
   property string activePlayGeneration: "0"
   property string playerError: ""
   property bool remoteMode: true
+  property string playingStationUuid: ""
   property var displayStations: ROWS
   property var pendingFavoriteRequests: []
   property bool localReloadPending: false
@@ -105,7 +108,8 @@ WRITER
       if (request.action === "play") root.playStation(root.displayStations[0], "world", root.displayStations)
       else {
         root.remoteMode = request.remote !== false
-        root.toggleFavorite(root.displayStations[0].uuid)
+        root.playingStationUuid = request.playingUuid || ""
+        root.toggleFavorite(request.uuid || root.displayStations[0].uuid)
       }
       Qt.callLater(function() {
         console.log("SUBMITTED", JSON.stringify({label: request.label, playerError: root.playerError,
@@ -115,7 +119,7 @@ WRITER
   }
 }
 '''
-    replacements = dict(PLAY_SELECTION=str(runtime / "play-selection.json"),
+    replacements = dict(RUNTIME=str(runtime), PLAY_SELECTION=str(runtime / "play-selection.json"),
                         FAVORITE_SELECTION=str(runtime / "favorite-selection.json"),
                         PLAYER_PATH=wrappers["player"], STATE_PATH=wrappers["state"], CONTROL=str(control))
     replacements = {key: json.dumps(value) for key, value in replacements.items()}
@@ -217,9 +221,34 @@ WRITER
             (runtime / "playlist.json").write_text(json.dumps([current]))
             (runtime / "favorite-selection.json").write_text(json.dumps([old]))
             count = len(calls.read_text().splitlines())
+            completed = log_path.read_text().count("OPERATION_DONE")
             submit("favorite-local", "favorite", blocked / "snapshot.json", remote=False, rows=[current])
             wait_for(lambda: len(calls.read_text().splitlines()) == count + 1)
+            wait_for(lambda: log_path.read_text().count("OPERATION_DONE") == completed + 1)
             assert json.loads(state.read_text())["favorites"] == [current], state.read_text()
+            # A buffering station has no Recent entry to fall back to after playback changes.
+            saved = dict(favorites=[], recent=[], volume=23)
+            state.write_text(json.dumps(saved))
+            following = dict(current, uuid="22222222-1234-1234-1234-222222222222",
+                             name="Following", url="https://example.com/following")
+            for name, rows in [("playlist", [current]), ("results", [following]), ("world", [])]:
+                (runtime / f"{name}.json").write_text(json.dumps(rows))
+            count = len(calls.read_text().splitlines())
+            completed = log_path.read_text().count("OPERATION_DONE")
+            with (data / "state.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                try:
+                    report = submit("favorite-playing", "favorite", runtime / "favorite-selection.json",
+                                    rows=[following], uuid=current["uuid"], playingUuid=current["uuid"])
+                    assert report["busy"], report
+                    (runtime / "playlist.json").write_text(json.dumps([following]))
+                finally:
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+            wait_for(lambda: len(calls.read_text().splitlines()) == count + 1)
+            wait_for(lambda: log_path.read_text().count("OPERATION_DONE") == completed + 1)
+            result = json.loads(calls.read_text().splitlines()[-1])
+            assert result["code"] == 0, result
+            assert json.loads(state.read_text()) == dict(saved, favorites=[current]), state.read_text()
         finally:
             process.terminate()
             try:
