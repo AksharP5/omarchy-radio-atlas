@@ -67,7 +67,8 @@ normalize='def number_or_null: try tonumber catch null;
     uuid: ((.stationuuid // "") | compact(64)),
     name: (((.name // "Unknown station") | clean(160)) as $name
       | if $name == "" then "Unknown station" else $name end),
-    url: ((.url_resolved // .url // "") | compact(2048)),
+    url: ((.url_resolved | compact(2048)) as $resolved
+      | if $resolved == "" then (.url | compact(2048)) else $resolved end),
     homepage: ((.homepage // "") | compact(2048)),
     favicon: ((.favicon // "") | compact(2048)),
     country: ((.country // "") | clean(100)),
