@@ -735,6 +735,23 @@ Item {
     outputsProcess.running = true
   }
 
+  function setAudioOutputs(outputs) {
+    var focusedId = outputList.activeFocus && outputList.currentItem
+      ? outputList.currentItem.modelData.id : null
+    audioOutputs = outputs
+    if (focusedId === null) return
+    Qt.callLater(function() {
+      if (!root.outputMenuOpen || !outputList.activeFocus) return
+      var index = root.outputChoices.findIndex(function(row) { return row.id === focusedId })
+      if (index < 0) {
+        outputButton.forceActiveFocus()
+        return
+      }
+      outputList.currentIndex = index
+      outputList.positionViewAtIndex(index, ListView.Contain)
+    })
+  }
+
   function selectOutput(value) {
     var sink = String(value || "")
     if (outputProcess.running) return
@@ -1238,7 +1255,7 @@ Item {
     onExited: function(exitCode) {
       if (exitCode !== 0) {
         root.outputsError = "Audio outputs are unavailable"
-        root.audioOutputs = []
+        root.setAudioOutputs([])
         return
       }
       var parsed = null
@@ -1250,10 +1267,10 @@ Item {
       }
       if (parsed === null) {
         root.outputsError = "Audio outputs are unavailable"
-        root.audioOutputs = []
+        root.setAudioOutputs([])
         return
       }
-      root.audioOutputs = parsed.filter(function(row) {
+      root.setAudioOutputs(parsed.filter(function(row) {
         return row && typeof row === "object"
           && /^[A-Za-z0-9._:+-]{1,160}$/.test(String(row.id || ""))
       }).map(function(row) {
@@ -1261,7 +1278,7 @@ Item {
           id: String(row.id),
           label: String(row.label || row.id).replace(/[\r\n\t]+/g, " ").slice(0, 160)
         }
-      })
+      }))
       root.outputsError = ""
     }
   }
@@ -2500,7 +2517,10 @@ Item {
                   Accessible.role: Accessible.Button
                   Accessible.name: outputOption.modelData.label
                   onActiveFocusChanged: {
-                    if (activeFocus) outputList.positionViewAtIndex(index, ListView.Contain)
+                    if (activeFocus) {
+                      outputList.currentIndex = index
+                      outputList.positionViewAtIndex(index, ListView.Contain)
+                    }
                   }
                   onClicked: root.selectOutput(outputOption.modelData.id)
                 }
