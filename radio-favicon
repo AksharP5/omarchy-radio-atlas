@@ -72,7 +72,7 @@ def run_curl(url, host, port, addresses, output):
     pinned = ",".join(f"[{address}]" if ":" in address else address for address in addresses)
     hostname = f"[{host}]" if ":" in host else host
     result = subprocess.run(
-        ["setpriv", "--pdeathsig", "TERM", "curl", "-sS", "--globoff", "--proto", "=http,https", "--noproxy", "*",
+        ["setpriv", "--pdeathsig", "TERM", "curl", "-q", "-sS", "--globoff", "--proto", "=http,https", "--noproxy", "*",
          "--max-time", str(TIMEOUT_SECONDS), "--max-filesize", str(MAX_BYTES),
          "--resolve", f"{hostname}:{port}:{pinned}",
          "-A", "Mozilla/5.0 RadioAtlas", "-o", output,

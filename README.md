@@ -208,7 +208,8 @@ Station artwork is downloaded once per URL into
 `~/.cache/omarchy-radio-atlas/favicons`, or under `XDG_CACHE_HOME` when set.
 Both the player and desktop media controls use the validated local image.
 Downloads check every redirect and reject private or locally routed addresses,
-with the same `allowFakeIp` opt-in as playback. Images are limited to 1 MiB;
+with the same `allowFakeIp` opt-in as playback. Downloads ignore user curl
+configuration so these checks apply to every request. Images are limited to 1 MiB;
 missing or rejected artwork leaves the player text in place. Artwork downloads
 run independently of the window and do not block media controls.
 

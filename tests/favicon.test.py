@@ -3,6 +3,7 @@
 import importlib.machinery
 import importlib.util
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import os
 import socket
 import sys
 import tempfile
@@ -117,6 +118,53 @@ class FaviconTests(unittest.TestCase):
                 radio_favicon.fetch("http://icons.example/a.png", self.target, curl=curl)
         self.assertFalse(Path(self.target).exists())
         self.assertFalse(Path(self.target + ".tmp").exists())
+
+    def test_curl_config_cannot_follow_redirects_without_validation(self):
+        image = b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                if self.path == "/redirect":
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/private.svg")
+                else:
+                    self.send_response(200)
+                self.end_headers()
+                if self.path != "/redirect":
+                    self.wfile.write(image)
+
+            def log_message(self, *_):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        public_endpoints = proxy.public_endpoints
+
+        def endpoints(host, port, **kwargs):
+            if host == "icons.example":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, ("127.0.0.1", port))]
+            return public_endpoints(host, port, **kwargs)
+
+        Path(self.directory.name, ".curlrc").write_text("location\n")
+        try:
+            # Only the initial host is mapped to the fixture. Redirects must
+            # still go through the real public-destination checks.
+            with (
+                patch.dict(os.environ, {"CURL_HOME": self.directory.name}),
+                patch.object(proxy, "public_endpoints", side_effect=endpoints),
+            ):
+                with self.assertRaises(radio_favicon.FaviconError):
+                    radio_favicon.fetch(f"http://icons.example:{server.server_port}/redirect", self.target)
+            self.assertEqual(requests, ["/redirect"])
+            self.assertFalse(Path(self.target).exists())
+            self.assertEqual(list(Path(self.directory.name).glob(".favicon.*")), [])
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join()
 
     def test_encoded_hostnames_are_rejected_before_resolution(self):
         for host in ("%31%32%37.%30.%30.%31", "％３１％３２％３７．％３０．％３０．％３１"):
