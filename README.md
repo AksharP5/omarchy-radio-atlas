@@ -134,7 +134,8 @@ The speaker button next to the volume slider chooses where radio plays. It lists
 every PipeWire output device through `pactl`, which ships with Omarchy's
 PipeWire setup. "System default" follows the desktop's current output, the
 choice is saved alongside the volume in `~/.local/share/radio-atlas/state.json`,
-and switching while playing takes effect immediately. When a selected output
+and switching while playing takes effect immediately. Tab and Shift+Tab keep the
+focused output visible as you move through a long list. When a selected output
 disappears during playback, WirePlumber may pause the player through MPRIS.
 Radio Atlas distinguishes that automatic pause from a deliberate media-control
 pause and resumes once when the same selected output returns. Playback already

@@ -372,6 +372,45 @@ TestCase {
     verify(outputList.contentY > 0, "The last output must be reached by scrolling")
   }
 
+  function test_outputKeyboardScrolls() {
+    width = 341
+    height = 362
+    Style.fontBaseSize = 17
+    audioOutputs = Array.from({ length: 20 }, function(_, i) {
+      return { id: "sink-" + i, label: "Output " + (i + 1) }
+    })
+    outputMenuOpen = true
+    verify(waitForPolish(root.Window.window))
+    outputButton.forceActiveFocus()
+    for (var i = 0; i < outputChoices.length; i++) {
+      keyClick(Qt.Key_Tab)
+      verify(waitForPolish(root.Window.window))
+      verify(waitForRendering(outputList))
+      var option = outputList.itemAtIndex(i)
+      verify(option !== null && option.activeFocus, "Tab must reach output " + i)
+      var point = option.mapToItem(outputList, 0, 0)
+      verify(point.y >= -0.5 && point.y + option.height <= outputList.height + 0.5,
+        "Focused output " + i + " must be visible; y=" + point.y + ", height=" + outputList.height)
+    }
+    keyClick(Qt.Key_Return)
+    compare(lastOutput, "sink-19")
+    outputMenuOpen = true
+    verify(waitForPolish(root.Window.window))
+    outputList.itemAtIndex(20).forceActiveFocus()
+    for (var i = 19; i >= 0; i--) {
+      keyClick(Qt.Key_Tab, Qt.ShiftModifier)
+      verify(waitForPolish(root.Window.window))
+      verify(waitForRendering(outputList))
+      var option = outputList.itemAtIndex(i)
+      verify(option !== null && option.activeFocus, "Shift+Tab must reach output " + i)
+      var point = option.mapToItem(outputList, 0, 0)
+      verify(point.y >= -0.5 && point.y + option.height <= outputList.height + 0.5,
+        "Focused output " + i + " must remain visible when navigating upward")
+    }
+    keyClick(Qt.Key_Space)
+    compare(lastOutput, "")
+  }
+
   function test_barRightClick_data() {
     return [
       { tag: "playing", running: true, paused: false, stopped: false, action: "stop" },

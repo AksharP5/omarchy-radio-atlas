@@ -2468,6 +2468,8 @@ Item {
                     - Style.spacing.md * 2 - outputMenuTitle.height - outputMenuColumn.spacing))
                 model: root.outputChoices
                 spacing: Style.spacing.xs
+                // Retain output buttons so scrolling cannot reorder Tab traversal.
+                cacheBuffer: contentHeight
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
 
@@ -2477,6 +2479,7 @@ Item {
 
                 delegate: Button {
                   id: outputOption
+                  required property int index
                   required property var modelData
                   width: ListView.view.width
                   leftAlign: true
@@ -2487,6 +2490,9 @@ Item {
                   accent: root.accent
                   Accessible.role: Accessible.Button
                   Accessible.name: outputOption.modelData.label
+                  onActiveFocusChanged: {
+                    if (activeFocus) outputList.positionViewAtIndex(index, ListView.Contain)
+                  }
                   onClicked: root.selectOutput(outputOption.modelData.id)
                 }
               }
