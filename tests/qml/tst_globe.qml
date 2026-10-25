@@ -245,16 +245,52 @@ TestCase {
     item.highlightedStation = rows[3]
     item.colorConversions.count = 0
     var fills = 0
+    var brushChanges = 0
     var context = {
       beginPath: function() {},
       arc: function() {},
       fill: function() { fills += 1 },
       stroke: function() {}
     }
+    Object.defineProperty(context, "fillStyle", {
+      set: function(value) { brushChanges++ }
+    })
     item.paintSignals(context)
     compare(fills, 5000)
     compare(item.colorConversions.count, 3)
+    compare(brushChanges, 5)
     compare(context.globalAlpha, 1)
+  }
+
+  function test_countryDrawingStylesAreReused() {
+    var item = createTemporaryObject(countedGlobe, testCase)
+    var countries = []
+    for (var i = 0; i < 100; i++) countries.push({
+      properties: { code: String.fromCharCode(65 + Math.floor(i / 26)) + String.fromCharCode(65 + i % 26) },
+      geometry: { type: "Polygon", coordinates: [[[-3, -3], [3, -3], [3, 3], [-3, 3], [-3, -3]]] }
+    })
+    item.countries = countries
+    item.centreLatitude = 0
+    item.centreLongitude = 0
+    item.activeCountryCode = "BA"
+    var styleChanges = 0
+    var fillColor = null
+    var fills = []
+    var context = {
+      beginPath: function() {}, moveTo: function() {}, lineTo: function() {}, closePath: function() {},
+      fill: function() { fills.push(fillColor) }, stroke: function() {}
+    }
+    for (var style of ["fillStyle", "strokeStyle", "lineWidth"])
+      Object.defineProperty(context, style, {
+        set: style === "fillStyle" ? function(value) { styleChanges++; fillColor = value }
+          : function(value) { styleChanges++ }
+      })
+    item.paintCountries(context, 400, 300, item.radius())
+    compare(fills.length, 100)
+    compare(styleChanges, 9)
+    verify(Qt.colorEqual(fills[0], item.withAlpha(item.landColor, 0.9)))
+    verify(Qt.colorEqual(fills[26], item.withAlpha(item.accentColor, 0.38)))
+    verify(Qt.colorEqual(fills[27], item.withAlpha(item.landColor, 0.9)))
   }
 
   // Keep the original per-marker brush-alpha path as a pixel reference.

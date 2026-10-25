@@ -327,12 +327,17 @@ Item {
     var landStroke = withAlpha(outlineColor, 0.34)
     var activeFill = withAlpha(accentColor, 0.38)
     var activeStroke = withAlpha(accentColor, 0.95)
+    ctx.fillStyle = landFill
+    ctx.strokeStyle = landStroke
+    ctx.lineWidth = 0.7
     for (var i = 0; i < rows.length; i++) {
       var country = rows[i]
       var active = country.code === activeCode
-      ctx.fillStyle = active ? activeFill : landFill
-      ctx.strokeStyle = active ? activeStroke : landStroke
-      ctx.lineWidth = active ? 1.5 : 0.7
+      if (active) {
+        ctx.fillStyle = activeFill
+        ctx.strokeStyle = activeStroke
+        ctx.lineWidth = 1.5
+      }
 
       for (var ringIndex = 0; ringIndex < country.rings.length; ringIndex++) {
         var geometry = country.rings[ringIndex]
@@ -424,6 +429,11 @@ Item {
           previousDepth = currentDepth
         }
       }
+      if (active) {
+        ctx.fillStyle = landFill
+        ctx.strokeStyle = landStroke
+        ctx.lineWidth = 0.7
+      }
     }
   }
 
@@ -448,6 +458,7 @@ Item {
     var activeColor = accentColor
     var selectedOutline = withAlpha(activeColor, 0.72)
     var highlightedOutline = withAlpha(activeColor, 0.92)
+    ctx.fillStyle = markerColor
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i]
       var horizontal = row.worldX * cosLongitude + row.worldY * sinLongitude
@@ -470,7 +481,7 @@ Item {
       var markerRadius = selected ? 4.2 : (highlighted ? 3.7 : 1.7 + depth * 1.25)
       ctx.beginPath()
       ctx.arc(row.screenX, row.screenY, markerRadius, 0, Math.PI * 2)
-      ctx.fillStyle = selected || highlighted ? activeColor : markerColor
+      if (selected || highlighted) ctx.fillStyle = activeColor
       ctx.globalAlpha = selected || highlighted ? 1 : 0.42 + depth * 0.48
       ctx.fill()
 
@@ -481,6 +492,7 @@ Item {
         ctx.strokeStyle = selected ? selectedOutline : highlightedOutline
         ctx.lineWidth = selected ? 1.2 : 1.4
         ctx.stroke()
+        ctx.fillStyle = markerColor
       }
     }
     ctx.globalAlpha = 1
