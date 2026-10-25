@@ -22,6 +22,10 @@ cleanup() {
   [[ -z $proxy_pid ]] || kill "$proxy_pid" 2>/dev/null || true
   [[ -z $proxy_pid ]] || wait "$proxy_pid" 2>/dev/null || true
   rm -f "$proxy_socket"
+  if jq -e '.running == true' "$runtime_dir/status.json" >/dev/null 2>&1; then
+    # Stop holds player.lock until we exit, so refresh status without waiting on it.
+    "$script_dir/radio-player" status >/dev/null &
+  fi
   exit "$exit_code"
 }
 trap cleanup EXIT INT TERM

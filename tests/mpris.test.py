@@ -546,6 +546,11 @@ class SessionTest(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
+            # Session exit can leave the asynchronous status refresh in its group.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
         bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--print-address=1"],
                                stdout=subprocess.PIPE, stderr=log, text=True,
@@ -583,6 +588,7 @@ class SessionTest(unittest.TestCase):
             "--load-scripts=no", "--idle=yes", "--ao=null",
             f"--input-ipc-server={self.runtime / 'mpv.sock'}", *arguments,
         ], env=self.env, stdout=self.log, stderr=self.log, start_new_session=True)
+        self.session = session
         self.addCleanup(self.stop, session)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and session.poll() is None:
@@ -608,6 +614,65 @@ class SessionTest(unittest.TestCase):
 
     def test_session_starts_mpris_with_a_shadowed_path_python(self):
         self.start_session()
+
+    def assert_session_exit_refreshes_status(self, target):
+        status = self.runtime / "status.json"
+        queue = self.runtime / "playlist.json"
+        queue.write_text(json.dumps([dict(uuid="station", name="Station")]))
+        self.env.update(RADIO_ATLAS_STATUS_FILE=str(status), RADIO_ATLAS_QUEUE_FILE=str(queue))
+        saved = self.root / "data/radio-atlas/state.json"
+        saved.parent.mkdir(parents=True)
+        saved.write_text(json.dumps(dict(favorites=[], recent=[], volume=23, output="")))
+        tone = self.root / "tone.wav"
+        with wave.open(str(tone), "wb") as output:
+            output.setnchannels(1)
+            output.setsampwidth(2)
+            output.setframerate(8000)
+            output.writeframes(b"\0\0" * 8000 * 30)
+
+        self.start_session("--volume=23", f"--script={PROJECT / 'radio-status.lua'}", str(tone))
+        start_time = Path(f"/proc/{self.session.pid}/stat").read_text().split()[21]
+        (self.runtime / "player.pid").write_text(f"{self.session.pid} {start_time}\n")
+        self.wait(lambda: status.exists() and json.loads(status.read_text()).get("loaded"))
+        if target == "stop":
+            # Stop waits for session cleanup while holding player.lock.
+            result = subprocess.run([str(PROJECT / "radio-player"), "stop"], env=self.env,
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        else:
+            pending = [self.session.pid]
+            matches = []
+            while pending:
+                pid = pending.pop()
+                process = Path(f"/proc/{pid}")
+                pending.extend(int(child) for child in
+                               (process / f"task/{pid}/children").read_text().split())
+                arguments = (process / "cmdline").read_bytes().split(b"\0")
+                if any(Path(os.fsdecode(argument)).name == target for argument in arguments[:2]):
+                    matches.append(pid)
+            self.assertEqual(len(matches), 1, matches)
+            with (self.runtime / "player.lock").open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                os.kill(matches[0], signal.SIGKILL)
+                self.session.wait(timeout=5)
+        code = self.session.wait(timeout=5)
+        if target == "stop":
+            self.assertEqual(code, 0, "Stop must let session cleanup finish without force-killing it")
+        self.wait(lambda: json.loads(status.read_text()).get("running") is False)
+        final = json.loads(status.read_text())
+        self.assertFalse(final["loaded"])
+        self.assertEqual(final["station"].get("uuid", ""), "")
+        self.assertEqual(final["title"], "")
+        self.assertEqual(final["volume"], 23)
+
+    def test_session_exit_refreshes_status_after_mpv_is_killed(self):
+        self.assert_session_exit_refreshes_status("mpv")
+
+    def test_session_exit_refreshes_status_after_mpris_is_killed(self):
+        self.assert_session_exit_refreshes_status("radio-mpris")
+
+    def test_cli_stop_does_not_wait_for_the_exit_status_refresh(self):
+        self.assert_session_exit_refreshes_status("stop")
 
     def test_fake_ip_artwork_reaches_mpris_and_both_status_paths_without_blocking_controls(self):
         state = self.root / "data/radio-atlas/state.json"

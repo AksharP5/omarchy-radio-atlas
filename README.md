@@ -112,6 +112,10 @@ stations. A repeated opening clip can come from the station's stream server;
 retrying may play that same clip again. Radio Browser supplies station listings,
 not the audio streams.
 
+If the player or its media-control bridge exits unexpectedly, the bar and panel
+clear their playing status once session cleanup finishes. Select a station to
+start playback again.
+
 For M3U and PLS station playlists, Radio Atlas plays the first stream and keeps
 Next/Previous moving between stations. Empty playlists show a playback failure
 without switching stations.
