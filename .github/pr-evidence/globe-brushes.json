@@ -1,0 +1,1360 @@
+{
+  "baseline": "f133ed918591820d49c666923d724fcbd7d8d17f",
+  "environment": {
+    "cpu": "Intel Core i5-14400F",
+    "logical_cpu": 0,
+    "qt": "6.12.0",
+    "backend": "software/offscreen",
+    "width": 800,
+    "height": 600,
+    "stations": 5000,
+    "countries": 177,
+    "warmup_frames": 60,
+    "measured_frames_per_view_per_run": 180
+  },
+  "runs": [
+    {
+      "label": "final-baseline-1",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.05,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.17222222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.7055555555555555,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 2.2,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          },
+          "total": {
+            "mean": 4.144444444444445,
+            "median": 4,
+            "p95": 5,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.06666666666666667,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.12222222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.711111111111111,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.7222222222222222,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.6333333333333333,
+            "median": 3,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.06111111111111111,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.09444444444444444,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6833333333333333,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.49444444444444446,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.3333333333333335,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    },
+    {
+      "label": "final-brush-1",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.05555555555555555,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.1388888888888889,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.65,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 1.7444444444444445,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "total": {
+            "mean": 3.6,
+            "median": 4,
+            "p95": 4,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.09444444444444444,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.15,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.5944444444444446,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.6611111111111111,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.5055555555555555,
+            "median": 3,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.06666666666666667,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.15,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.5055555555555555,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.3222222222222224,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    },
+    {
+      "label": "final-brush-2",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.05555555555555555,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.12777777777777777,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6111111111111112,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 1.7666666666666666,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "total": {
+            "mean": 3.566666666666667,
+            "median": 4,
+            "p95": 4,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.08333333333333333,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.15555555555555556,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.5888888888888888,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.6611111111111111,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.488888888888889,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.06666666666666667,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.14444444444444443,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6277777777777778,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.4722222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.3222222222222224,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    },
+    {
+      "label": "final-baseline-2",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.044444444444444446,
+            "median": 0,
+            "p95": 0,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.17222222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.7,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 2.172222222222222,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          },
+          "total": {
+            "mean": 4.094444444444444,
+            "median": 4,
+            "p95": 5,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.044444444444444446,
+            "median": 0,
+            "p95": 0,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.1,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.711111111111111,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.8,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.672222222222222,
+            "median": 3,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.05555555555555555,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.16666666666666666,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6388888888888888,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.4722222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.3333333333333335,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    },
+    {
+      "label": "final-baseline-3",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.06666666666666667,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.12777777777777777,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.7555555555555555,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 2.1333333333333333,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          },
+          "total": {
+            "mean": 4.094444444444444,
+            "median": 4,
+            "p95": 5,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.09444444444444444,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.17777777777777778,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.7666666666666666,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.8333333333333334,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.8722222222222222,
+            "median": 3,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.044444444444444446,
+            "median": 0,
+            "p95": 0,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.18333333333333332,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.7666666666666666,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.5222222222222223,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.5166666666666666,
+            "median": 3,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    },
+    {
+      "label": "final-brush-3",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.03333333333333333,
+            "median": 0,
+            "p95": 0,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.1388888888888889,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6944444444444444,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 1.8111111111111111,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "total": {
+            "mean": 3.683333333333333,
+            "median": 4,
+            "p95": 4,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.06111111111111111,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.13333333333333333,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6333333333333333,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.6777777777777778,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.5055555555555555,
+            "median": 3,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.05555555555555555,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.13333333333333333,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6055555555555556,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.45555555555555555,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.2555555555555555,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    },
+    {
+      "label": "final-brush-4",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.06666666666666667,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.17222222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.9833333333333334,
+            "median": 2,
+            "p95": 4,
+            "count": 180
+          },
+          "signals": {
+            "mean": 2.1222222222222222,
+            "median": 2,
+            "p95": 4,
+            "count": 180
+          },
+          "total": {
+            "mean": 4.366666666666666,
+            "median": 4,
+            "p95": 8,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.07777777777777778,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.13333333333333333,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6222222222222222,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.65,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.4944444444444445,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.03333333333333333,
+            "median": 0,
+            "p95": 0,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.16111111111111112,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6166666666666667,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.4722222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.2944444444444443,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    },
+    {
+      "label": "final-baseline-4",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.07222222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.18888888888888888,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6611111111111112,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 2.183333333333333,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          },
+          "total": {
+            "mean": 4.111111111111111,
+            "median": 4,
+            "p95": 5,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.05555555555555555,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.15,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.7222222222222223,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.7666666666666667,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.7,
+            "median": 3,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.06111111111111111,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.12777777777777777,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.761111111111111,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.4722222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.422222222222222,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    },
+    {
+      "label": "final-baseline-5",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.05,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.12222222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.75,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 2.1666666666666665,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          },
+          "total": {
+            "mean": 4.088888888888889,
+            "median": 4,
+            "p95": 5,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.03333333333333333,
+            "median": 0,
+            "p95": 0,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.1388888888888889,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.7444444444444445,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.7055555555555556,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.6222222222222222,
+            "median": 3,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.05555555555555555,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.16111111111111112,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.7166666666666666,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.4444444444444444,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.3944444444444444,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    },
+    {
+      "label": "final-brush-5",
+      "result": 0,
+      "measurements": [
+        {
+          "scenario": "world",
+          "prepare": {
+            "mean": 0.09444444444444444,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.12222222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.7333333333333334,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 1.7777777777777777,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "total": {
+            "mean": 3.738888888888889,
+            "median": 4,
+            "p95": 4,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "regional",
+          "prepare": {
+            "mean": 0.05,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.12777777777777777,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6944444444444444,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.6888888888888889,
+            "median": 1,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.566666666666667,
+            "median": 3,
+            "p95": 3,
+            "count": 180
+          }
+        },
+        {
+          "scenario": "deep",
+          "prepare": {
+            "mean": 0.07222222222222222,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "grid": {
+            "mean": 0.18888888888888888,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "countries": {
+            "mean": 1.6388888888888888,
+            "median": 2,
+            "p95": 2,
+            "count": 180
+          },
+          "signals": {
+            "mean": 0.48333333333333334,
+            "median": 0,
+            "p95": 1,
+            "count": 180
+          },
+          "total": {
+            "mean": 2.388888888888889,
+            "median": 2,
+            "p95": 3,
+            "count": 180
+          }
+        }
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "scenario": "world",
+      "baseline": {
+        "total": {
+          "mean_ms": 4.1066666666666665,
+          "run_mean_range_ms": [
+            4.088888888888889,
+            4.144444444444445
+          ],
+          "p95_range_ms": [
+            5,
+            5
+          ]
+        },
+        "countries": {
+          "mean_ms": 1.7144444444444447,
+          "run_mean_range_ms": [
+            1.6611111111111112,
+            1.7555555555555555
+          ],
+          "p95_range_ms": [
+            2,
+            2
+          ]
+        },
+        "signals": {
+          "mean_ms": 2.1711111111111108,
+          "run_mean_range_ms": [
+            2.1333333333333333,
+            2.2
+          ],
+          "p95_range_ms": [
+            3,
+            3
+          ]
+        }
+      },
+      "brush": {
+        "total": {
+          "mean_ms": 3.7911111111111113,
+          "run_mean_range_ms": [
+            3.566666666666667,
+            4.366666666666666
+          ],
+          "p95_range_ms": [
+            4,
+            8
+          ]
+        },
+        "countries": {
+          "mean_ms": 1.7344444444444445,
+          "run_mean_range_ms": [
+            1.6111111111111112,
+            1.9833333333333334
+          ],
+          "p95_range_ms": [
+            2,
+            4
+          ]
+        },
+        "signals": {
+          "mean_ms": 1.8444444444444443,
+          "run_mean_range_ms": [
+            1.7444444444444445,
+            2.1222222222222222
+          ],
+          "p95_range_ms": [
+            2,
+            4
+          ]
+        }
+      },
+      "total_reduction_percent": 7.683982683982671,
+      "signal_reduction_percent": 15.046059365404297
+    },
+    {
+      "scenario": "regional",
+      "baseline": {
+        "total": {
+          "mean_ms": 2.7,
+          "run_mean_range_ms": [
+            2.6222222222222222,
+            2.8722222222222222
+          ],
+          "p95_range_ms": [
+            3,
+            3
+          ]
+        },
+        "countries": {
+          "mean_ms": 1.731111111111111,
+          "run_mean_range_ms": [
+            1.711111111111111,
+            1.7666666666666666
+          ],
+          "p95_range_ms": [
+            2,
+            2
+          ]
+        },
+        "signals": {
+          "mean_ms": 0.7655555555555555,
+          "run_mean_range_ms": [
+            0.7055555555555556,
+            0.8333333333333334
+          ],
+          "p95_range_ms": [
+            1,
+            1
+          ]
+        }
+      },
+      "brush": {
+        "total": {
+          "mean_ms": 2.5122222222222224,
+          "run_mean_range_ms": [
+            2.488888888888889,
+            2.566666666666667
+          ],
+          "p95_range_ms": [
+            3,
+            3
+          ]
+        },
+        "countries": {
+          "mean_ms": 1.6266666666666665,
+          "run_mean_range_ms": [
+            1.5888888888888888,
+            1.6944444444444444
+          ],
+          "p95_range_ms": [
+            2,
+            2
+          ]
+        },
+        "signals": {
+          "mean_ms": 0.6677777777777778,
+          "run_mean_range_ms": [
+            0.65,
+            0.6888888888888889
+          ],
+          "p95_range_ms": [
+            1,
+            1
+          ]
+        }
+      },
+      "total_reduction_percent": 6.954732510288064,
+      "signal_reduction_percent": 12.772133526850505
+    },
+    {
+      "scenario": "deep",
+      "baseline": {
+        "total": {
+          "mean_ms": 2.4,
+          "run_mean_range_ms": [
+            2.3333333333333335,
+            2.5166666666666666
+          ],
+          "p95_range_ms": [
+            3,
+            3
+          ]
+        },
+        "countries": {
+          "mean_ms": 1.7133333333333334,
+          "run_mean_range_ms": [
+            1.6388888888888888,
+            1.7666666666666666
+          ],
+          "p95_range_ms": [
+            2,
+            2
+          ]
+        },
+        "signals": {
+          "mean_ms": 0.4811111111111111,
+          "run_mean_range_ms": [
+            0.4444444444444444,
+            0.5222222222222223
+          ],
+          "p95_range_ms": [
+            1,
+            1
+          ]
+        }
+      },
+      "brush": {
+        "total": {
+          "mean_ms": 2.316666666666667,
+          "run_mean_range_ms": [
+            2.2555555555555555,
+            2.388888888888889
+          ],
+          "p95_range_ms": [
+            3,
+            3
+          ]
+        },
+        "countries": {
+          "mean_ms": 1.6177777777777778,
+          "run_mean_range_ms": [
+            1.6,
+            1.6388888888888888
+          ],
+          "p95_range_ms": [
+            2,
+            2
+          ]
+        },
+        "signals": {
+          "mean_ms": 0.47777777777777775,
+          "run_mean_range_ms": [
+            0.45555555555555555,
+            0.5055555555555555
+          ],
+          "p95_range_ms": [
+            1,
+            1
+          ]
+        }
+      },
+      "total_reduction_percent": 3.47222222222221,
+      "signal_reduction_percent": 0.6928406466512715
+    }
+  ],
+  "render_comparison": [
+    {
+      "scenario": "africa-dark",
+      "identical_png": true
+    },
+    {
+      "scenario": "africa-light",
+      "identical_png": true
+    },
+    {
+      "scenario": "africa-zoom-dark",
+      "identical_png": true
+    },
+    {
+      "scenario": "africa-zoom-light",
+      "identical_png": true
+    },
+    {
+      "scenario": "asia-dark",
+      "identical_png": true
+    },
+    {
+      "scenario": "asia-light",
+      "identical_png": true
+    },
+    {
+      "scenario": "deep-dark",
+      "identical_png": true
+    },
+    {
+      "scenario": "deep-light",
+      "identical_png": true
+    },
+    {
+      "scenario": "north-dark",
+      "identical_png": true
+    },
+    {
+      "scenario": "north-light",
+      "identical_png": true
+    },
+    {
+      "scenario": "pacific-dark",
+      "identical_png": true
+    },
+    {
+      "scenario": "pacific-light",
+      "identical_png": true
+    },
+    {
+      "scenario": "russia-dark",
+      "identical_png": true
+    },
+    {
+      "scenario": "russia-light",
+      "identical_png": true
+    },
+    {
+      "scenario": "south-dark",
+      "identical_png": true
+    },
+    {
+      "scenario": "south-light",
+      "identical_png": true
+    }
+  ]
+}
