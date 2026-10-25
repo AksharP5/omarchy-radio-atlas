@@ -143,8 +143,11 @@ PipeWire setup. "System default" follows the desktop's current output, the
 choice is saved alongside the volume in `~/.local/share/radio-atlas/state.json`,
 and switching while playing takes effect immediately. Tab and Shift+Tab keep the
 focused output visible as you move through a long list. After choosing an output,
-Space and Enter return to playback controls. When a selected output
-disappears during playback, WirePlumber may pause the player through MPRIS.
+Space and Enter return to playback controls.
+The background device refresh keeps the same output focused when devices change
+or reorder. If that focused output disappears, focus returns to the speaker button.
+When a selected output disappears during playback, WirePlumber may pause the
+player through MPRIS.
 Radio Atlas distinguishes that automatic pause from a deliberate media-control
 pause and resumes once when the same selected output returns. Playback already
 paused before removal stays paused. A manual Pause, including another Pause while

@@ -163,8 +163,6 @@ sed -n '/id: outputOption/,/^                }/p' "$project_dir/RadioAtlas.qml" 
 rg -q 'property string playerTitle: ""' "$project_dir/RadioAtlas.qml"
 sed -n '/function applyPlayerState/,/^  }/p' "$project_dir/RadioAtlas.qml" \
   | rg -Fq 'playerTitle = String(state.title'
-[[ $(sed -n '/id: outputsProcess/,/^  }/p' "$project_dir/RadioAtlas.qml" \
-  | rg -c -F 'root.audioOutputs = []') == 2 ]]
 rg -q 'audio-device' "$project_dir/radio-status.lua"
 rg -q 'maximumLength: 128' "$project_dir/RadioAtlas.qml"
 rg -Fq 'Math.min(1.5, Math.max(0.7, globeRadius / 500))' "$project_dir/Globe.qml"

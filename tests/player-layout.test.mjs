@@ -28,6 +28,8 @@ assert.ok(closing > opening, "Could not find the end of the production player pa
 const panel = source.slice(declaration.index, closing)
 const outputMenu = source.match(/          MouseArea \{\n            visible: root.outputMenuOpen[\s\S]*?(?=\n        \}\n      \}\n\n      Flickable)/)?.[0]
 assert.ok(outputMenu, "Could not find the production output menu")
+const outputFunctions = source.match(/  function (?:refreshOutputs|toggleOutputMenu|setAudioOutputs)\([\s\S]*?\n  \}/g).join("\n")
+const outputsComplete = source.match(/id: outputsProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const localPaths = source.match(/^  readonly property string (?:fetchPath|playerPath|statePath|windowPath):[^\n]*(?:\n    [^\n]+)?/gm)
 const countriesPath = source.match(/    path: ([^\n]*countries\.json[^\n]*)/)[1]
 const countryNamesPath = source.match(/    path: ([^\n]*country-search\.json[^\n]*)/)[1]
@@ -98,7 +100,7 @@ TestCase {
   property string lastOutput: ""
   readonly property var outputChoices: [{ id: "", label: "System default" }].concat(audioOutputs)
   function outputLabel(sink) { return sink }
-  function toggleOutputMenu() { outputMenuOpen = !outputMenuOpen }
+  ${outputFunctions}
   function selectOutput(sink) { lastOutput = sink; outputMenuOpen = false }
   property color foreground: "white"
   property color background: "black"
@@ -117,7 +119,15 @@ TestCase {
   QtObject { id: stopProcess; property bool running: false }
   QtObject { id: playerActionProcess; property bool running: false }
   QtObject { id: outputProcess; property bool running: false }
-  QtObject { id: outputsProcess; property bool running: false }
+  QtObject {
+    id: outputsProcess
+    property bool running: false
+    property var command: []
+    property string output: ""
+    property string errorOutput: ""
+    signal exited(int exitCode)
+    onExited: function(exitCode) { ${outputsComplete} }
+  }
 
   QtObject {
     id: barHost
@@ -456,6 +466,85 @@ TestCase {
     verify(searchField.activeFocus)
   }
 
+  function test_outputRefreshPreservesKeyboardChoice_data() {
+    return [
+      { tag: "unchanged", change: "none", index: 1 },
+      { tag: "new-device", change: "add", index: 1 },
+      { tag: "reordered-and-renamed", change: "reorder", index: 2 }
+    ]
+  }
+
+  function test_outputRefreshPreservesKeyboardChoice(data) {
+    width = 390
+    height = 626
+    audioOutputs = [{ id: "speaker-a", label: "Speaker A" }, { id: "speaker-b", label: "Speaker B" }]
+    toggleOutputMenu()
+    verify(outputsProcess.running)
+    verify(waitForPolish(root.Window.window))
+    outputButton.forceActiveFocus()
+    keyClick(Qt.Key_Tab)
+    keyClick(Qt.Key_Tab)
+    verify(outputList.itemAtIndex(1).activeFocus)
+    var refreshed = data.change === "reorder"
+      ? [{ id: "speaker-b", label: "Speaker B" }, { id: "speaker-a", label: "Renamed A" }]
+      : data.change === "add" ? audioOutputs.concat([{ id: "speaker-c", label: "Speaker C" }])
+      : audioOutputs
+    outputsProcess.output = JSON.stringify({ outputs: refreshed })
+    outputsProcess.running = false
+    outputsProcess.exited(0)
+    tryVerify(function() {
+      var option = outputList.itemAtIndex(data.index)
+      return option !== null && option.activeFocus
+    }, 1000, "Refreshing outputs must keep focus on Speaker A")
+    lastOutput = "unchanged"
+    keyClick(Qt.Key_Return)
+    compare(lastOutput, "speaker-a", "Enter must choose the speaker focused before refresh")
+  }
+
+  function test_outputRefreshRemovesFocusedSpeaker_data() {
+    return [
+      { tag: "removed", exitCode: 0, output: '{"outputs":[]}', error: "" },
+      { tag: "command-failed", exitCode: 3, output: "", error: "Audio outputs are unavailable" },
+      { tag: "invalid-response", exitCode: 0, output: "{", error: "Audio outputs are unavailable" }
+    ]
+  }
+
+  function test_outputRefreshRemovesFocusedSpeaker(data) {
+    audioOutputs = [{ id: "speaker-a", label: "Speaker A" }]
+    toggleOutputMenu()
+    verify(waitForPolish(root.Window.window))
+    outputList.itemAtIndex(1).forceActiveFocus()
+    outputsProcess.output = data.output
+    outputsProcess.running = false
+    outputsProcess.exited(data.exitCode)
+    compare(audioOutputs.length, 0)
+    compare(outputsError, data.error)
+    tryVerify(function() { return outputButton.activeFocus }, 1000)
+    lastOutput = "unchanged"
+    keyClick(Qt.Key_Return)
+    compare(lastOutput, "unchanged", "A missing speaker must not become a different output selection")
+    compare(outputMenuOpen, false)
+  }
+
+  function test_outputRefreshAfterFocusMoves_data() {
+    return [{ tag: "search", close: false }, { tag: "closed", close: true }]
+  }
+
+  function test_outputRefreshAfterFocusMoves(data) {
+    audioOutputs = [{ id: "speaker-a", label: "Speaker A" }]
+    toggleOutputMenu()
+    verify(waitForPolish(root.Window.window))
+    outputList.itemAtIndex(1).forceActiveFocus()
+    if (data.close) outputMenuOpen = false
+    else searchField.forceActiveFocus()
+    outputsProcess.output = JSON.stringify({ outputs: audioOutputs })
+    outputsProcess.running = false
+    outputsProcess.exited(0)
+    wait(0)
+    if (data.close) verify(keyCatcher.activeFocus)
+    else verify(searchField.activeFocus)
+  }
+
   function test_barRightClick_data() {
     return [
       { tag: "playing", running: true, paused: false, stopped: false, action: "stop" },
@@ -476,6 +565,7 @@ TestCase {
   function cleanup() {
     // Layout rows change global Style; restore it so later tests start clean.
     outputMenuOpen = false
+    outputsProcess.running = false
     audioOutputs = []
     Style.fontBaseSize = initialFontBaseSize
     Style.spacingScaleWithFont = initialSpacingScaleWithFont
