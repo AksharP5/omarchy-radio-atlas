@@ -13,6 +13,7 @@ const card = source.match(/    BorderSurface \{[\s\S]*?(?=      Item \{\n       
   .replace(/^      (color|borderSpec|radius):.*\n/gm, "")
 const helpFunctions = source.match(/  function (?:isHelpKey|toggleControls)\([\s\S]*?\n  \}/g).join("\n")
 const selectionFunctions = source.match(/  function (?:setSelection|moveSelection)\([\s\S]*?\n  \}/g).join("\n")
+const subdivisionFunctions = source.match(/  function clearSubdivision\(\) \{[\s\S]*?\n  \}/)[0]
 const tabs = source.match(/          Item \{\n            id: tabs[\s\S]*?(?=\n          ListView \{)/)[0]
 const shellDirectory = process.env.OMARCHY_SHELL_DIR || "/usr/share/omarchy/shell"
 assert.ok(fs.existsSync(path.join(shellDirectory, "Ui/Button.qml")),
@@ -23,11 +24,14 @@ try {
   linkShellUi(directory, shellDirectory)
   fs.symlinkSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"))
+  fs.symlinkSync(fileURLToPath(new URL("../RadioModel.js", import.meta.url)),
+    path.join(directory, "RadioModel.js"))
   fs.writeFileSync(path.join(directory, "tst_keyboard.qml"), `
 import QtQuick
 import QtTest
 import qs.Ui
 import qs.Commons
+import "RadioModel.js" as RadioModel
 
 TestCase {
   id: root
@@ -47,6 +51,11 @@ TestCase {
   property var selectedStation: null
   property bool keyboardSelectionVisible: false
   property string playedUuid: ""
+  property string activeSubdivisionName: ""
+  property string browsedCountryCode: "US"
+  property var worldStations: []
+  property int listResets: 0
+  property string focusedCountry: ""
   property color foreground: "white"
   property color accent: "cyan"
   property color faint: "gray"
@@ -56,13 +65,20 @@ TestCase {
   function showRecent() { mode = "recent"; setSelection(0) }
   function playSelected() { playedUuid = selectedStation.uuid }
   function tuneRandom() { randomRequests++ }
+  function highlightStationCountry() {}
+  function setStationList(nextMode) { listResets++; mode = nextMode }
   QtObject {
     id: stationList
     property int currentIndex: -1
     function positionViewAtIndex(index, positionMode) {}
   }
+  QtObject {
+    id: globe
+    function focusCountry(code) { root.focusedCountry = code }
+  }
   ${helpFunctions}
   ${selectionFunctions}
+  ${subdivisionFunctions}
 
   ${card}
     Item {
@@ -82,6 +98,10 @@ TestCase {
     randomRequests = 0
     mode = "world"
     playedUuid = ""
+    activeSubdivisionName = ""
+    browsedCountryCode = "US"
+    listResets = 0
+    focusedCountry = ""
     setSelection(0)
     keyCatcher.forceActiveFocus()
   }
@@ -110,6 +130,19 @@ TestCase {
     keyClick(Qt.Key_R)
     compare(searchField.text.toLowerCase(), "r")
     compare(randomRequests, 1)
+  }
+
+  function test_escapeClearsSelectedStateBeforeClosing() {
+    mode = "country"
+    activeSubdivisionName = "CALIFORNIA"
+    keyCatcher.forceActiveFocus()
+    keyClick(Qt.Key_Escape)
+    compare(activeSubdivisionName, "")
+    compare(dismissals, 0)
+    compare(listResets, 1)
+    compare(focusedCountry, "US")
+    keyClick(Qt.Key_Escape)
+    compare(dismissals, 1)
   }
 
   function test_escapeClosesHelpBeforeWindow() {

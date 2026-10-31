@@ -41,7 +41,6 @@ Item {
   property string browsedCountryCode: ""
   property bool countryCacheLoaded: false
   property var subdivisions: []
-  property var subdivisionList: []
   property string activeSubdivisionName: ""
   property bool helpVisible: false
   property int selectedIndex: -1
@@ -348,7 +347,9 @@ Item {
     selectedStation = stations[selectedIndex]
     stationList.currentIndex = selectedIndex
     stationList.positionViewAtIndex(selectedIndex, ListView.Contain)
-    highlightStationCountry(selectedStation, true)
+    // Only deliberate keyboard selection should move the globe. Hover and
+    // background refreshes must not cancel the user's rotation or state zoom.
+    highlightStationCountry(selectedStation, fromKeyboard === true)
   }
 
   function moveSelection(delta) {
@@ -362,6 +363,9 @@ Item {
     var selectedUuid = preserveSelection && selectedStation ? selectedStation.uuid : ""
     var fromKeyboard = preserveSelection && keyboardSelectionVisible
     mode = nextMode
+    // Leaving country mode ends the state filter; otherwise the globe would
+    // keep highlighting a state that no longer scopes the list.
+    if (nextMode !== "country") activeSubdivisionName = ""
     if (nextMode !== "favorites" && nextMode !== "recent") results = stations
     var index = RadioModel.indexByUuid(stations, selectedUuid)
     setSelection(index >= 0 ? index : (stations.length > 0 ? 0 : -1), fromKeyboard)
@@ -499,23 +503,10 @@ Item {
     keyCatcher.forceActiveFocus()
   }
 
-  // Loads bundled US state boundaries and builds a sorted subdivision name
-  // list for the sidebar picker. Assigns subdivisionList in one shot so QML
-  // bindings update (mutations like push/sort do not trigger them).
+  // Loads the bundled US state boundaries used by the globe for rendering
+  // and state hit-testing.
   function loadSubdivisions() {
     subdivisions = (USStates.usStates && USStates.usStates.features) || []
-    // Build a local array then assign once — mutations (push/sort) don't
-    // notify QML bindings, which would leave the picker hidden.
-    var names = []
-    var seen = {}
-    for (var i = 0; i < subdivisions.length; i++) {
-      var featureName = String(subdivisions[i].properties.name || "")
-      if (!featureName || seen[featureName]) continue
-      seen[featureName] = true
-      names.push(featureName)
-    }
-    names.sort()
-    subdivisionList = names
   }
 
   // Selects a subdivision: zooms the globe to its centroid and replaces the
@@ -534,6 +525,19 @@ Item {
     // stations should show an empty list, not the previous state's results.
     var stateStations = RadioModel.stationsForSubdivision(worldStations, wanted, 150, subdivisions)
     setStationList("country", stateStations)
+  }
+
+  // Clears a selected state and restores the full country list. Returns true
+  // when it handled the request, so Escape can dismiss on the next press.
+  function clearSubdivision() {
+    if (activeSubdivisionName === "") return false
+    activeSubdivisionName = ""
+    if (mode === "country" && browsedCountryCode) {
+      var countryStations = RadioModel.stationsForCountry(worldStations, browsedCountryCode)
+      setStationList("country", countryStations, true)
+      globe.focusCountry(browsedCountryCode)
+    }
+    return true
   }
 
   function applyCountryStations(code, stations) {
@@ -1587,7 +1591,7 @@ Item {
         }
 
         if (event.key === Qt.Key_Escape) {
-          root.dismiss()
+          if (!root.clearSubdivision()) root.dismiss()
           event.accepted = true
         } else if (root.isHelpKey(event)) {
           root.toggleControls()
@@ -1996,68 +2000,11 @@ Item {
             }
           }
 
-          // State picker, visible when the USA is browsed
-          Rectangle {
-            id: statePicker
-            visible: root.activeCountryCode === "US" && root.subdivisionList.length > 0
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: tabs.bottom
-            height: visible ? Style.spacing.controlHeight + root.edgeInset * 2 : 0
-            clip: true
-            color: root.background
-
-            property real edgeInset: root.edgeInset
-
-            ListView {
-              id: stateList
-              anchors.fill: parent
-              anchors.leftMargin: edgeInset
-              anchors.rightMargin: edgeInset
-              anchors.topMargin: edgeInset
-              anchors.bottomMargin: edgeInset
-              orientation: ListView.Horizontal
-              spacing: Style.spacing.xs
-              clip: true
-              model: root.subdivisionList
-              currentIndex: root.activeSubdivisionName !== ""
-                ? root.subdivisionList.indexOf(root.activeSubdivisionName) : -1
-              boundsBehavior: Flickable.StopAtBounds
-              cacheBuffer: 400
-
-              delegate: Rectangle {
-                id: stateChip
-                required property string modelData
-                readonly property bool isActive: root.activeSubdivisionName === modelData.toUpperCase()
-                width: stateChipLabel.implicitWidth + Style.spacing.md * 2
-                height: parent.height
-                radius: Style.cornerRadius
-                color: isActive ? root.accent : root.background
-                border.color: isActive ? root.accent : root.faint
-                border.width: 1
-
-                Text {
-                  id: stateChipLabel
-                  anchors.centerIn: parent
-                  text: modelData
-                  color: isActive ? root.background : root.foreground
-                  font.family: Style.font.menuFamily
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                }
-
-                TapHandler {
-                  onTapped: root.browseState(modelData)
-                }
-              }
-            }
-          }
-
           ListView {
             id: stationList
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.top: statePicker.visible ? statePicker.bottom : tabs.bottom
+            anchors.top: tabs.bottom
             anchors.bottom: playerPanel.top
             clip: true
             model: root.displayStations
