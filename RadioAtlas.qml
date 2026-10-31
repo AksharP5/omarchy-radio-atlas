@@ -8,6 +8,7 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "RadioModel.js" as RadioModel
+import "assets/us-states.js" as USStates
 
 Item {
   id: root
@@ -33,9 +34,14 @@ Item {
   property string mode: "world"
   onModeChanged: if (mode !== "random") randomPlaybackPending = false
   property string activeCountryCode: ""
+  onActiveCountryCodeChanged: {
+    if (activeCountryCode === "US") loadSubdivisions()
+  }
   property string activeCountryName: ""
   property string browsedCountryCode: ""
   property bool countryCacheLoaded: false
+  property var subdivisions: []
+  property string activeSubdivisionName: ""
   property bool helpVisible: false
   property int selectedIndex: -1
   property var selectedStation: null
@@ -341,6 +347,9 @@ Item {
     selectedStation = stations[selectedIndex]
     stationList.currentIndex = selectedIndex
     stationList.positionViewAtIndex(selectedIndex, ListView.Contain)
+    // Only deliberate keyboard selection should move the globe. Hover and
+    // background refreshes must not cancel the user's rotation or state zoom.
+    highlightStationCountry(selectedStation, fromKeyboard === true)
   }
 
   function moveSelection(delta) {
@@ -354,6 +363,9 @@ Item {
     var selectedUuid = preserveSelection && selectedStation ? selectedStation.uuid : ""
     var fromKeyboard = preserveSelection && keyboardSelectionVisible
     mode = nextMode
+    // Leaving country mode ends the state filter; otherwise the globe would
+    // keep highlighting a state that no longer scopes the list.
+    if (nextMode !== "country") activeSubdivisionName = ""
     if (nextMode !== "favorites" && nextMode !== "recent") results = stations
     var index = RadioModel.indexByUuid(stations, selectedUuid)
     setSelection(index >= 0 ? index : (stations.length > 0 ? 0 : -1), fromKeyboard)
@@ -483,10 +495,49 @@ Item {
     setStationList("country", cachedStations)
     activeCountryCode = countryCode
     activeCountryName = countryName
+    activeSubdivisionName = ""
     fetchError = ""
     searchField.text = countryName
+    if (countryCode === "US") loadSubdivisions()
     startFetch("country", countryCode)
     keyCatcher.forceActiveFocus()
+  }
+
+  // Loads the bundled US state boundaries used by the globe for rendering
+  // and state hit-testing.
+  function loadSubdivisions() {
+    subdivisions = (USStates.usStates && USStates.usStates.features) || []
+  }
+
+  // Selects a subdivision: zooms the globe to its centroid and replaces the
+  // station list with that state's stations. Always updates the list, even
+  // when empty, so a state without stations does not show the previous
+  // state's results.
+  function browseState(name) {
+    var wanted = String(name || "").toUpperCase()
+    if (!wanted) {
+      activeSubdivisionName = ""
+      return
+    }
+    activeSubdivisionName = wanted
+    globe.focusSubdivision(wanted)
+    // Always update the list, even when empty — a state with no loaded
+    // stations should show an empty list, not the previous state's results.
+    var stateStations = RadioModel.stationsForSubdivision(worldStations, wanted, 150, subdivisions)
+    setStationList("country", stateStations)
+  }
+
+  // Clears a selected state and restores the full country list. Returns true
+  // when it handled the request, so Escape can dismiss on the next press.
+  function clearSubdivision() {
+    if (activeSubdivisionName === "") return false
+    activeSubdivisionName = ""
+    if (mode === "country" && browsedCountryCode) {
+      var countryStations = RadioModel.stationsForCountry(worldStations, browsedCountryCode)
+      setStationList("country", countryStations, true)
+      globe.focusCountry(browsedCountryCode)
+    }
+    return true
   }
 
   function applyCountryStations(code, stations) {
@@ -494,7 +545,12 @@ Item {
     var countryStations = RadioModel.mergeStations(results, stations, 500)
     worldStations = RadioModel.prioritizeStations(
       countryStations, worldStations, worldStationLimit)
-    setStationList("country", countryStations, true)
+    // If a state was selected while the country request was running, re-filter
+    // the fresh results so they don't overwrite the state selection.
+    var display = activeSubdivisionName !== ""
+      ? RadioModel.stationsForSubdivision(countryStations, activeSubdivisionName, 150, subdivisions)
+      : countryStations
+    setStationList("country", display, true)
   }
 
   function applyCountryCache(raw) {
@@ -553,6 +609,15 @@ Item {
       showWorld(false)
     }
     setSelection(index)
+    var code = String(station.countryCode || "").toUpperCase()
+    // Load subdivisions for US BEFORE centering — that sets activeCountryCode.
+    if (code === "US" && activeCountryCode !== "US") {
+      activeCountryCode = "US"
+      activeCountryName = "United States of America"
+      loadSubdivisions()
+    }
+    // Center the globe on the station's GPS coordinates.
+    highlightStationCountry(station, true)
     playSelected()
   }
 
@@ -1546,7 +1611,7 @@ Item {
         }
 
         if (event.key === Qt.Key_Escape) {
-          root.dismiss()
+          if (!root.clearSubdivision()) root.dismiss()
           event.accepted = true
         } else if (root.isHelpKey(event)) {
           root.toggleControls()
@@ -1721,6 +1786,8 @@ Item {
             stations: root.currentGeoStations
             selectedStation: root.playingStation || root.selectedStation
             activeCountryCode: root.activeCountryCode
+            subdivisions: root.subdivisions
+            activeSubdivisionName: root.activeSubdivisionName
             backgroundColor: root.mapBackground
             sphereColor: root.mapSphere
             landColor: root.mapLand
@@ -1737,6 +1804,7 @@ Item {
             onPointerMoved: root.keyboardSelectionVisible = false
             onStationActivated: function(station) { root.activateMapStation(station) }
             onCountryActivated: function(code, name) { root.browseCountry(code, name) }
+            onSubdivisionActivated: function(name) { root.browseState(name) }
           }
 
           Rectangle {
@@ -2000,7 +2068,7 @@ Item {
                   ? Style.hoverFillFor(root.foreground, root.accent)
                   : "transparent")
 
-              Accessible.name: modelData.name + ", " + RadioModel.stationMeta(modelData)
+              Accessible.name: modelData.name + ", " + RadioModel.stationMeta(modelData, root.subdivisions)
               Accessible.role: Accessible.ListItem
               Accessible.selected: root.selectedIndex === index
               Accessible.onPressAction: {
@@ -2054,7 +2122,7 @@ Item {
                 anchors.rightMargin: Style.spacing.sm
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: Style.space(9)
-                text: RadioModel.stationDetails(stationRow.modelData, 2)
+                text: RadioModel.stationDetails(stationRow.modelData, 2, root.subdivisions)
                 horizontalAlignment: Text.AlignLeft
                 textFormat: Text.PlainText
                 color: root.dim

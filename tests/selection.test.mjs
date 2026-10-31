@@ -113,10 +113,12 @@ function refreshSession(mode) {
     fetchAction: mode, fetchValue: mode === "search" ? "jazz" : "", pendingFetchAction: "",
     fetchOutput: "", fetching: true, searchField: { text: "jazz" },
     selectedIndex: -1, selectedStation: null, keyboardSelectionVisible: false,
+    activeSubdivisionName: "",
     ListView: { Contain: 0 },
     stationList: { currentIndex: -1, positionViewAtIndex() {} },
     countryNames: {},
     restorePlayingCountry() {},
+    highlightStationCountry() {},
     startFetch(action, query) { requestedQuery = query },
     scheduleWorldExpansion() {},
     playStation(station) { played = station.uuid },
@@ -181,6 +183,7 @@ for (const mode of ["favorites", "recent"]) {
     selectedStation: null, selectedIndex: -1, keyboardSelectionVisible: false,
     playingStationUuid: "first", ListView: { Contain: 0 },
     stationList: { currentIndex: -1, positionViewAtIndex() {} },
+    highlightStationCountry() {},
     playStation(station, scope) { played = [station.uuid, scope] },
   })
   Object.defineProperty(run, "displayStations", { get: () => run[mode] })
