@@ -14,6 +14,7 @@ const card = source.match(/    BorderSurface \{[\s\S]*?(?=      Item \{\n       
 const helpFunctions = source.match(/  function (?:isHelpKey|toggleControls)\([\s\S]*?\n  \}/g).join("\n")
 const selectionFunctions = source.match(/  function (?:setSelection|moveSelection)\([\s\S]*?\n  \}/g).join("\n")
 const subdivisionFunctions = source.match(/  function clearSubdivision\(\) \{[\s\S]*?\n  \}/)[0]
+const modeChanged = source.match(/  onModeChanged: \{([\s\S]*?)\n  \}/)[1]
 const tabs = source.match(/          Item \{\n            id: tabs[\s\S]*?(?=\n          ListView \{)/)[0]
 const shellDirectory = process.env.OMARCHY_SHELL_DIR || "/usr/share/omarchy/shell"
 assert.ok(fs.existsSync(path.join(shellDirectory, "Ui/Button.qml")),
@@ -46,6 +47,8 @@ TestCase {
   property int worldRequests: 0
   property int randomRequests: 0
   property string mode: "world"
+  onModeChanged: {${modeChanged}}
+  property bool randomPlaybackPending: false
   property var displayStations: [{ uuid: "first" }, { uuid: "chosen" }]
   property int selectedIndex: -1
   property var selectedStation: null
@@ -54,6 +57,7 @@ TestCase {
   property string activeSubdivisionName: ""
   property string browsedCountryCode: "US"
   property var worldStations: []
+  property int worldStationLimit: 5000
   property int listResets: 0
   property string focusedCountry: ""
   property color foreground: "white"
@@ -143,6 +147,15 @@ TestCase {
     compare(focusedCountry, "US")
     keyClick(Qt.Key_Escape)
     compare(dismissals, 1)
+  }
+
+  function test_escapeAfterTabSwitchClosesInOnePress() {
+    mode = "country"
+    activeSubdivisionName = "CALIFORNIA"
+    showFavorites()
+    compare(activeSubdivisionName, "", "Leaving country mode must drop the state filter")
+    keyClick(Qt.Key_Escape)
+    compare(dismissals, 1, "Escape must close immediately once the filter is already clear")
   }
 
   function test_escapeClosesHelpBeforeWindow() {

@@ -32,11 +32,14 @@ Item {
   property var favorites: []
   property var recent: []
   property string mode: "world"
-  onModeChanged: if (mode !== "random") randomPlaybackPending = false
-  property string activeCountryCode: ""
-  onActiveCountryCodeChanged: {
-    if (activeCountryCode === "US") loadSubdivisions()
+  onModeChanged: {
+    if (mode !== "random") randomPlaybackPending = false
+    // Leaving country browsing ends the state filter; otherwise the globe
+    // keeps highlighting a state that no longer scopes the list and Escape
+    // would spend a press clearing it.
+    if (mode !== "country") activeSubdivisionName = ""
   }
+  property string activeCountryCode: ""
   property string activeCountryName: ""
   property string browsedCountryCode: ""
   property bool countryCacheLoaded: false
@@ -363,9 +366,6 @@ Item {
     var selectedUuid = preserveSelection && selectedStation ? selectedStation.uuid : ""
     var fromKeyboard = preserveSelection && keyboardSelectionVisible
     mode = nextMode
-    // Leaving country mode ends the state filter; otherwise the globe would
-    // keep highlighting a state that no longer scopes the list.
-    if (nextMode !== "country") activeSubdivisionName = ""
     if (nextMode !== "favorites" && nextMode !== "recent") results = stations
     var index = RadioModel.indexByUuid(stations, selectedUuid)
     setSelection(index >= 0 ? index : (stations.length > 0 ? 0 : -1), fromKeyboard)
@@ -519,6 +519,11 @@ Item {
       activeSubdivisionName = ""
       return
     }
+    // A state click can arrive from World or Favorites while a US station is
+    // selected. Enter US country browsing first so the filter has a country
+    // to restore and the cache/fetch path matches browseCountry().
+    if (mode !== "country" || browsedCountryCode !== "US")
+      browseCountry("US", "United States of America")
     activeSubdivisionName = wanted
     globe.focusSubdivision(wanted)
     // Always update the list, even when empty — a state with no loaded
@@ -532,11 +537,13 @@ Item {
   function clearSubdivision() {
     if (activeSubdivisionName === "") return false
     activeSubdivisionName = ""
-    if (mode === "country" && browsedCountryCode) {
-      var countryStations = RadioModel.stationsForCountry(worldStations, browsedCountryCode)
-      setStationList("country", countryStations, true)
-      globe.focusCountry(browsedCountryCode)
-    }
+    if (mode !== "country" || !browsedCountryCode) return true
+    // Use the same cap as the country list so clearing a state never hides
+    // stations that were visible before it was selected.
+    var countryStations = RadioModel.stationsForCountry(
+      worldStations, browsedCountryCode, worldStationLimit)
+    setStationList("country", countryStations, true)
+    globe.focusCountry(browsedCountryCode)
     return true
   }
 
@@ -1526,6 +1533,9 @@ Item {
 
   Component.onCompleted: {
     registerWindowSetup()
+    // Load the bundled state boundaries up front so US station metadata and
+    // map hit-testing work regardless of which country is active on open.
+    loadSubdivisions()
     statusInitProcess.command = [playerPath, "status"]
     statusInitProcess.running = true
   }
@@ -1766,7 +1776,9 @@ Item {
             stations: root.currentGeoStations
             selectedStation: root.playingStation || root.selectedStation
             activeCountryCode: root.activeCountryCode
-            subdivisions: root.subdivisions
+            // Boundaries stay loaded for metadata, but only draw and hit-test
+            // them while the USA is the active country.
+            subdivisions: root.activeCountryCode === "US" ? root.subdivisions : []
             activeSubdivisionName: root.activeSubdivisionName
             backgroundColor: root.mapBackground
             sphereColor: root.mapSphere
