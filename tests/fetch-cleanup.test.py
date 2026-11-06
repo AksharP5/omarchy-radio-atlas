@@ -6,6 +6,9 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import socket
+import ssl
+import struct
 import subprocess
 import tempfile
 import threading
@@ -145,27 +148,106 @@ target.write_text(json.dumps([dict(stationuuid="12345678-1234-1234-1234-12345678
             worker.join()
 
         self.addCleanup(stop_server)
-        real_curl = shutil.which("curl")
-        curl = self.root / "bin/curl"
-        # Exercise curl's real retry behavior against only this test's HTTP server.
-        curl.write_text('''#!/usr/bin/python3
-import os, sys
-from urllib.parse import urlsplit
-arguments = sys.argv[1:]
-arguments[arguments.index("--proto") + 1] = "=http"
-for index, argument in enumerate(arguments):
-    if argument.startswith("https://"):
-        arguments[index] = os.environ["RADIO_ATLAS_TEST_SERVER"] + urlsplit(argument).path
-real_curl = REAL_CURL
-os.execv(real_curl, [real_curl, "--noproxy", "*", *arguments])
-'''.replace("REAL_CURL", json.dumps(real_curl)))
-        curl.chmod(0o700)
-        self.env["RADIO_ATLAS_TEST_SERVER"] = f"http://127.0.0.1:{server.server_port}"
+        self.use_real_curl(f"http://127.0.0.1:{server.server_port}")
         process = self.start(["country", "US"], self.root / "retry")
         output, error = process.communicate(timeout=5)
         self.assertEqual(process.returncode, 0, error)
         self.assertEqual(json.loads(output)[0]["name"], "Available mirror")
         self.assertEqual(len(requests), 2)
+
+    def use_real_curl(self, server_url):
+        real_curl = shutil.which("curl")
+        curl = self.root / "bin/curl"
+        # Keep curl's retry behavior while routing requests only to the local server.
+        curl.write_text('''#!/usr/bin/python3
+import os, sys
+from urllib.parse import urlsplit
+arguments = sys.argv[1:]
+server = os.environ["RADIO_ATLAS_TEST_SERVER"]
+arguments[arguments.index("--proto") + 1] = "=" + urlsplit(server).scheme
+for index, argument in enumerate(arguments):
+    if argument.startswith("https://"):
+        arguments[index] = server + urlsplit(argument).path
+real_curl = REAL_CURL
+os.execv(real_curl, [real_curl, "--disable", "--noproxy", "*", *arguments])
+'''.replace("REAL_CURL", json.dumps(real_curl)))
+        curl.chmod(0o700)
+        self.env["RADIO_ATLAS_TEST_SERVER"] = server_url
+
+    def test_tls_resets_retry_a_single_directory_mirror(self):
+        certificate = self.root / "certificate.pem"
+        key = self.root / "key.pem"
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                        "-keyout", str(key), "-out", str(certificate), "-days", "1",
+                        "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"],
+                       check=True, capture_output=True, timeout=10)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certificate, key)
+        connections = []
+
+        class Server(ThreadingHTTPServer):
+            def get_request(self):
+                connection, address = super().get_request()
+                connection.settimeout(5)
+                connections.append(address)
+                if len(connections) != 4:
+                    # Reset after ClientHello so real curl reports TLS error 35.
+                    connection.recv(1)
+                    connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                          struct.pack("ii", 1, 0))
+                    connection.close()
+                    raise ConnectionResetError("Test TLS reset")
+                return context.wrap_socket(connection, server_side=True), address
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps([dict(
+                    stationuuid="12345678-1234-1234-1234-123456789abc",
+                    name="Recovered station", url="https://example.com/live", countrycode="US",
+                    geo_lat=40, geo_long=-74
+                )]).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_):
+                pass
+
+        server = Server(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+
+        def stop_server():
+            server.shutdown()
+            server.server_close()
+            worker.join()
+
+        self.addCleanup(stop_server)
+        self.use_real_curl(f"https://127.0.0.1:{server.server_port}")
+        self.env["CURL_CA_BUNDLE"] = str(certificate)
+        # Empty discovery forces the single fallback mirror, as in a fresh install.
+        getent = self.root / "bin/getent"
+        getent.write_text("#!/bin/sh\nexit 2\n")
+        getent.chmod(0o700)
+
+        process = self.start(["world"], self.root / "recover")
+        output, error = process.communicate(timeout=15)
+        self.assertEqual(process.returncode, 0, error)
+        self.assertEqual(json.loads(output)[0]["name"], "Recovered station")
+        self.assertEqual(len(connections), 4)
+        cached = (self.cache / "world.json").read_text()
+        self.assertEqual(json.loads(cached), json.loads(output))
+
+        process = self.start(["world-more"], self.root / "exhaust")
+        output, error = process.communicate(timeout=15)
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("curl: (35)", error)
+        self.assertEqual(output, "")
+        self.assertEqual(len(connections), 8, "Stop after three retries")
+        self.assertEqual((self.cache / "world.json").read_text(), cached)
+        self.assertEqual(sorted(path.name for path in self.runtime.iterdir()),
+                         ["results.json", "world.json"])
 
     def test_detached_refresh_owns_its_download_after_cached_response_exits(self):
         # jq 1.6 succeeds on an empty input stream; it must not erase a cache.

@@ -226,7 +226,6 @@ rg -Fq -- '--max-filesize "$max_response_bytes"' "$project_dir/radio-fetch"
 rg -q -- "--proto '=https'" "$project_dir/radio-fetch"
 rg -Fq 'setpriv --pdeathsig TERM curl' "$project_dir/radio-fetch"
 assert_no_match -- '--location' "$project_dir/radio-fetch"
-rg -Fq -- '--retry 1 --retry-delay 0' "$project_dir/radio-fetch"
 rg -Fq '.[:500]' "$project_dir/radio-fetch"
 sed -n '/  random)/,/^    ;;/p' "$project_dir/radio-fetch" \
   | assert_no_match -F 'has_geo_info=true'

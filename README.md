@@ -121,6 +121,8 @@ Next/Previous moving between stations. Empty playlists show a playback failure
 without switching stations.
 
 Fresh world and country caches load without DNS lookups.
+Directory requests retry connection failures up to three times before trying
+another mirror.
 Country browsing picks up completed background refreshes in the open list,
 preserving the selected station and ignoring updates for other countries.
 The globe skips off-screen station markers when zoomed in, and player-status
