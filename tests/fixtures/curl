@@ -9,6 +9,8 @@ limit=""
 request_url=""
 search_field=""
 search_value=""
+state_filter=""
+country_filter=""
 uuids=""
 while (( $# > 0 )); do
   case "$1" in
@@ -26,6 +28,12 @@ while (( $# > 0 )); do
       fi
       if [[ ${2:-} == uuids=* ]]; then
         uuids=${2#uuids=}
+      fi
+      if [[ ${2:-} == state=* ]]; then
+        state_filter=${2#state=}
+      fi
+      if [[ ${2:-} == countrycode=* ]]; then
+        country_filter=${2#countrycode=}
       fi
       case "${2:-}" in
         name=*|country=*|countrycode=*|tag=*)
@@ -84,14 +92,21 @@ if [[ $request_url == */json/stations/byuuid ]]; then
 fi
 
 if [[ -n ${RADIO_ATLAS_TEST_SEARCH_STATIONS:-} ]]; then
-  payload=$(jq -c --arg field "$search_field" --arg query "$search_value" '
-    if $field == "countrycode" then
-      [.[] | select(.countrycode == $query)]
-    else
-      (if $field == "tag" then "tags" else $field end) as $key
-      | [.[] | select(.[$key] | ascii_downcase | contains($query | ascii_downcase))]
-    end
-  ' "$RADIO_ATLAS_TEST_SEARCH_STATIONS")
+  payload=$(jq -c --arg field "$search_field" --arg query "$search_value" \
+    --arg state "$state_filter" --arg country "$country_filter" '
+    [.[]
+      | select($state == ""
+        or ((.state // "") | ascii_downcase | contains($state | ascii_downcase)))
+      | select($country == ""
+        or ((.countrycode // "") | ascii_upcase) == ($country | ascii_upcase))
+      | select($field == "" or (
+          if $field == "countrycode" then
+            ((.countrycode // "") | ascii_upcase) == ($query | ascii_upcase)
+          else
+            (if $field == "tag" then "tags" else $field end) as $key
+            | (.[$key] // "" | ascii_downcase | contains($query | ascii_downcase))
+          end))
+    ]' "$RADIO_ATLAS_TEST_SEARCH_STATIONS")
 fi
 
 if [[ ${RADIO_ATLAS_TEST_CURL_UNKNOWN_LOCATION:-0} == 1 ]]; then

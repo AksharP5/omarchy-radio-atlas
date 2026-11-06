@@ -530,6 +530,9 @@ Item {
     // stations should show an empty list, not the previous state's results.
     var stateStations = RadioModel.stationsForSubdivision(worldStations, wanted, 150, subdivisions)
     setStationList("country", stateStations)
+    // The country sample is too small to cover every state, so request the
+    // selected state's stations directly and merge them in when they arrive.
+    startFetch("state", wanted)
   }
 
   // Clears a selected state and restores the full country list. Returns true
@@ -558,6 +561,20 @@ Item {
       ? RadioModel.stationsForSubdivision(countryStations, activeSubdivisionName, 150, subdivisions)
       : countryStations
     setStationList("country", display, true)
+  }
+
+  function applyStateStations(name, stations) {
+    if (mode !== "country"
+        || String(activeSubdivisionName || "") !== String(name || "")) return
+    // The API matches state text loosely (e.g. Kansas also matches Arkansas),
+    // so re-apply the same exact-name/GPS filter used for local preview rows.
+    var filtered = RadioModel.stationsForSubdivision(stations, name, 500, subdivisions)
+    // Keep the local preview rows after the remote state results so stations
+    // the state query missed are not lost. Remote rows stay first.
+    var stateStations = RadioModel.prioritizeStations(filtered, results, 500)
+    worldStations = RadioModel.prioritizeStations(
+      stateStations, worldStations, worldStationLimit)
+    setStationList("country", stateStations, true)
   }
 
   function applyCountryCache(raw) {
@@ -1153,7 +1170,8 @@ Item {
         root.pendingFetchValue = ""
         root.fetching = false
         Qt.callLater(function() {
-          if (root.mode !== nextAction) return
+          if (root.mode !== nextAction
+              && !(nextAction === "state" && root.mode === "country")) return
           if (nextAction === "random" && (!root.randomPlaybackPending
               || (!root.localStopStatusPending
                 && root.randomPlayGeneration !== root.playerGeneration()))) {
@@ -1163,6 +1181,8 @@ Item {
           if (nextAction === "search"
               && String(searchField.text || "").trim() !== nextValue) return
           if (nextAction === "country" && root.browsedCountryCode !== nextValue) return
+          if (nextAction === "state"
+              && String(root.activeSubdivisionName || "") !== nextValue) return
           root.startFetch(nextAction,
             nextAction === "random" ? root.randomExclusions() : nextValue)
         })
@@ -1173,11 +1193,14 @@ Item {
         && (root.localStopStatusPending || root.randomPlayGeneration === root.playerGeneration())
       if (root.fetchAction === "random") root.randomPlaybackPending = false
       root.fetching = false
-      if (root.mode !== root.fetchAction) return
+      if (root.mode !== root.fetchAction
+          && !(root.fetchAction === "state" && root.mode === "country")) return
       if (root.fetchAction === "search"
           && String(searchField.text || "").trim() !== root.fetchValue) return
       if (root.fetchAction === "country"
           && root.fetchValue !== root.browsedCountryCode) return
+      if (root.fetchAction === "state"
+          && String(root.activeSubdivisionName || "") !== root.fetchValue) return
       if (exitCode !== 0) {
         root.fetchError = root.displayStations.length > 0
           ? "Showing cached stations · Radio Browser is unavailable"
@@ -1196,8 +1219,21 @@ Item {
         if (!root.countryCacheLoaded)
           root.applyCountryStations(root.fetchValue, stations)
         countryCacheFile.reload()
+      } else if (root.fetchAction === "state") {
+        root.applyStateStations(root.fetchValue, stations)
       } else if (root.fetchAction === "search") {
-        root.setStationList("search", stations, true)
+        // The remote search covers names, countries, and tags but not the
+        // state field, so keep local state-name matches it cannot return.
+        // Remote rows stay first and win on duplicates.
+        var query = String(root.fetchValue || "").trim().toLowerCase()
+        var localMatches = RadioModel.searchStations(
+          root.worldStations, root.fetchValue, 500, root.countryNames)
+        var stateMatches = localMatches.filter(function(station) {
+          return String(station && station.state || "").toLowerCase()
+            .indexOf(query) >= 0
+        })
+        root.setStationList("search",
+          RadioModel.prioritizeStations(stations, stateMatches, 500), true)
       } else if (root.fetchAction === "random") {
         root.setStationList("random", stations)
         if (stations.length > 0 && playRandom) {

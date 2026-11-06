@@ -7,7 +7,7 @@ const model = vm.createContext({})
 vm.runInContext(fs.readFileSync(new URL("../RadioModel.js", import.meta.url), "utf8"), model)
 
 const functions = source.match(
-  /  function (?:setSelection|setStationList|browseCountry|browseState|clearSubdivision)\([\s\S]*?\n  \}/g
+  /  function (?:setSelection|setStationList|browseCountry|browseState|clearSubdivision|applyStateStations)\([\s\S]*?\n  \}/g
 ).join("\n")
 
 function session() {
@@ -55,7 +55,8 @@ function session() {
   return { context, calls, rows }
 }
 
-// A state click from World/Favorites must establish US country browsing first.
+// A state click from World/Favorites must establish US country browsing first
+// and request that state's stations directly.
 {
   const { context, calls } = session()
   context.browseState("CALIFORNIA")
@@ -64,7 +65,8 @@ function session() {
   assert.equal(context.activeCountryName, "United States of America")
   assert.equal(context.searchField.text, "United States of America")
   assert.equal(context.activeSubdivisionName, "CALIFORNIA")
-  assert.deepEqual(calls.fetch, [["country", "US"]], "State browsing must start a US country fetch")
+  assert.deepEqual(calls.fetch, [["country", "US"], ["state", "CALIFORNIA"]],
+    "State browsing must load the US context and the selected state")
   assert.ok(calls.focusSubdivision.includes("CALIFORNIA"))
   assert.ok(context.results.length > 0)
   assert.ok(context.results.every(station => station.state === "California"))
@@ -83,15 +85,56 @@ function session() {
   assert.equal(calls.focusCountry.at(-1), "US")
 }
 
-// Already browsing the US: selecting another state must not refetch.
+// Already browsing the US: selecting another state only fetches that state.
 {
   const { context, calls } = session()
   context.mode = "country"
   context.browsedCountryCode = "US"
   context.browseState("TEXAS")
-  assert.deepEqual(calls.fetch, [])
+  assert.deepEqual(calls.fetch, [["state", "TEXAS"]])
   assert.equal(context.activeSubdivisionName, "TEXAS")
   assert.ok(context.results.every(station => station.state === "Texas"))
+}
+
+// Remote state results replace the preview but keep local-only rows, and are
+// filtered to the exact state so substring matches such as Arkansas/Kansas
+// cannot leak in.
+{
+  const { context } = session()
+  context.mode = "country"
+  context.browsedCountryCode = "US"
+  context.browseState("KANSAS")
+  const local = [{ uuid: "ks-local", name: "Local Kansas", countryCode: "US", state: "Kansas" }]
+  context.results = local
+  context.selectedStation = local[0]
+  context.selectedIndex = 0
+  context.keyboardSelectionVisible = true
+  const remote = [
+    { uuid: "ks-remote", name: "Remote Kansas", countryCode: "US", state: "Kansas" },
+    { uuid: "ar-remote", name: "Arkansas leak", countryCode: "US", state: "Arkansas" },
+    { uuid: "mo-remote", name: "Kansas City Missouri", countryCode: "US", state: "Kansas City, Missouri" },
+  ]
+  context.applyStateStations("KANSAS", remote)
+  assert.deepEqual(Array.from(context.results, station => station.uuid),
+    ["ks-remote", "ks-local"], "Remote rows stay first and local-only rows are kept")
+  assert.equal(context.selectedStation.uuid, "ks-local", "Selection follows the user's station")
+  assert.equal(context.keyboardSelectionVisible, true)
+  assert.ok(context.worldStations.some(station => station.uuid === "ks-remote"))
+  assert.ok(!context.worldStations.some(station => station.uuid === "ar-remote"),
+    "Substring state matches must not enter the station cache")
+}
+
+// A stale state response is ignored after the user selects another state.
+{
+  const { context } = session()
+  context.mode = "country"
+  context.browsedCountryCode = "US"
+  context.activeSubdivisionName = "TEXAS"
+  const before = context.results
+  context.applyStateStations("CALIFORNIA", [
+    { uuid: "ca-remote", name: "Late California", countryCode: "US", state: "California" },
+  ])
+  assert.equal(context.results, before, "A late state response cannot replace another state")
 }
 
 // Without a selected state, Escape falls through to closing the panel.
