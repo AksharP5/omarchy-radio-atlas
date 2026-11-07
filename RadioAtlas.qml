@@ -531,7 +531,8 @@ Item {
     globe.focusSubdivision(wanted)
     // Always update the list, even when empty — a state with no loaded
     // stations should show an empty list, not the previous state's results.
-    var stateStations = RadioModel.stationsForSubdivision(worldStations, wanted, 150, subdivisions)
+    var stateStations = RadioModel.stationsForSubdivision(
+      worldStations, wanted, 150, subdivisions, "US")
     setStationList("country", stateStations)
     // The country sample is too small to cover every state, so request the
     // selected state's stations directly and merge them in when they arrive.
@@ -561,7 +562,8 @@ Item {
     // If a state was selected while the country request was running, re-filter
     // the fresh results so they don't overwrite the state selection.
     var display = activeSubdivisionName !== ""
-      ? RadioModel.stationsForSubdivision(countryStations, activeSubdivisionName, 150, subdivisions)
+      ? RadioModel.stationsForSubdivision(
+        countryStations, activeSubdivisionName, 150, subdivisions, browsedCountryCode)
       : countryStations
     setStationList("country", display, true)
   }
@@ -571,7 +573,8 @@ Item {
         || String(activeSubdivisionName || "") !== String(name || "")) return
     // The API matches state text loosely (e.g. Kansas also matches Arkansas),
     // so re-apply the same exact-name/GPS filter used for local preview rows.
-    var filtered = RadioModel.stationsForSubdivision(stations, name, 500, subdivisions)
+    var filtered = RadioModel.stationsForSubdivision(
+      stations, name, 500, subdivisions, "US")
     // Keep the local preview rows after the remote state results so stations
     // the state query missed are not lost. Remote rows stay first.
     var stateStations = RadioModel.prioritizeStations(filtered, results, 500)

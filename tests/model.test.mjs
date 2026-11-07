@@ -383,4 +383,69 @@ assert.deepEqual(Array.from(model.stationWindow([
   { uuid: "too-large", name: "x".repeat(model.maximumSelectionBytes) }
 ], "too-large", 500)), [])
 
+const subdivisionFeatures = [
+  {
+    type: "Feature",
+    properties: { name: "Kansas" },
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[-100, 37], [-95, 37], [-95, 40], [-100, 40], [-100, 37]]]
+    }
+  },
+  {
+    type: "Feature",
+    properties: { name: "Oklahoma" },
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[-100, 33], [-95, 33], [-95, 37], [-100, 37], [-100, 33]]]
+    }
+  }
+]
+
+// The direct state match must stay inside the requested country.
+const mixedCountryStates = [
+  { uuid: "us-kansas", countryCode: "US", state: "Kansas" },
+  { uuid: "ca-kansas", countryCode: "CA", state: "Kansas" }
+]
+assert.deepEqual(
+  Array.from(model.stationsForSubdivision(mixedCountryStates, "KANSAS", 10, [], "US"),
+    station => station.uuid),
+  ["us-kansas"]
+)
+
+// GPS fallback only applies when the API state cannot identify a state, so a
+// station labelled New York is not also listed under Kansas.
+assert.deepEqual(
+  Array.from(model.stationsForSubdivision([
+    { uuid: "ny-in-kansas", countryCode: "US", state: "New York", latitude: 39, longitude: -97 }
+  ], "KANSAS", 10, subdivisionFeatures, "US"), station => station.uuid),
+  []
+)
+assert.deepEqual(
+  Array.from(model.stationsForSubdivision([
+    { uuid: "gps-kansas", countryCode: "US", state: "", latitude: 39, longitude: -97 },
+    { uuid: "unrecognized-state", countryCode: "US", state: "Kansas City, Missouri", latitude: 39, longitude: -97 }
+  ], "KANSAS", 10, subdivisionFeatures, "US"), station => station.uuid),
+  ["gps-kansas", "unrecognized-state"]
+)
+assert.deepEqual(
+  Array.from(model.stationsForSubdivision([
+    { uuid: "estimated", countryCode: "US", state: "", latitude: 39, longitude: -97, estimatedLocation: true }
+  ], "KANSAS", 10, subdivisionFeatures, "US"), station => station.uuid),
+  [],
+  "Estimated points must not establish a state"
+)
+
+// stationLocation follows the same precedence as the state list.
+assert.equal(model.stationLocation(
+  { countryCode: "US", state: "New York", latitude: 39, longitude: -97 }, subdivisionFeatures),
+  "US - NY")
+assert.equal(model.stationLocation(
+  { countryCode: "US", state: "", latitude: 39, longitude: -97 }, subdivisionFeatures),
+  "US - KS")
+assert.equal(model.stationLocation(
+  { countryCode: "US", state: "", latitude: 39, longitude: -97, estimatedLocation: true },
+  subdivisionFeatures),
+  "US")
+
 console.log("RadioModel tests passed")

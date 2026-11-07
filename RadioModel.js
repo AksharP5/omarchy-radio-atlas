@@ -476,20 +476,24 @@ function subdivisionCentre(features, code) {
  * @param {Array} [subdivisions] - Boundary features for GPS fallback
  * @returns {Array} Matching stations, capped at `maximum`
  */
-function stationsForSubdivision(stations, code, maximum, subdivisions) {
+function stationsForSubdivision(stations, code, maximum, subdivisions, countryCode) {
   var rows = Array.isArray(stations) ? stations : []
   var wanted = String(code || "").toUpperCase()
+  var wantedCountry = String(countryCode || "").toUpperCase()
   var output = []
   var limit = Math.max(1, Number(maximum || 150))
   for (var i = 0; i < rows.length && output.length < limit; i++) {
     var row = rows[i]
+    var country = String((row && row.countryCode) || "").toUpperCase()
+    if (wantedCountry && country !== wantedCountry) continue
     var state = String((row && row.state) || "").toUpperCase()
     if (state === wanted) { output.push(row); continue }
-    // Same fallback as stationLocation: stations with GPS but no state text
-    // belong to the state their position falls in.
-    if (wanted && Array.isArray(subdivisions)) {
-      var latitude = Number(row && row.latitude)
-      var longitude = Number(row && row.longitude)
+    // Same fallback and precedence as stationLocation: use GPS only when the
+    // API state cannot identify a state, and never for an estimated point.
+    if (wanted && !stateAbbreviation(state) && row && row.estimatedLocation !== true
+        && Array.isArray(subdivisions)) {
+      var latitude = Number(row.latitude)
+      var longitude = Number(row.longitude)
       if (isFinite(latitude) && isFinite(longitude)) {
         var subdivision = subdivisionAt(subdivisions, latitude, longitude)
         if (subdivision && String(subdivision.name || "").toUpperCase() === wanted)
@@ -821,9 +825,10 @@ function stationLocation(station, subdivisions) {
   if (country !== "US") return country
   var state = stateAbbreviation(station.state)
   if (state) return "US - " + state
-  // The API omits state for many US stations. The dot always has a position
-  // (real GPS or an estimated point inside the country), so reverse-geocode
-  // that position against the bundled state boundaries to recover it.
+  // The API omits state for many US stations. Reverse-geocode their real
+  // position against the bundled state boundaries to recover it, but keep
+  // estimated points (placed inside the country) at country level.
+  if (station.estimatedLocation === true) return country
   var latitude = Number(station.latitude)
   var longitude = Number(station.longitude)
   if (isFinite(latitude) && isFinite(longitude) && Array.isArray(subdivisions)) {
