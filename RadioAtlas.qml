@@ -113,6 +113,9 @@ Item {
   readonly property string countryCachePath:
     (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache")
       + "/omarchy-radio-atlas/countries"
+  readonly property string stateCachePath:
+    (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache")
+      + "/omarchy-radio-atlas/states"
   readonly property string statusPath: runtimePath + "/status.json"
   readonly property string playSelectionPath: runtimePath + "/play-selection.json"
   readonly property string favoriteSelectionPath: runtimePath + "/favorite-selection.json"
@@ -577,6 +580,35 @@ Item {
     setStationList("country", stateStations, true)
   }
 
+  // Matches radio-fetch's state_slug() so the open panel can watch the same
+  // cache file the background refresh writes.
+  function stateCacheSlug(name) {
+    return String(name || "").toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+  }
+
+  function applyStateCache(raw) {
+    if (mode !== "country" || browsedCountryCode !== "US"
+        || activeSubdivisionName === "") return
+    try {
+      if (typeof raw !== "string" || raw.length > 4194304)
+        throw new Error("State cache is too large")
+      var stations = JSON.parse(raw)
+      if (!Array.isArray(stations) || stations.length > 100)
+        throw new Error("State cache is not a station list")
+      for (var i = 0; i < stations.length; i++) {
+        if (!stations[i] || stations[i].countryCode !== "US")
+          throw new Error("State cache does not match the United States")
+      }
+      // A background refresh can replace an old (even empty) state cache
+      // while the panel is open; apply it so newly available stations show.
+      applyStateStations(activeSubdivisionName, stations)
+    } catch (error) {
+      console.warn("State cache could not be loaded:", error)
+    }
+  }
+
   function applyCountryCache(raw) {
     if (mode !== "country") return
     try {
@@ -1011,6 +1043,18 @@ Item {
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.applyCountryCache(text())
+  }
+
+  FileView {
+    id: stateCacheFile
+    path: root.mode === "country" && root.browsedCountryCode === "US"
+      && root.activeSubdivisionName !== ""
+      ? root.stateCachePath + "/" + root.stateCacheSlug(root.activeSubdivisionName) + ".json"
+      : ""
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.applyStateCache(text())
   }
 
   FileView {

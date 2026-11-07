@@ -7,7 +7,7 @@ const model = vm.createContext({})
 vm.runInContext(fs.readFileSync(new URL("../RadioModel.js", import.meta.url), "utf8"), model)
 
 const functions = source.match(
-  /  function (?:setSelection|setStationList|browseCountry|browseState|clearSubdivision|applyStateStations)\([\s\S]*?\n  \}/g
+  /  function (?:setSelection|setStationList|browseCountry|browseState|clearSubdivision|applyStateStations|stateCacheSlug|applyStateCache)\([\s\S]*?\n  \}/g
 ).join("\n")
 
 function session() {
@@ -19,6 +19,7 @@ function session() {
   rows.push({ uuid: "gb-1", name: "United Kingdom 1", countryCode: "GB" })
 
   const calls = { fetch: [], focusCountry: [], focusSubdivision: [] }
+  const warnings = []
   const context = vm.createContext({
     RadioModel: model,
     mode: "world",
@@ -44,6 +45,7 @@ function session() {
     loadSubdivisions() {},
     highlightStationCountry() {},
     keyCatcher: { forceActiveFocus() {} },
+    console: { warn(...args) { warnings.push(args) } },
     globe: {
       focusCountry(code) { calls.focusCountry.push(code) },
       focusSubdivision(name) { calls.focusSubdivision.push(name) },
@@ -52,7 +54,7 @@ function session() {
   Object.defineProperty(context, "displayStations", { get() { return context.results } })
   context.root = context
   vm.runInContext(functions, context)
-  return { context, calls, rows }
+  return { context, calls, rows, warnings }
 }
 
 // A state click from World/Favorites must establish US country browsing first
@@ -158,6 +160,73 @@ function session() {
   assert.equal(context.activeSubdivisionName, "")
   assert.equal(context.results, before)
   assert.deepEqual(calls.focusCountry, [])
+}
+
+// The QML cache slug must match radio-fetch's state_slug() so the open panel
+// watches the same file the background refresh writes.
+{
+  const { context } = session()
+  assert.equal(context.stateCacheSlug("New York"), "new_york")
+  assert.equal(context.stateCacheSlug("  WYOMING  "), "wyoming")
+  assert.equal(context.stateCacheSlug("Kansas City, Missouri"), "kansas_city_missouri")
+  assert.equal(context.stateCacheSlug(""), "")
+}
+
+// A background state cache refresh must replace the open state list so newly
+// available stations appear without re-selecting the state.
+{
+  const { context, warnings } = session()
+  context.mode = "country"
+  context.browsedCountryCode = "US"
+  context.browseState("KANSAS")
+  assert.equal(context.results.length, 0, "No local Kansas preview rows exist")
+  context.applyStateCache(JSON.stringify([
+    { uuid: "ks-new", name: "New Kansas", countryCode: "US", state: "Kansas" },
+    { uuid: "ar-new", name: "Arkansas leak", countryCode: "US", state: "Arkansas" },
+  ]))
+  assert.equal(warnings.length, 0)
+  assert.deepEqual(Array.from(context.results, station => station.uuid), ["ks-new"],
+    "Refreshed cache rows are applied and substring state matches are dropped")
+  assert.ok(context.worldStations.some(station => station.uuid === "ks-new"))
+}
+
+// Malformed or foreign state caches must be rejected without disturbing the
+// open list.
+{
+  const { context, warnings } = session()
+  context.mode = "country"
+  context.browsedCountryCode = "US"
+  context.browseState("CALIFORNIA")
+  const before = context.results
+  context.applyStateCache("{not json")
+  context.applyStateCache(JSON.stringify([
+    { uuid: "gb-1", name: "Not US", countryCode: "GB", state: "California" },
+  ]))
+  context.applyStateCache(JSON.stringify([{}]))
+  context.applyStateCache(JSON.stringify(
+    Array.from({ length: 101 }, (_, index) => ({
+      uuid: `ks-${index}`, name: `Kansas ${index}`, countryCode: "US", state: "Kansas",
+    }))))
+  assert.equal(context.results, before, "Invalid caches cannot replace the list")
+  assert.equal(warnings.length, 4, "Every invalid cache is reported")
+}
+
+// A cache update for another mode or country is ignored.
+{
+  const { context, warnings } = session()
+  context.mode = "world"
+  context.applyStateCache(JSON.stringify([
+    { uuid: "ks-new", name: "New Kansas", countryCode: "US", state: "Kansas" },
+  ]))
+  context.mode = "country"
+  context.browsedCountryCode = "GB"
+  context.activeSubdivisionName = "CALIFORNIA"
+  const before = context.results
+  context.applyStateCache(JSON.stringify([
+    { uuid: "ks-new", name: "New Kansas", countryCode: "US", state: "Kansas" },
+  ]))
+  assert.equal(context.results, before)
+  assert.equal(warnings.length, 0)
 }
 
 console.log("State filter tests passed")

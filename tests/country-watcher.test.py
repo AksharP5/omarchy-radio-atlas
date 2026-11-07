@@ -40,6 +40,8 @@ ShellRoot {
   id: root
   property string mode: "country"
   property string browsedCountryCode: "US"
+  property string activeSubdivisionName: ""
+  property var subdivisions: []
   property string fetchValue: "US"
   property string countryCachePath: CACHE
   property bool countryCacheLoaded: false
@@ -59,6 +61,7 @@ ShellRoot {
     function positionViewAtIndex(index, mode) {}
   }
 FUNCTIONS
+  function highlightStationCountry() {}
 WATCHER
   function completeCountryFetch() { RESPONSE }
   Process {
