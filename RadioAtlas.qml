@@ -8,6 +8,7 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "RadioModel.js" as RadioModel
+import "assets/us-states.js" as USStates
 
 Item {
   id: root
@@ -31,11 +32,19 @@ Item {
   property var favorites: []
   property var recent: []
   property string mode: "world"
-  onModeChanged: if (mode !== "random") randomPlaybackPending = false
+  onModeChanged: {
+    if (mode !== "random") randomPlaybackPending = false
+    // Leaving country browsing ends the state filter; otherwise the globe
+    // keeps highlighting a state that no longer scopes the list and Escape
+    // would spend a press clearing it.
+    if (mode !== "country") activeSubdivisionName = ""
+  }
   property string activeCountryCode: ""
   property string activeCountryName: ""
   property string browsedCountryCode: ""
   property bool countryCacheLoaded: false
+  property var subdivisions: []
+  property string activeSubdivisionName: ""
   property bool helpVisible: false
   property int selectedIndex: -1
   property var selectedStation: null
@@ -104,6 +113,9 @@ Item {
   readonly property string countryCachePath:
     (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache")
       + "/omarchy-radio-atlas/countries"
+  readonly property string stateCachePath:
+    (Quickshell.env("XDG_CACHE_HOME") || Quickshell.env("HOME") + "/.cache")
+      + "/omarchy-radio-atlas/states"
   readonly property string statusPath: runtimePath + "/status.json"
   readonly property string playSelectionPath: runtimePath + "/play-selection.json"
   readonly property string favoriteSelectionPath: runtimePath + "/favorite-selection.json"
@@ -341,6 +353,9 @@ Item {
     selectedStation = stations[selectedIndex]
     stationList.currentIndex = selectedIndex
     stationList.positionViewAtIndex(selectedIndex, ListView.Contain)
+    // Only deliberate keyboard selection should move the globe. Hover and
+    // background refreshes must not cancel the user's rotation or state zoom.
+    highlightStationCountry(selectedStation, fromKeyboard === true)
   }
 
   function moveSelection(delta) {
@@ -483,10 +498,60 @@ Item {
     setStationList("country", cachedStations)
     activeCountryCode = countryCode
     activeCountryName = countryName
+    activeSubdivisionName = ""
     fetchError = ""
     searchField.text = countryName
+    if (countryCode === "US") loadSubdivisions()
     startFetch("country", countryCode)
     keyCatcher.forceActiveFocus()
+  }
+
+  // Loads the bundled US state boundaries used by the globe for rendering
+  // and state hit-testing.
+  function loadSubdivisions() {
+    subdivisions = (USStates.usStates && USStates.usStates.features) || []
+  }
+
+  // Selects a subdivision: zooms the globe to its centroid and replaces the
+  // station list with that state's stations. Always updates the list, even
+  // when empty, so a state without stations does not show the previous
+  // state's results.
+  function browseState(name) {
+    var wanted = String(name || "").toUpperCase()
+    if (!wanted) {
+      activeSubdivisionName = ""
+      return
+    }
+    // A state click can arrive from World or Favorites while a US station is
+    // selected. Enter US country browsing first so the filter has a country
+    // to restore and the cache/fetch path matches browseCountry().
+    if (mode !== "country" || browsedCountryCode !== "US")
+      browseCountry("US", "United States of America")
+    activeSubdivisionName = wanted
+    globe.focusSubdivision(wanted)
+    // Always update the list, even when empty — a state with no loaded
+    // stations should show an empty list, not the previous state's results.
+    var stateStations = RadioModel.stationsForSubdivision(
+      worldStations, wanted, 150, subdivisions, "US")
+    setStationList("country", stateStations)
+    // The country sample is too small to cover every state, so request the
+    // selected state's stations directly and merge them in when they arrive.
+    startFetch("state", wanted)
+  }
+
+  // Clears a selected state and restores the full country list. Returns true
+  // when it handled the request, so Escape can dismiss on the next press.
+  function clearSubdivision() {
+    if (activeSubdivisionName === "") return false
+    activeSubdivisionName = ""
+    if (mode !== "country" || !browsedCountryCode) return true
+    // Use the same cap as the country list so clearing a state never hides
+    // stations that were visible before it was selected.
+    var countryStations = RadioModel.stationsForCountry(
+      worldStations, browsedCountryCode, worldStationLimit)
+    setStationList("country", countryStations, true)
+    globe.focusCountry(browsedCountryCode)
+    return true
   }
 
   function applyCountryStations(code, stations) {
@@ -494,7 +559,57 @@ Item {
     var countryStations = RadioModel.mergeStations(results, stations, 500)
     worldStations = RadioModel.prioritizeStations(
       countryStations, worldStations, worldStationLimit)
-    setStationList("country", countryStations, true)
+    // If a state was selected while the country request was running, re-filter
+    // the fresh results so they don't overwrite the state selection.
+    var display = activeSubdivisionName !== ""
+      ? RadioModel.stationsForSubdivision(
+        countryStations, activeSubdivisionName, 150, subdivisions, browsedCountryCode)
+      : countryStations
+    setStationList("country", display, true)
+  }
+
+  function applyStateStations(name, stations) {
+    if (mode !== "country"
+        || String(activeSubdivisionName || "") !== String(name || "")) return
+    // The API matches state text loosely (e.g. Kansas also matches Arkansas),
+    // so re-apply the same exact-name/GPS filter used for local preview rows.
+    var filtered = RadioModel.stationsForSubdivision(
+      stations, name, 500, subdivisions, "US")
+    // Keep the local preview rows after the remote state results so stations
+    // the state query missed are not lost. Remote rows stay first.
+    var stateStations = RadioModel.prioritizeStations(filtered, results, 500)
+    worldStations = RadioModel.prioritizeStations(
+      stateStations, worldStations, worldStationLimit)
+    setStationList("country", stateStations, true)
+  }
+
+  // Matches radio-fetch's state_slug() so the open panel can watch the same
+  // cache file the background refresh writes.
+  function stateCacheSlug(name) {
+    return String(name || "").toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+  }
+
+  function applyStateCache(raw) {
+    if (mode !== "country" || browsedCountryCode !== "US"
+        || activeSubdivisionName === "") return
+    try {
+      if (typeof raw !== "string" || raw.length > 4194304)
+        throw new Error("State cache is too large")
+      var stations = JSON.parse(raw)
+      if (!Array.isArray(stations) || stations.length > 100)
+        throw new Error("State cache is not a station list")
+      for (var i = 0; i < stations.length; i++) {
+        if (!stations[i] || stations[i].countryCode !== "US")
+          throw new Error("State cache does not match the United States")
+      }
+      // A background refresh can replace an old (even empty) state cache
+      // while the panel is open; apply it so newly available stations show.
+      applyStateStations(activeSubdivisionName, stations)
+    } catch (error) {
+      console.warn("State cache could not be loaded:", error)
+    }
   }
 
   function applyCountryCache(raw) {
@@ -553,6 +668,15 @@ Item {
       showWorld(false)
     }
     setSelection(index)
+    var code = String(station.countryCode || "").toUpperCase()
+    // Load subdivisions for US BEFORE centering — that sets activeCountryCode.
+    if (code === "US" && activeCountryCode !== "US") {
+      activeCountryCode = "US"
+      activeCountryName = "United States of America"
+      loadSubdivisions()
+    }
+    // Center the globe on the station's GPS coordinates.
+    highlightStationCountry(station, true)
     playSelected()
   }
 
@@ -947,6 +1071,18 @@ Item {
   }
 
   FileView {
+    id: stateCacheFile
+    path: root.mode === "country" && root.browsedCountryCode === "US"
+      && root.activeSubdivisionName !== ""
+      ? root.stateCachePath + "/" + root.stateCacheSlug(root.activeSubdivisionName) + ".json"
+      : ""
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.applyStateCache(text())
+  }
+
+  FileView {
     path: root.statusReady ? root.statusPath : ""
     watchChanges: true
     atomicWrites: true
@@ -1103,7 +1239,8 @@ Item {
         root.pendingFetchValue = ""
         root.fetching = false
         Qt.callLater(function() {
-          if (root.mode !== nextAction) return
+          if (root.mode !== nextAction
+              && !(nextAction === "state" && root.mode === "country")) return
           if (nextAction === "random" && (!root.randomPlaybackPending
               || (!root.localStopStatusPending
                 && root.randomPlayGeneration !== root.playerGeneration()))) {
@@ -1113,6 +1250,8 @@ Item {
           if (nextAction === "search"
               && String(searchField.text || "").trim() !== nextValue) return
           if (nextAction === "country" && root.browsedCountryCode !== nextValue) return
+          if (nextAction === "state"
+              && String(root.activeSubdivisionName || "") !== nextValue) return
           root.startFetch(nextAction,
             nextAction === "random" ? root.randomExclusions() : nextValue)
         })
@@ -1123,11 +1262,14 @@ Item {
         && (root.localStopStatusPending || root.randomPlayGeneration === root.playerGeneration())
       if (root.fetchAction === "random") root.randomPlaybackPending = false
       root.fetching = false
-      if (root.mode !== root.fetchAction) return
+      if (root.mode !== root.fetchAction
+          && !(root.fetchAction === "state" && root.mode === "country")) return
       if (root.fetchAction === "search"
           && String(searchField.text || "").trim() !== root.fetchValue) return
       if (root.fetchAction === "country"
           && root.fetchValue !== root.browsedCountryCode) return
+      if (root.fetchAction === "state"
+          && String(root.activeSubdivisionName || "") !== root.fetchValue) return
       if (exitCode !== 0) {
         root.fetchError = root.displayStations.length > 0
           ? "Showing cached stations · Radio Browser is unavailable"
@@ -1146,8 +1288,21 @@ Item {
         if (!root.countryCacheLoaded)
           root.applyCountryStations(root.fetchValue, stations)
         countryCacheFile.reload()
+      } else if (root.fetchAction === "state") {
+        root.applyStateStations(root.fetchValue, stations)
       } else if (root.fetchAction === "search") {
-        root.setStationList("search", stations, true)
+        // The remote search covers names, countries, and tags but not the
+        // state field, so keep local state-name matches it cannot return.
+        // Remote rows stay first and win on duplicates.
+        var query = String(root.fetchValue || "").trim().toLowerCase()
+        var localMatches = RadioModel.searchStations(
+          root.worldStations, root.fetchValue, 500, root.countryNames)
+        var stateMatches = localMatches.filter(function(station) {
+          return String(station && station.state || "").toLowerCase()
+            .indexOf(query) >= 0
+        })
+        root.setStationList("search",
+          RadioModel.prioritizeStations(stations, stateMatches, 500), true)
       } else if (root.fetchAction === "random") {
         root.setStationList("random", stations)
         if (stations.length > 0 && playRandom) {
@@ -1481,6 +1636,9 @@ Item {
 
   Component.onCompleted: {
     registerWindowSetup()
+    // Load the bundled state boundaries up front so US station metadata and
+    // map hit-testing work regardless of which country is active on open.
+    loadSubdivisions()
     statusInitProcess.command = [playerPath, "status"]
     statusInitProcess.running = true
   }
@@ -1546,7 +1704,7 @@ Item {
         }
 
         if (event.key === Qt.Key_Escape) {
-          root.dismiss()
+          if (!root.clearSubdivision()) root.dismiss()
           event.accepted = true
         } else if (root.isHelpKey(event)) {
           root.toggleControls()
@@ -1721,6 +1879,10 @@ Item {
             stations: root.currentGeoStations
             selectedStation: root.playingStation || root.selectedStation
             activeCountryCode: root.activeCountryCode
+            // Boundaries stay loaded for metadata, but only draw and hit-test
+            // them while the USA is the active country.
+            subdivisions: root.activeCountryCode === "US" ? root.subdivisions : []
+            activeSubdivisionName: root.activeSubdivisionName
             backgroundColor: root.mapBackground
             sphereColor: root.mapSphere
             landColor: root.mapLand
@@ -1737,6 +1899,7 @@ Item {
             onPointerMoved: root.keyboardSelectionVisible = false
             onStationActivated: function(station) { root.activateMapStation(station) }
             onCountryActivated: function(code, name) { root.browseCountry(code, name) }
+            onSubdivisionActivated: function(name) { root.browseState(name) }
           }
 
           Rectangle {
@@ -2000,7 +2163,7 @@ Item {
                   ? Style.hoverFillFor(root.foreground, root.accent)
                   : "transparent")
 
-              Accessible.name: modelData.name + ", " + RadioModel.stationMeta(modelData)
+              Accessible.name: modelData.name + ", " + RadioModel.stationMeta(modelData, root.subdivisions)
               Accessible.role: Accessible.ListItem
               Accessible.selected: root.selectedIndex === index
               Accessible.onPressAction: {
@@ -2054,7 +2217,7 @@ Item {
                 anchors.rightMargin: Style.spacing.sm
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: Style.space(9)
-                text: RadioModel.stationDetails(stationRow.modelData, 2)
+                text: RadioModel.stationDetails(stationRow.modelData, 2, root.subdivisions)
                 horizontalAlignment: Text.AlignLeft
                 textFormat: Text.PlainText
                 color: root.dim

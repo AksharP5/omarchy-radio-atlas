@@ -77,6 +77,7 @@ TestCase {
   function toggleFavorite(uuid) {}
   function playSelected() { plays++ }
   function emptyStateText() { return "" }
+  function highlightStationCountry() {}
   Item {
     id: keyCatcher
     anchors.fill: parent

@@ -35,6 +35,8 @@ node "$project_dir/tests/model.test.mjs"
 node "$project_dir/tests/search.test.mjs"
 node "$project_dir/tests/search-queue.test.mjs"
 node "$project_dir/tests/country-refresh.test.mjs"
+node "$project_dir/tests/state-filter.test.mjs"
+node "$project_dir/tests/state-fetch.test.mjs"
 python3 "$project_dir/tests/fetch-cleanup.test.py"
 python3 "$project_dir/tests/fetch-normalization.test.py"
 python3 "$project_dir/tests/country-watcher.test.py"
@@ -222,6 +224,10 @@ rg -q '^country_cache_minutes=1440$' "$project_dir/radio-fetch"
 rg -Fq 'world_cache_file="$cache_dir/world.json"' "$project_dir/radio-fetch"
 rg -q '^refresh_world_cache_in_background\(\)' "$project_dir/radio-fetch"
 rg -q '^refresh_country_cache_in_background\(\)' "$project_dir/radio-fetch"
+rg -q '^refresh_state_cache_in_background\(\)' "$project_dir/radio-fetch"
+rg -Fq 'startFetch("state", wanted)' "$project_dir/RadioAtlas.qml"
+rg -Fq 'id: stateCacheFile' "$project_dir/RadioAtlas.qml"
+rg -Fq 'onLoaded: root.applyStateCache(text())' "$project_dir/RadioAtlas.qml"
 rg -Fq -- '--max-filesize "$max_response_bytes"' "$project_dir/radio-fetch"
 rg -q -- "--proto '=https'" "$project_dir/radio-fetch"
 rg -Fq 'setpriv --pdeathsig TERM curl' "$project_dir/radio-fetch"
@@ -342,6 +348,7 @@ jq -e '
 [[ $(stat -c '%a' "$runtime_dir") == 700 ]]
 [[ $(stat -c '%a' "$cache_dir") == 700 ]]
 [[ $(stat -c '%a' "$cache_dir/countries") == 700 ]]
+[[ $(stat -c '%a' "$cache_dir/states") == 700 ]]
 jq -e 'length == 1' "$cache_dir/countries/US.json" >/dev/null
 
 PATH="$project_dir/tests/fixtures:$PATH" "$project_dir/radio-fetch" world-more \

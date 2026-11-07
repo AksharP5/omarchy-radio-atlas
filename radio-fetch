@@ -7,7 +7,8 @@ runtime_dir="$XDG_RUNTIME_DIR/omarchy-radio-atlas"
 cache_root=${XDG_CACHE_HOME:-$HOME/.cache}
 cache_dir="$cache_root/omarchy-radio-atlas"
 country_cache_dir="$cache_dir/countries"
-install -d -m 700 "$runtime_dir" "$cache_dir" "$country_cache_dir"
+state_cache_dir="$cache_dir/states"
+install -d -m 700 "$runtime_dir" "$cache_dir" "$country_cache_dir" "$state_cache_dir"
 
 world_file="$runtime_dir/world.json"
 world_cache_file="$cache_dir/world.json"
@@ -19,6 +20,7 @@ user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atla
 max_response_bytes=4194304
 world_cache_minutes=1440
 country_cache_minutes=1440
+state_cache_minutes=1440
 search_dir=""
 world_more_response=""
 world_more_result=""
@@ -158,6 +160,18 @@ valid_country_data() {
       "$path" >/dev/null 2>&1
 }
 
+valid_state_data() {
+  local path=$1
+  local state=$2
+  [[ -s $path ]] \
+    && (( $(stat -c '%s' -- "$path") <= max_response_bytes )) \
+    && jq -e -s --arg state "$state" 'length == 1 and (.[0]
+      | type == "array" and length <= 100
+      and all(.[]; (.countryCode // "") == "US"
+        and ((.state // "") | ascii_downcase | contains($state | ascii_downcase))))' \
+      "$path" >/dev/null 2>&1
+}
+
 publish_world_cache() {
   publish_copy "$world_cache_file" "$world_file"
   publish_copy "$world_cache_file" "$results_file"
@@ -252,6 +266,50 @@ publish_country_cache() {
   cat "$source"
 }
 
+state_slug() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/_/g; s/^_//; s/_$//'
+}
+
+refresh_state_cache() {
+  local state=$1
+  local target=$2
+  local temporary
+  temporary=$(mktemp "$state_cache_dir/refresh.XXXXXX")
+  if request 100 '/json/stations/search' \
+      --data-urlencode "state=$state" \
+      --data-urlencode 'countrycode=US' \
+      --data-urlencode 'hidebroken=true' \
+      --data-urlencode 'order=clickcount' \
+      --data-urlencode 'reverse=true' \
+      --data-urlencode 'limit=100' \
+      | store_results "$temporary" >/dev/null \
+      && valid_state_data "$temporary" "$state"; then
+    mv "$temporary" "$target"
+    return
+  fi
+  rm -f "$temporary"
+  return 1
+}
+
+refresh_state_cache_in_background() {
+  local state=$1
+  local target=$2
+  (
+    exec 9>"$state_cache_dir/$(state_slug "$state").lock"
+    flock -n 9 || exit 0
+    request_dir=$(mktemp -d "$runtime_dir/fetch.XXXXXX")
+    trap 'rm -rf -- "$request_dir"' EXIT
+    refresh_state_cache "$state" "$target"
+  ) </dev/null >/dev/null 2>&1 &
+}
+
+publish_state_cache() {
+  local source=$1
+  publish_copy "$source" "$results_file"
+  cat "$source"
+}
+
 publish_world_country() {
   local code=$1
   local source=""
@@ -295,6 +353,22 @@ fetch_country() {
 
   refresh_country_cache "$code" "$country_cache_file"
   publish_country_cache "$country_cache_file"
+}
+
+fetch_state() {
+  local state=$1
+  local state_cache_file="$state_cache_dir/$(state_slug "$state").json"
+  if valid_state_data "$state_cache_file" "$state"; then
+    publish_state_cache "$state_cache_file"
+    if ! find "$state_cache_file" -mmin "-$state_cache_minutes" \
+      -print -quit | grep -q .; then
+      refresh_state_cache_in_background "$state" "$state_cache_file"
+    fi
+    return
+  fi
+
+  refresh_state_cache "$state" "$state_cache_file"
+  publish_state_cache "$state_cache_file"
 }
 
 fetch_world() {
@@ -419,6 +493,13 @@ case "$action" in
     code=${2:-}
     [[ $code =~ ^[A-Za-z]{2}$ ]] || { echo 'Country code must contain two letters' >&2; exit 2; }
     fetch_country "${code^^}"
+    ;;
+  state)
+    state=${2:-}
+    state_pattern='^[A-Za-z][A-Za-z .-]{0,99}$'
+    [[ $state =~ $state_pattern ]] \
+      || { echo 'State name is invalid' >&2; exit 2; }
+    fetch_state "$state"
     ;;
   search)
     query=${2:-}
