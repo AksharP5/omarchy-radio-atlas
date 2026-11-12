@@ -2345,8 +2345,8 @@ Item {
                 Button {
                   id: muteButton
                   iconText: root.playerMuted || root.playerVolume === 0 ? "\uf026" : "\uf028"
-                  Layout.preferredWidth: playerIconMetrics.muteWidth
-                  Layout.preferredHeight: playerIconMetrics.buttonHeight
+                  implicitWidth: playerIconMetrics.muteWidth
+                  implicitHeight: playerIconMetrics.buttonHeight
 
                   // Fixed widths: transport buttons share the widest transport icon and
                   // mute uses its wider state, so toggling icons never shifts the row.
