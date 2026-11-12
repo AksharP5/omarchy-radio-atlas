@@ -19,7 +19,7 @@ assert_no_match() {
 jq -e '
   .schemaVersion == 1
   and .id == "akshar.radio-atlas"
-  and .version == "0.1.9"
+  and .version == "0.2.0"
   and (.kinds | index("panel"))
   and (.kinds | index("bar-widget"))
   and .keepLoaded == true
