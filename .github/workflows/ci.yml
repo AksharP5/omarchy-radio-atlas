@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: omacom/omarchy
-          ref: e332dc975d5f635294c497ebb54feb98dc3d89eb
+          ref: ac2690cd7be4f47e4a255f5e2e78d904d436b068 # v4.5.0
           path: .test-omarchy
           sparse-checkout: |
             shell/Ui
