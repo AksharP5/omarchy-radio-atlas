@@ -131,6 +131,12 @@ int main(int argc, char **argv) {
     require(field->property("text").toString() == full, "IME input in a full query deleted its ending");
     QTest::keyClick(&window, Qt::Key_Backspace);
     require(field->property("text").toString().size() == 127, "Full queries cannot be shortened");
+    const QString shortened = field->property("text").toString();
+    QTest::keyClick(&window, 'x');
+    require(field->property("text").toString().size() == 128, "Typing could not fill the query");
+    QTest::keyClick(&window, 'y');
+    QTest::keyClick(&window, Qt::Key_Z, Qt::ControlModifier);
+    require(field->property("text").toString() == shortened, "Rejected overflow cleared earlier undo history");
     QTest::keyClick(&window, Qt::Key_Z, Qt::ControlModifier);
     require(field->property("text").toString() == full, "Undo after rejected input changed the query");
     QMetaObject::invokeMethod(field, "select", Q_ARG(int, 63), Q_ARG(int, 66));
