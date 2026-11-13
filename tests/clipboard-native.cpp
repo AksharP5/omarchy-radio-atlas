@@ -8,6 +8,7 @@
 #include <QQuickItem>
 #include <QQuickView>
 #include <QTest>
+#include <cstdio>
 #include <cstdlib>
 
 class ClipboardOffer : public QMimeData {
@@ -23,7 +24,7 @@ protected:
 
 static void require(bool condition, const char *message) {
     if (!condition) {
-        qCritical("%s", message);
+        std::fprintf(stderr, "%s\n", message);
         std::exit(1);
     }
 }
@@ -116,6 +117,34 @@ int main(int argc, char **argv) {
     require(QGuiApplication::clipboard()->text() == QString::fromUtf8("日本語 café"), "Copy failed");
     QTest::keyClick(&window, Qt::Key_X, Qt::ControlModifier);
     require(field->property("text").toString().isEmpty(), "Cut failed");
+
+    const QString full = QString(63, QLatin1Char('a')) + QStringLiteral(" ending") + QString(58, QLatin1Char('z'));
+    require(full.size() == 128, "Full query fixture has the wrong length");
+    field->setProperty("text", full);
+    field->setProperty("cursorPosition", 63);
+    QTest::keyClick(&window, 'x');
+    require(field->property("text").toString() == full, "Typing in a full query deleted its ending");
+    require(field->property("cursorPosition").toInt() == 63, "Rejected input moved the cursor");
+    QInputMethodEvent overflow;
+    overflow.setCommitString(QString::fromUtf8("日本語"));
+    QGuiApplication::sendEvent(field, &overflow);
+    require(field->property("text").toString() == full, "IME input in a full query deleted its ending");
+    QTest::keyClick(&window, Qt::Key_Backspace);
+    require(field->property("text").toString().size() == 127, "Full queries cannot be shortened");
+    QTest::keyClick(&window, Qt::Key_Z, Qt::ControlModifier);
+    require(field->property("text").toString() == full, "Undo after rejected input changed the query");
+    QMetaObject::invokeMethod(field, "select", Q_ARG(int, 63), Q_ARG(int, 66));
+    QInputMethodEvent replacement;
+    replacement.setCommitString(QString::fromUtf8("日本語"));
+    QGuiApplication::sendEvent(field, &replacement);
+    require(field->property("text").toString() == full.left(63) + QString::fromUtf8("日本語") + full.mid(66),
+            "A selection in a full query could not be replaced");
+    field->setProperty("text", QString());
+    for (int i = 0; i < 128; ++i) QTest::keyClick(&window, 'a');
+    field->setProperty("cursorPosition", 63);
+    QGuiApplication::sendEvent(field, &overflow);
+    require(field->property("text").toString() == QString(128, QLatin1Char('a')),
+            "Rejected IME input erased earlier typing");
 
     field->setProperty("text", QString(140, QLatin1Char('x')));
     require(field->property("text").toString().size() == 128, "Search length was not bounded");

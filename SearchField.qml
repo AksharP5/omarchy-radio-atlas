@@ -44,6 +44,11 @@ T.TextArea {
 
   onTextChanged: {
     editRevision++
+    // IME commits are native edits too; reject overflow without trimming the query.
+    if (text.length > maximumLength && canUndo) {
+      undo()
+      return
+    }
     var bounded = text.replace(/[\r\n\t\u2028\u2029]/g, " ").slice(0, maximumLength)
     if (text !== bounded) {
       var position = cursorPosition
@@ -78,7 +83,14 @@ T.TextArea {
       var forward = event.key !== Qt.Key_Backtab && !(event.modifiers & Qt.ShiftModifier)
       nextItemInFocusChain(forward).forceActiveFocus(forward ? Qt.TabFocusReason : Qt.BacktabFocusReason)
       event.accepted = true
+      return
     }
+    // Reject keystrokes before they enter Qt's coalesced undo history.
+    var shortcut = (event.modifiers & Qt.ControlModifier) && !(event.modifiers & Qt.AltModifier)
+    var insertsText = /[^\x00-\x1f\x7f]/.test(event.text)
+    var remaining = maximumLength - length + selectionEnd - selectionStart
+    if (!shortcut && insertsText && event.text.length > remaining)
+      event.accepted = true
   }
 
   background: BorderSurface {
