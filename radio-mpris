@@ -307,9 +307,8 @@ class VolumeWriter:
             return
         callbacks = self.pending[1]
         try:
-            # A zero deadline retains TERM forwarding without timing out lock waits.
             self.process = Gio.Subprocess.new([
-                "setpriv", "--pdeathsig", "TERM", "timeout", "--kill-after=1", "0",
+                "setpriv", "--pdeathsig", "TERM", "timeout", "--kill-after=1", "20",
                 str(Path(__file__).resolve().with_name("radio-player")),
                 "volume", str(self.pending[0])],
                 Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
@@ -353,7 +352,7 @@ class Artwork:
         self.controls = controls
         self.changed = changed
         self.queue_path = Path(os.environ["XDG_RUNTIME_DIR"]) / "omarchy-radio-atlas/playlist.json"
-        self.cache_dir = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "omarchy-radio-atlas/favicons"
+        self.cache_dir = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "omarchy-radio-atlas/favicons/raster-v1"
         self.allow_fake_ip = os.environ.get("RADIO_ATLAS_ALLOW_FAKE_IP") == "true"
         self.queue_stamp = None
         self.urls = []

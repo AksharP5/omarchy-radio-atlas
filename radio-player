@@ -18,6 +18,7 @@ generation_file="$runtime_dir/player.generation"
 log_file="$runtime_dir/mpv.log"
 max_json_bytes=4194304
 max_ipc_bytes=65536
+max_player_address_bytes=1073741824
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 fetch_path=${RADIO_ATLAS_FETCH_PATH:-$script_dir/radio-fetch}
 state_path="$script_dir/radio-state"
@@ -375,7 +376,8 @@ adjust_volume() {
 
 list_outputs() {
   local sinks
-  sinks=$(pactl -f json list sinks 2>/dev/null) || {
+  sinks=$(timeout --foreground --kill-after=1 10 pactl -f json list sinks 2>/dev/null \
+    | head -c "$((max_json_bytes + 1))") || {
     echo 'Audio outputs are unavailable' >&2
     exit 3
   }
@@ -574,6 +576,9 @@ play_station() {
     mv "$temporary_queue" "$queue_file"
     mv "$temporary_playlist" "$playlist"
     local -a player_arguments=(
+      # Limit every decoder and playlist parser before it handles station data.
+      env MALLOC_ARENA_MAX=2
+      prlimit --as="$max_player_address_bytes:$max_player_address_bytes" --core=0:0 --
       mpv
       --no-video
       --force-window=no
@@ -592,6 +597,7 @@ play_station() {
       --network-timeout=30
       --load-unsafe-playlists=no
       --load-scripts=no
+      --ytdl=no
       --volume="$(jq -r '(.volume // 70) | round' <<< "$saved_settings")"
       --volume-max=100
       --input-ipc-server="$socket"
@@ -644,9 +650,9 @@ play_station() {
     local version user_agent
     version=$(jq -r '.version' "$script_dir/manifest.json")
     user_agent="Radio Atlas/$version (https://github.com/AksharP5/omarchy-radio-atlas)"
-    curl --fail --silent --max-time 4 --proto '=https' \
+    setsid timeout --kill-after=1 4 curl --fail --silent --max-time 4 --proto '=https' \
       --user-agent "$user_agent" \
-      "https://all.api.radio-browser.info/json/url/$uuid" >/dev/null 2>&1 7>&- 8>&- &
+      "https://all.api.radio-browser.info/json/url/$uuid" </dev/null >/dev/null 2>&1 7>&- 8>&- &
   fi
 
   status
@@ -664,6 +670,37 @@ resume_last() {
 }
 
 action=${1:-status}
+# On plugin load, status expires an older session before its existing MPRIS
+# bridge or automatic playlist progression can reuse an unbounded player.
+if [[ $action != stop && $action != outputs ]]; then
+  flock -x 8
+  if player_alive && [[ -S $socket ]]; then
+    if ! python3 - "$socket" "$max_player_address_bytes" <<'PY'
+import errno
+import resource
+import socket
+import struct
+import sys
+
+try:
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(1)
+        connection.connect(sys.argv[1])
+        pid, _, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+        address = resource.prlimit(pid, resource.RLIMIT_AS)
+        core = resource.prlimit(pid, resource.RLIMIT_CORE)
+        valid = all(0 < value <= int(sys.argv[2]) for value in address) and core == (0, 0)
+except OSError as error:
+    # Session cleanup can report status after mpv has already closed its socket.
+    valid = error.errno in (errno.ENOENT, errno.ECONNREFUSED, errno.ESRCH)
+sys.exit(0 if valid else 1)
+PY
+    then
+      terminate_tracked_player || { echo 'Radio player could not stop an outdated session' >&2; exit 4; }
+    fi
+  fi
+  flock -u 8
+fi
 if [[ $action == volume || $action == volume-up || $action == volume-down || $action == output ]]; then
   # Keep settings ordered without holding Stop's lock during saved-state IO.
   flock -x 7

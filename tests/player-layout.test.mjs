@@ -43,8 +43,9 @@ try {
   linkShellUi(directory, shellDirectory)
   fs.cpSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"), { recursive: true })
+  fs.symlinkSync(fileURLToPath(new URL("./qml-imports/Quickshell/Io/Process.qml", import.meta.url)),
+    path.join(directory, "RadioProcess.qml"))
   for (const [name, property] of [
-    ["Process", "signal exited(int exitCode)"],
     ["FileView", "property bool atomicWrites: false"],
   ]) {
     const target = path.join(directory, "Quickshell/Io", name + ".qml")
@@ -623,7 +624,7 @@ TestCase {
     barWidget.applyPlayerState(JSON.stringify({ running: true, volume: 80 }))
     compare(barWidget.reportedVolume, 80)
     process.running = false
-    process.exited(0)
+    process.exited(0, 0)
     compare(barWidget.pendingVolume, -1)
     compare(barWidget.playerVolume, 80, "An older command completion must preserve the latest player volume")
     compare(barWidget.reportedVolume, 80)

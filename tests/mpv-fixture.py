@@ -1,8 +1,12 @@
 """Serve playlist commands for tests that stub the remaining mpv operations."""
 import json
 from pathlib import Path
+import resource
 import socketserver
 import sys
+
+resource.setrlimit(resource.RLIMIT_AS, (1_073_741_824, 1_073_741_824))
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 class PlaylistHandler(socketserver.StreamRequestHandler):

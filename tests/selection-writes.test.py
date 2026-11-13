@@ -24,7 +24,7 @@ functions = "\n".join(re.findall(
 views = "\n".join(re.search(
     rf"  FileView \{{\n    id: {name}[\s\S]*?\n  \}}", source).group()
     for name in ["playSelectionFile", "favoriteSelectionFile", "playlistFile"])
-writer = re.search(r"  Process \{\n    id: stateProcess[\s\S]*?\n  \}", source).group()
+writer = re.search(r"  RadioProcess \{\n    id: stateProcess[\s\S]*?\n  \}", source).group()
 writer = writer.replace("onExited: function(exitCode) {", 'onExited: function(exitCode) {\n      console.log("OPERATION_DONE")')
 old = dict(uuid="11111111-1234-1234-1234-111111111111", name="Old station", url="https://example.com/old")
 current = dict(old, name="Current station", url="https://example.com/current")
@@ -57,6 +57,8 @@ with tempfile.TemporaryDirectory(prefix="radio-atlas-selection-writes-") as temp
         wrapper.chmod(0o700)
         wrappers[action] = str(wrapper)
     (directory / "RadioModel.js").symlink_to(project / "RadioModel.js")
+    for helper in ("RadioProcess.qml", "radio-run"):
+        (directory / helper).symlink_to(project / helper)
     qml = '''import QtQuick
 import Quickshell
 import Quickshell.Io

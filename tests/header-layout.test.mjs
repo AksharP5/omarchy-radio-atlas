@@ -16,6 +16,8 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), "radio-atlas-header-layo
 
 try {
   linkShellUi(directory, shellDirectory)
+  for (const name of ["SearchField.qml", "RadioProcess.qml"])
+    fs.symlinkSync(fileURLToPath(new URL(`../${name}`, import.meta.url)), path.join(directory, name))
   fs.symlinkSync(fileURLToPath(new URL("./qml-imports/Quickshell", import.meta.url)),
     path.join(directory, "Quickshell"))
   fs.writeFileSync(path.join(directory, "tst_header_layout.qml"), `

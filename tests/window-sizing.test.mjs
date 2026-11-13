@@ -10,7 +10,7 @@ const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "u
 const sizing = source.slice(source.indexOf("  property bool windowFrameReady"),
   source.indexOf("  readonly property string windowPath"))
 const lifecycle = source.match(/  function (?:registerWindowSetup|open|openWindow|close|dismiss|scheduleWindowReveal)\([\s\S]*?\n  \}/g).join("\n")
-const setup = source.match(/  Process \{\n    id: windowSetupProcess[\s\S]*?\n  \}/)[0]
+const setup = source.match(/  RadioProcess \{\n    id: windowSetupProcess[\s\S]*?\n  \}/)[0]
 const revealTimer = source.match(/  Timer \{\n    id: windowRevealTimer[\s\S]*?\n  \}/)[0]
 const windowSignals = source.match(/    onVisibleChanged: \{[\s\S]*?(?=\n\n    BorderSurface)/)[0]
 const minimumSize = source.match(/    minimumSize: (.*)/)[1]
@@ -82,7 +82,7 @@ TestCase {
   function tuneRandom() { randomRequests++ }
   function scheduleWorldExpansion(delay) {}
   ${lifecycle}
-  ${setup.replace("Process {", "QtObject {").replace("    command:", `    property bool running: false
+  ${setup.replace("RadioProcess {", "QtObject {").replace("    command:", `    property bool running: false
     signal exited(int exitCode)
     onRunningChanged: if (running) root.startedCommands = root.startedCommands.concat([command.slice()])
     property var command:`)}
