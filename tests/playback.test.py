@@ -63,7 +63,7 @@ class PlaybackTest(unittest.TestCase):
                     try:
                         # Keep the fixture's allocation fixed while the remote
                         # parser accumulates entries. The production cap must win.
-                        for _ in range(2048):
+                        while True:
                             self.wfile.write(entry * 32)
                             self.wfile.flush()
                     except (BrokenPipeError, ConnectionResetError):
@@ -690,7 +690,14 @@ exec "$RADIO_ATLAS_TEST_REAL_STATE" "$@"
                              if line.startswith("Max address space"))
                 self.assertEqual(limit.split()[3:5], ["1073741824", "1073741824"])
                 self.release_playlist.set()
-                self.assertTrue(self.playlist_closed.wait(10), "mpv must close the hostile playlist at its limit")
+                closed = self.playlist_closed.wait(30)
+                if not closed:
+                    try:
+                        process_status = Path("/proc", pid, "status").read_text()
+                    except FileNotFoundError:
+                        process_status = "Player has exited"
+                    self.fail("mpv must close the hostile playlist at its limit\n"
+                              + process_status + "\n" + (self.runtime / "mpv.log").read_text())
                 self.assertFalse(self.action("status")["running"])
 
                 result = subprocess.run([str(player), "play", "normal-station"], env=environment,
