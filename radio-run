@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Run one finite helper with bounded output, time, and process-group cleanup."""
+
+import ctypes
+import os
+import selectors
+import signal
+import subprocess
+import sys
+import time
+
+
+def main(expected_parent):
+    if len(sys.argv) < 3:
+        print("usage: radio-run SECONDS COMMAND [ARG...]", file=sys.stderr)
+        return 2
+    seconds = float(sys.argv[1])
+    if not 0 < seconds <= 300:
+        return 2
+    command = sys.argv[2:]
+    independent = command[0] == "--independent"
+    if independent:
+        command = command[1:]
+    # Reap grandchildren after their parent exits, including stubborn helpers.
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(36, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "could not become a child subreaper")
+    if not independent and libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "could not watch the parent process")
+    canceled = False
+
+    def cancel(signum, frame):
+        nonlocal canceled
+        canceled = True
+
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, cancel)
+    if not independent and os.getppid() != expected_parent:
+        return 125
+    try:
+        child = subprocess.Popen(command, start_new_session=True,
+                                 stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as error:
+        print(f"radio-run: {error}", file=sys.stderr)
+        return 127
+
+    result = 125
+    deadline = time.monotonic() + seconds
+    drain_deadline = None
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(child.stdout, selectors.EVENT_READ, [1, 4_194_304])
+            selector.register(child.stderr, selectors.EVENT_READ, [2, 65_536])
+            while True:
+                if canceled:
+                    break
+                if time.monotonic() >= deadline:
+                    print("Radio Atlas command timed out", file=sys.stderr)
+                    result = 124
+                    break
+                for key, _ in selector.select(0.025):
+                    chunk = os.read(key.fd, 65_536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    destination, remaining = key.data
+                    if len(chunk) > remaining:
+                        print("Radio Atlas command output exceeded its limit", file=sys.stderr)
+                        return 125
+                    key.data[1] -= len(chunk)
+                    try:
+                        os.write(destination, chunk)
+                    except BrokenPipeError:
+                        return 125
+                code = child.poll()
+                if code is not None:
+                    if drain_deadline is None:
+                        drain_deadline = time.monotonic() + 0.1
+                    if not selector.get_map() or time.monotonic() >= drain_deadline:
+                        result = code if code >= 0 else 128 - code
+                        break
+    finally:
+        # Even a successful helper may have left a child holding its pipes open.
+        for signum in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(child.pid, signum)
+            except ProcessLookupError:
+                break
+            if signum == signal.SIGTERM:
+                end = time.monotonic() + 0.25
+                while time.monotonic() < end:
+                    child.poll()
+                    time.sleep(0.01)
+        child.wait()
+        end = time.monotonic() + 1
+        while time.monotonic() < end:
+            try:
+                pid, _ = os.waitpid(-child.pid, os.WNOHANG)
+            except ChildProcessError:
+                break
+            if pid == 0:
+                time.sleep(0.01)
+        child.stdout.close()
+        child.stderr.close()
+    return result
+
+
+def launch():
+    # QProcess kills its immediate child on destruction. Keep cleanup in a
+    # guardian that receives TERM even if this launcher is killed with SIGKILL.
+    parent = os.getppid()
+    launcher = os.getpid()
+    independent = len(sys.argv) > 2 and sys.argv[2] == "--independent"
+    guardian = os.fork()
+    if guardian == 0:
+        sys.exit(main(launcher))
+
+    def forward(signum, frame):
+        try:
+            os.kill(guardian, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, forward)
+    if not independent:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0 or os.getppid() != parent:
+            forward(signal.SIGTERM, None)
+    _, status = os.waitpid(guardian, 0)
+    return os.waitstatus_to_exitcode(status)
+
+
+if __name__ == "__main__":
+    sys.exit(launch())

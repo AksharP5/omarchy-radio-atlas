@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
@@ -38,11 +39,36 @@ class PlaybackTest(unittest.TestCase):
         self.status_path = runtime / "status.json"
         self.requests = []
         requests = self.requests
+        self.release_playlist = threading.Event()
+        self.playlist_closed = threading.Event()
+        release_playlist = self.release_playlist
+        playlist_closed = self.playlist_closed
         short, live = audio(1), audio(30)
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 requests.append(self.path)
+                if self.path in ("/exhaust.m3u", "/exhaust.pls"):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "audio/x-scpls" if self.path.endswith(".pls")
+                                     else "audio/x-mpegurl")
+                    self.end_headers()
+                    self.wfile.write(b"[playlist]\n" if self.path.endswith(".pls") else b"#EXTM3U\n")
+                    self.wfile.flush()
+                    release_playlist.wait(5)
+                    entry = ("http://127.0.0.1:" + str(self.server.server_port)
+                             + "/live?" + "x" * 8192 + "\n").encode()
+                    if self.path.endswith(".pls"):
+                        entry = b"File1=" + entry
+                    try:
+                        # Keep the fixture's allocation fixed while the remote
+                        # parser accumulates entries. The production cap must win.
+                        for _ in range(2048):
+                            self.wfile.write(entry * 32)
+                            self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        playlist_closed.set()
+                    return
                 if self.path == "/broken":
                     self.send_error(503)
                     return
@@ -81,6 +107,7 @@ class PlaybackTest(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.shutdown)
+        self.addCleanup(self.release_playlist.set)
         self.env = dict(os.environ, XDG_RUNTIME_DIR=str(root), XDG_DATA_HOME=str(root / "data"),
                         RADIO_ATLAS_STATUS_FILE=str(self.status_path),
                         RADIO_ATLAS_QUEUE_FILE=str(runtime / "playlist.json"))
@@ -619,7 +646,17 @@ exec "$RADIO_ATLAS_TEST_REAL_STATE" "$@"
         self.assertEqual(state["error"], "")
 
     def test_nested_playlist_keeps_station_identity_and_navigation(self):
-        self.start(["/nested.pls", "/other"])
+        player, environment = self.prepare_cli()
+        (self.runtime / "results.json").write_text(json.dumps([
+            dict(uuid=f"station-{index}", name=path.lstrip("/"),
+                 url=f"http://127.0.0.1:{self.server.server_port}{path}")
+            for index, path in enumerate(["/nested.pls", "/other"])]))
+        result = subprocess.run([str(player), "play", "station-0"], env=environment,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0,
+                         result.stderr + (self.runtime / "mpv.log").read_text())
+        self.log = (self.runtime / "mpv.log").open()
+        self.addCleanup(self.log.close)
         state = self.wait_status(lambda s: s.get("loaded"))
         self.assertEqual(state["station"]["uuid"], "station-0")
         self.assertEqual(state["playlistCount"], 2)
@@ -631,6 +668,130 @@ exec "$RADIO_ATLAS_TEST_REAL_STATE" "$@"
         state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-0")
         self.assertEqual(state["title"], "live")
         self.assertEqual(self.action("status")["station"]["uuid"], "station-0")
+
+    def test_remote_playlist_allocation_is_confined_to_the_player(self):
+        player, environment = self.prepare_cli()
+        self.log = (self.runtime / "mpv.log").open("w+")
+        self.addCleanup(self.log.close)
+        for extension in ("m3u", "pls"):
+            with self.subTest(extension=extension):
+                self.release_playlist.clear()
+                self.playlist_closed.clear()
+                stations = [dict(uuid="hostile-station", name="Hostile station",
+                                 url=f"http://127.0.0.1:{self.server.server_port}/exhaust.{extension}"),
+                            dict(uuid="normal-station", name="Normal station",
+                                 url=f"http://127.0.0.1:{self.server.server_port}/live")]
+                (self.runtime / "results.json").write_text(json.dumps(stations))
+                result = subprocess.run([str(player), "play", "hostile-station"], env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                pid = (self.runtime / "player.pid").read_text().split()[0]
+                limit = next(line for line in Path("/proc", pid, "limits").read_text().splitlines()
+                             if line.startswith("Max address space"))
+                self.assertEqual(limit.split()[3:5], ["1073741824", "1073741824"])
+                self.release_playlist.set()
+                self.assertTrue(self.playlist_closed.wait(10), "mpv must close the hostile playlist at its limit")
+                self.assertFalse(self.action("status")["running"])
+
+                result = subprocess.run([str(player), "play", "normal-station"], env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                state = self.wait_status(lambda s: s.get("loaded"))
+                self.assertEqual(state["station"]["uuid"], "normal-station")
+                self.action("stop")
+
+    def test_old_players_are_expired_before_status_or_navigation(self):
+        player, environment = self.prepare_cli()
+        binary = Path(self.directory.name) / "bin"
+        binary.mkdir()
+        old_launcher = binary / "prlimit"
+        environment["PATH"] = f"{binary}:{os.environ['PATH']}"
+        stations = [dict(uuid=f"station-{index}", name=path,
+                         url=f"http://127.0.0.1:{self.server.server_port}/{path}")
+                    for index, path in enumerate(["live", "other"])]
+        (self.runtime / "results.json").write_text(json.dumps(stations))
+        self.log = (self.runtime / "mpv.log").open("w+")
+        self.addCleanup(self.log.close)
+        for action in ("status", "next", "previous", "toggle", "play"):
+            with self.subTest(action=action):
+                old_launcher.write_text('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n')
+                old_launcher.chmod(0o700)
+                result = subprocess.run([str(player), "play", "station-0"], env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.wait_status(lambda s: s.get("loaded"))
+                old_pid = (self.runtime / "player.pid").read_text().split()[0]
+                self.assertIn("unlimited", next(line for line in Path("/proc", old_pid, "limits").read_text().splitlines()
+                                               if line.startswith("Max address space")))
+                old_launcher.unlink()
+                request_count = len(self.requests)
+                arguments = [action, "station-1"] if action == "play" else [action]
+                result = subprocess.run([str(player), *arguments], env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0 if action in ("status", "play") else 4, result.stderr)
+                self.assertFalse(Path("/proc", old_pid).exists(), "Older unbounded player must exit")
+                if action != "play":
+                    self.assertEqual(self.requests[request_count:], [], "Navigation reached an unbounded queued station")
+                    self.assertFalse(json.loads((self.runtime / "status.json").read_text())["running"])
+                    result = subprocess.run([str(player), "play", "station-1"], env=environment,
+                                            capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                new_pid = (self.runtime / "player.pid").read_text().split()[0]
+                self.assertNotEqual(new_pid, old_pid)
+                limit = next(line for line in Path("/proc", new_pid, "limits").read_text().splitlines()
+                             if line.startswith("Max address space"))
+                self.assertEqual(limit.split()[3:5], ["1073741824", "1073741824"])
+                state = self.wait_status(lambda s: s.get("loaded") and s["station"]["uuid"] == "station-1")
+                self.assertEqual(state["title"], "other")
+                self.action("stop")
+
+    def test_output_discovery_stops_an_unbounded_capture(self):
+        binary = Path(self.directory.name) / "bin"
+        binary.mkdir()
+        pactl = binary / "pactl"
+        pactl.write_text('''#!/usr/bin/python3
+import os
+try:
+    while True:
+        os.write(1, b" " * 65536)
+except BrokenPipeError:
+    pass
+''')
+        pactl.chmod(0o700)
+        process = subprocess.Popen([str(PROJECT / "radio-player"), "outputs"],
+                                   env=dict(self.env, PATH=f"{binary}:{os.environ['PATH']}"),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, start_new_session=True)
+        try:
+            output, error = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 3)
+            self.assertEqual(output, "")
+            self.assertIn("Audio outputs are unavailable", error)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate()
+
+    def test_output_discovery_times_out_and_kills_a_stuck_capture(self):
+        binary = Path(self.directory.name) / "bin"
+        binary.mkdir()
+        marker = Path(self.directory.name) / "pactl.pid"
+        pactl = binary / "pactl"
+        pactl.write_text('''#!/usr/bin/python3
+import os, pathlib, signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+pathlib.Path(os.environ["RADIO_ATLAS_TEST_PACTL_PID"]).write_text(str(os.getpid()))
+time.sleep(60)
+''')
+        pactl.chmod(0o700)
+        result = subprocess.run([str(PROJECT / "radio-player"), "outputs"],
+                                env=dict(self.env, PATH=f"{binary}:{os.environ['PATH']}",
+                                         RADIO_ATLAS_TEST_PACTL_PID=str(marker)),
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("Audio outputs are unavailable", result.stderr)
+        status = Path("/proc", marker.read_text(), "stat")
+        self.assertTrue(not status.exists() or status.read_text().split()[2] == "Z")
 
     def test_failed_playlist_stream_keeps_station_selected(self):
         self.start(["/broken.m3u", "/other"])

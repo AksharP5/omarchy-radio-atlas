@@ -5,6 +5,9 @@ import importlib.util
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import socket
+import struct
+import subprocess
+import zlib
 import sys
 import tempfile
 import threading
@@ -19,6 +22,22 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 radio_favicon = importlib.util.module_from_spec(spec)
 loader.exec_module(radio_favicon)
 proxy = radio_favicon.radio_proxy
+QML_RUNNER = "/usr/lib/qt6/bin/qmltestrunner"
+PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000004000000040806000000a9f19e7e0000001249444154789c63f8dfc0f01f1933902e0000504f27e1eb00f8a50000000049454e44ae426082")
+
+
+def png_chunk(kind, data):
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+
+def jpeg(width=8, height=8):
+    def segment(marker, data):
+        return bytes((255, marker)) + struct.pack(">H", len(data) + 2) + data
+    table = bytes((1,)) + bytes(15) + bytes((0,))
+    return (b"\xff\xd8" + segment(0xDB, bytes((0,)) + bytes((1,)) * 64)
+            + segment(0xC0, struct.pack(">BHHB", 8, height, width, 1) + bytes((1, 17, 0)))
+            + segment(0xC4, bytes((0,)) + table) + segment(0xC4, bytes((16,)) + table)
+            + segment(0xDA, bytes((1, 1, 0, 0, 63, 0))) + b"\x3f\xff\xd9")
 
 
 def resolve(address):
@@ -33,6 +52,80 @@ class FaviconTests(unittest.TestCase):
 
     def tearDown(self):
         self.directory.cleanup()
+
+    def test_svg_and_oversized_rasters_are_rejected_before_publication(self):
+        huge_png = (PNG[:8] + png_chunk(b"IHDR", struct.pack(">IIBBBBB", 65535, 65535, 8, 6, 0, 0, 0))
+                    + PNG[33:])
+        inputs = [b'<svg xmlns="http://www.w3.org/2000/svg"><image href="data:image/png;base64,AAAA"/></svg>',
+                  huge_png, jpeg(65535, 65535)]
+        for image in inputs:
+            with self.subTest(signature=image[:8]), patch.object(proxy, "public_endpoints", return_value=[
+                    (socket.AF_INET, socket.SOCK_STREAM, 6, ("93.184.216.34", 80))]):
+                def curl(url, host, port, addresses, output):
+                    Path(output).write_bytes(image)
+                    return 200, ""
+                with self.assertRaises(radio_favicon.FaviconError):
+                    radio_favicon.fetch("https://icons.example/image", self.target, curl=curl)
+                self.assertFalse(Path(self.target).exists())
+                self.assertEqual(list(Path(self.directory.name).iterdir()), [])
+
+    def test_png_compressed_metadata_and_animation_are_not_published(self):
+        metadata = png_chunk(b"zTXt", b"description\0\0" + zlib.compress(b"x" * 16_777_216))
+        animation = png_chunk(b"acTL", struct.pack(">II", 65535, 0))
+        Path(self.target).write_bytes(PNG[:33] + metadata + animation + PNG[33:])
+        self.assertEqual(radio_favicon.image_data(self.target), PNG)
+
+    def test_jpeg_keeps_pixels_and_removes_embedded_metadata(self):
+        image = jpeg()
+        metadata = b"Exif\0\0" + b"nested image" * 100
+        segment = b"\xff\xe1" + struct.pack(">H", len(metadata) + 2) + metadata
+        Path(self.target).write_bytes(image[:2] + segment + image[2:])
+        self.assertEqual(radio_favicon.image_data(self.target), image)
+
+    def test_cached_images_are_revalidated_before_the_helper_succeeds(self):
+        Path(self.target).write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+        result = subprocess.run([str(project_dir / "radio-favicon"), "file:///not-a-download", self.target],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unsupported URL", result.stderr)
+        Path(self.target).write_bytes(PNG[:33] + png_chunk(b"zTXt", b"x\0\0" + zlib.compress(b"huge" * 100)) + PNG[33:])
+        result = subprocess.run([str(project_dir / "radio-favicon"), "file:///not-a-download", self.target],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(Path(self.target).read_bytes(), PNG)
+
+    @unittest.skipUnless(Path(QML_RUNNER).is_file(), "Qt 6 test runner is unavailable")
+    def test_normalized_images_decode_in_qt(self):
+        for name, data in [("png", PNG), ("jpg", jpeg())]:
+            source = Path(self.directory.name) / f"logo.{name}"
+            source.write_bytes(data)
+            source.write_bytes(radio_favicon.image_data(source))
+        qml = Path(self.directory.name) / "tst_artwork.qml"
+        qml.write_text('''import QtQuick
+import QtTest
+TestCase {
+  name: "Artwork"
+  width: 16
+  height: 16
+  visible: true
+  when: windowShown
+  Image { id: logo }
+  function test_decode_data() {
+    return [{tag: "PNG", file: "logo.png", size: 4},
+            {tag: "JPEG", file: "logo.jpg", size: 8}]
+  }
+  function test_decode(data) {
+    logo.source = Qt.resolvedUrl(data.file)
+    tryCompare(logo, "status", Image.Ready)
+    compare(logo.sourceSize.width, data.size)
+    compare(logo.sourceSize.height, data.size)
+  }
+}
+''')
+        result = subprocess.run([QML_RUNNER, "-platform", "offscreen", "-input", str(qml)],
+                                env={**os.environ, "QT_QUICK_BACKEND": "software", "QT_QPA_PLATFORMTHEME": "",
+                                     "QT_NO_XDG_DESKTOP_PORTAL": "1"}, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_loopback_and_private_hosts_are_rejected_before_download(self):
         for address in ("127.0.0.1", "10.0.0.5", "169.254.169.254", "100.64.0.1", "::1", "fd00::1"):
@@ -63,7 +156,7 @@ class FaviconTests(unittest.TestCase):
         self.assertFalse(Path(self.target).exists())
 
     def test_public_image_is_saved_with_pinned_address(self):
-        png = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000004000000040806000000a9f19e7e0000001249444154789c63f8dfc0f01f1933902e0000504f27e1eb00f8a50000000049454e44ae426082")
+        png = PNG
 
         def curl(url, host, port, addresses, output):
             self.assertEqual((host, port, addresses), ("icons.example", 443, ["93.184.216.34"]))
@@ -78,7 +171,7 @@ class FaviconTests(unittest.TestCase):
         self.assertEqual(Path(self.target).read_bytes(), png)
 
     def test_download_uses_reachable_address_after_the_first_connection_fails(self):
-        image = b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
+        image = PNG
         requests = []
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -120,7 +213,7 @@ class FaviconTests(unittest.TestCase):
         self.assertFalse(Path(self.target + ".tmp").exists())
 
     def test_curl_config_cannot_follow_redirects_without_validation(self):
-        image = b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
+        image = PNG
         requests = []
 
         class Handler(BaseHTTPRequestHandler):
@@ -179,7 +272,7 @@ class FaviconTests(unittest.TestCase):
             calls.append((url, addresses))
             if len(calls) == 1:
                 return 302, "https://redirect.example/image.svg"
-            Path(output).write_text('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>')
+            Path(output).write_bytes(PNG)
             return 200, ""
         with (
             patch.object(proxy.socket, "getaddrinfo", return_value=resolve("198.18.1.2")),
@@ -220,19 +313,19 @@ class FaviconTests(unittest.TestCase):
                          "[2001:4860:4860::8888]:443:[2001:4860:4860::8888]")
 
     def test_overlapping_fetches_use_independent_temporary_files(self):
-        image = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'
+        image = PNG
         outputs = []
         def curl(url, host, port, addresses, output):
             outputs.append(output)
             if len(outputs) == 1:
                 radio_favicon.fetch(url, self.target, curl=curl)
-            Path(output).write_text(image)
+            Path(output).write_bytes(image)
             return 200, ""
         with patch.object(proxy, "public_endpoints", return_value=[
                 (socket.AF_INET, socket.SOCK_STREAM, 6, ("93.184.216.34", 80))]):
             radio_favicon.fetch("https://icons.example/image.svg", self.target, curl=curl)
         self.assertNotEqual(outputs[0], outputs[1])
-        self.assertEqual(Path(self.target).read_text(), image)
+        self.assertEqual(Path(self.target).read_bytes(), image)
         self.assertEqual(list(Path(self.target).parent.iterdir()), [Path(self.target)])
 
     def test_non_public_fallback_address_rejects_the_whole_download(self):

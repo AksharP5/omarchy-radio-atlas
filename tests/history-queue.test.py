@@ -24,7 +24,7 @@ functions = "\n".join(re.findall(
 views = "\n".join(re.search(
     rf"  FileView \{{\n    id: {name}[\s\S]*?\n  \}}", source).group()
     for name in ["playlistFile", "historySelectionFile"])
-writer = re.search(r"  Process \{\n    id: historyProcess[\s\S]*?\n  \}", source).group()
+writer = re.search(r"  RadioProcess \{\n    id: historyProcess[\s\S]*?\n  \}", source).group()
 first = dict(uuid="11111111-1234-1234-1234-111111111111", name="First", url="https://example.com/first")
 queued = dict(uuid="22222222-1234-1234-1234-222222222222", name="Queued", url="https://example.com/queued")
 following = dict(uuid="33333333-1234-1234-1234-333333333333", name="Following", url="https://example.com/following")
@@ -48,6 +48,8 @@ with tempfile.TemporaryDirectory(prefix="radio-atlas-history-queue-") as tempora
     wrapper.write_text('#!/bin/sh\n: > "$RADIO_ATLAS_TEST_LOCK_READY"\nexec /usr/bin/flock "$@"\n')
     wrapper.chmod(0o700)
     (directory / "RadioModel.js").symlink_to(project / "RadioModel.js")
+    for helper in ("RadioProcess.qml", "radio-run"):
+        (directory / helper).symlink_to(project / helper)
     (directory / "shell.qml").write_text('''import QtQuick
 import Quickshell
 import Quickshell.Io

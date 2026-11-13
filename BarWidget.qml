@@ -87,7 +87,7 @@ BarWidget {
     onFileChanged: reload()
   }
 
-  Process {
+  RadioProcess {
     id: statusInitProcess
     command: []
     onExited: function(exitCode) {
@@ -95,7 +95,7 @@ BarWidget {
     }
   }
 
-  Process {
+  RadioProcess {
     id: actionProcess
     command: []
     onExited: function(exitCode) {
@@ -103,7 +103,7 @@ BarWidget {
     }
   }
 
-  Process {
+  RadioProcess {
     id: stopProcess
     command: []
     onExited: function(exitCode) {
@@ -111,7 +111,7 @@ BarWidget {
     }
   }
 
-  Process {
+  RadioProcess {
     id: volumeProcess
     property int submittedVolume: -1
     command: []

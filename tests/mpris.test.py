@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 sys.dont_write_bytecode = True
 PROJECT = Path(__file__).resolve().parents[1]
+PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000004000000040806000000a9f19e7e0000001249444154789c63f8dfc0f01f1933902e0000504f27e1eb00f8a50000000049454e44ae426082")
 spec = importlib.util.spec_from_loader("radio_mpris", importlib.machinery.SourceFileLoader(
     "radio_mpris", str(PROJECT / "radio-mpris")))
 mpris = importlib.util.module_from_spec(spec)
@@ -447,7 +448,7 @@ class ArtworkTest(unittest.TestCase):
         process, command = self.downloads[index]
         target = Path(command[command.index(str(PROJECT / "radio-favicon")) + 2])
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>')
+        target.write_bytes(PNG)
         callback = process.communicate_utf8_async.call_args.args[2]
         callback(process, object())
         return target.as_uri()
@@ -681,7 +682,7 @@ class SessionTest(unittest.TestCase):
         queue = self.runtime / "playlist.json"
         queue.write_text(json.dumps([dict(uuid="station", name="Station", favicon="http://198.18.1.2/image.svg")]))
         image = self.root / "image.svg"
-        image.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="blue"/></svg>')
+        image.write_bytes(PNG)
         started, release = self.root / "download-started", self.root / "download-release"
         curl = self.binary / "curl"
         curl.write_text('''#!/bin/sh
@@ -712,7 +713,7 @@ printf '200 '
         self.assertNotIn("mpris:artUrl", properties.GetAll(mpris.PLAYER)["Metadata"])
         player.Pause(timeout=1)
         self.assertEqual(properties.GetAll(mpris.PLAYER)["PlaybackStatus"], "Paused")
-        cache = self.root / "cache #?/omarchy-radio-atlas/favicons"
+        cache = self.root / "cache #?/omarchy-radio-atlas/favicons/raster-v1"
         partial = next(cache.glob(".favicon.*"))
         player.Next()
         self.wait(lambda: len(started.read_text().splitlines()) >= 2)

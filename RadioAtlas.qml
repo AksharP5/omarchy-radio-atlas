@@ -1018,18 +1018,10 @@ Item {
     : playingTrackParts.title
 
   function copyTrack() {
-    if (!trackCopyText || copyProcess.running) return
-    copyProcess.command = ["wl-copy", "--", trackCopyText]
-    copyProcess.running = true
-  }
-
-  Process {
-    id: copyProcess
-    onExited: function(exitCode) {
-      if (exitCode !== 0) return
-      root.trackCopied = true
-      trackCopiedTimer.restart()
-    }
+    if (!trackCopyText) return
+    Quickshell.clipboardText = trackCopyText
+    trackCopied = true
+    trackCopiedTimer.restart()
   }
 
   Timer {
@@ -1038,7 +1030,7 @@ Item {
     onTriggered: root.trackCopied = false
   }
 
-  Process {
+  RadioProcess {
     id: windowSetupProcess
     command: []
     onExited: function(exitCode) {
@@ -1059,7 +1051,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: statusInitProcess
     command: []
     onExited: function(exitCode) {
@@ -1067,7 +1059,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: fetchProcess
     command: []
     stdout: StdioCollector {
@@ -1159,7 +1151,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: worldExpandProcess
     command: []
     stdout: StdioCollector {
@@ -1202,7 +1194,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: volumeProcess
     property int submittedVolume: -1
     property string output: ""
@@ -1239,7 +1231,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: outputsProcess
     property string output: ""
     property string errorOutput: ""
@@ -1283,7 +1275,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: outputProcess
     property string output: ""
     property string errorOutput: ""
@@ -1307,7 +1299,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: playerActionProcess
     property string action: ""
     property string output: ""
@@ -1335,7 +1327,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: stopProcess
     property string output: ""
     command: []
@@ -1368,7 +1360,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: stateProcess
     property string action: ""
     property string output: ""
@@ -1407,7 +1399,7 @@ Item {
     }
   }
 
-  Process {
+  RadioProcess {
     id: historyProcess
     property string output: ""
     property string errorOutput: ""
@@ -1623,7 +1615,7 @@ Item {
           elide: Text.ElideRight
         }
 
-        TextField {
+        SearchField {
           id: searchField
           anchors.right: randomButton.left
           anchors.rightMargin: Style.spacing.sm

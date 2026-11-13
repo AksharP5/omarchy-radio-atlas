@@ -44,8 +44,8 @@ Radio Atlas uses `bubblewrap`, `curl`, `iproute2`, `jq`, `mpv`, `python`,
 packages ship with Omarchy, including `python-dbus` through `uwsm`. Radio Atlas
 provides its own MPRIS controls and disables automatic mpv script loading for
 this player instance.
-Station artwork uses `file` to verify downloaded images, and track copying uses
-`wl-copy` from `wl-clipboard`.
+Search pasting uses `wl-paste` from `wl-clipboard`. Track copying uses the shell's
+clipboard directly.
 
 ## Remove
 
@@ -104,6 +104,9 @@ The bundled country lookup also works in the instant local preview.
 If any directory search request fails, cached matches remain visible with a
 service-unavailable warning.
 Stations with an empty resolved stream address use their original stream URL.
+Search keeps native text editing and input methods. Clipboard transfers run
+outside the shell and are rejected if they exceed 4 KiB or take over two seconds.
+Drag-and-drop text insertion is disabled.
 
 If a station disconnects or cannot be played, Radio Atlas keeps it selected and
 shows the failure. Click the play button to retry that station, or Next/Previous
@@ -119,6 +122,16 @@ start playback again.
 For M3U and PLS station playlists, Radio Atlas plays the first stream and keeps
 Next/Previous moving between stations. Empty playlists show a playback failure
 without switching stations.
+The audio player has a hard 1 GiB address-space limit, including remote playlist
+parsing, and cannot produce core dumps. If it exhausts that limit, playback
+stops; select a station to start it again.
+Loading the updated plugin stops any older player that lacks these limits,
+including its media-control bridge. Select a station to resume with the limits.
+
+Panel and bar helper commands have a 60-second overall deadline. Timeout and
+launch failures release pending actions, and cancellation stops their remaining
+child processes. Detached cache refreshes have their own 90-second deadline;
+radio playback remains independent of the window.
 
 Fresh world and country caches load without DNS lookups.
 Directory requests retry connection failures up to three times before trying
@@ -215,12 +228,14 @@ stations you trust.
 Map geometry comes from public-domain Natural Earth data.
 
 Station artwork is downloaded once per URL into
-`~/.cache/omarchy-radio-atlas/favicons`, or under `XDG_CACHE_HOME` when set.
+`~/.cache/omarchy-radio-atlas/favicons/raster-v1`, or under `XDG_CACHE_HOME` when set.
 Both the player and desktop media controls use the validated local image.
 Downloads check every redirect and reject private or locally routed addresses,
 with the same `allowFakeIp` opt-in as playback. Downloads ignore user curl
-configuration so these checks apply to every request. Images are limited to 1 MiB;
-missing or rejected artwork leaves the player text in place. Artwork downloads
+configuration so these checks apply to every request. Artwork accepts PNG and
+JPEG images up to 1 MiB and 1024 by 1024 pixels. Embedded metadata is removed,
+PNG animations use their default static image, and cached images receive the
+same validation. Missing or rejected artwork leaves the player text in place. Artwork downloads
 run independently of the window and do not block media controls.
 
 ## Troubleshooting
