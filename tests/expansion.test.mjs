@@ -94,7 +94,9 @@ TestCase {
   property int selectedIndex: -1
   property var selectedStation: null
   property bool keyboardSelectionVisible: false
+  property string activeSubdivisionName: ""
   function scheduleWorldExpansion(delay) {}
+  function highlightStationCountry() {}
   function complete(exitCode) {${complete}}
   ${selectionFunctions}
 

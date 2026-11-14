@@ -3,7 +3,7 @@ import fs from "node:fs"
 import vm from "node:vm"
 
 const source = fs.readFileSync(new URL("../RadioAtlas.qml", import.meta.url), "utf8")
-const functions = source.match(/  function (?:applyPlayerState|playerGeneration|playSelected|playlistScope|playStation|playPendingStation|cancelPendingFetch|cancelPendingPlay|stopPlayer|tuneRandom|startFetch|showWorld|showFavorites|previewSearch|search|browseCountry|setStationList)\([\s\S]*?\n  \}/g).join("\n")
+const functions = source.match(/  function (?:applyPlayerState|playerGeneration|playSelected|playlistScope|playStation|playPendingStation|cancelPendingFetch|cancelPendingPlay|stopPlayer|tuneRandom|startFetch|showWorld|showFavorites|previewSearch|search|browseCountry|browseState|applyStateStations|setStationList)\([\s\S]*?\n  \}/g).join("\n")
 const complete = source.match(/id: fetchProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const stopComplete = source.match(/id: stopProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
 const playerComplete = source.match(/id: playerActionProcess[\s\S]*?onExited: function\(exitCode\) \{([\s\S]*?)\n    \}\n  \}/)[1]
@@ -27,6 +27,13 @@ function session() {
     countryCacheLoaded: false,
     activeCountryCode: "",
     activeCountryName: "",
+    activeSubdivisionName: "",
+    subdivisions: [],
+    globe: {
+      focusCountry() {},
+      focusSubdivision() {},
+    },
+    loadSubdivisions() {},
     favorites: [],
     results: [],
     selectedStation: null,
@@ -176,6 +183,34 @@ assert.deepEqual(latest.requests, [["search", "j"], ["search", "jazz"]])
 latest.finish([{ uuid: "remote-jazz" }])
 assert.equal(latest.context.results[0].uuid, "remote-jazz")
 
+// The remote search covers names, countries, and tags, not the state field.
+// Local state-name matches must survive the response, with remote rows first.
+const stateSearch = session()
+stateSearch.context.worldStations = [
+  { uuid: "ca-local", name: "Local California", countryCode: "US", state: "California" },
+  { uuid: "ca-other", name: "Other California", countryCode: "US", state: "California" },
+]
+stateSearch.edit("California")
+stateSearch.debounce()
+stateSearch.finish([
+  { uuid: "ca-local", name: "Updated California", countryCode: "US", state: "California" },
+  { uuid: "remote-ca", name: "Remote California", countryCode: "US", state: "California" },
+])
+assert.deepEqual(Array.from(stateSearch.context.results, station => station.uuid),
+  ["ca-local", "remote-ca", "ca-other"],
+  "Remote rows stay first, duplicates use remote data, and local-only state matches are kept")
+assert.equal(stateSearch.context.results[0].name, "Updated California")
+
+const emptyRemote = session()
+emptyRemote.context.worldStations = [
+  { uuid: "ca-local", name: "Local California", countryCode: "US", state: "California" },
+]
+emptyRemote.edit("California")
+emptyRemote.debounce()
+emptyRemote.finish([])
+assert.deepEqual(Array.from(emptyRemote.context.results, station => station.uuid),
+  ["ca-local"], "An empty remote response must not erase local state matches")
+
 const failedSearch = session()
 failedSearch.edit("jazz")
 failedSearch.debounce()
@@ -225,6 +260,25 @@ assert.deepEqual(changedCountry.requests, [["world"], ["country", "GB"]])
 assert.equal(changedCountry.context.fetchError, "Radio Browser is unavailable. Try again shortly.",
   "The current country's network failure must remain visible")
 assert.equal(changedCountry.context.fetching, false)
+
+// A state click starts the US country request, then queues the state request
+// until that request finishes. The queued state fetch must survive the switch
+// from "country" mode to the "state" action.
+const stateFetch = session()
+stateFetch.context.browseState("CALIFORNIA")
+assert.deepEqual(stateFetch.requests, [["country", "US"]])
+assert.equal(stateFetch.context.pendingFetchAction, "state")
+stateFetch.finish([{ uuid: "us-country" }])
+stateFetch.flush()
+assert.deepEqual(stateFetch.requests, [["country", "US"], ["state", "CALIFORNIA"]],
+  "The queued state request must start after the country response")
+assert.equal(stateFetch.context.fetchAction, "state")
+stateFetch.finish([
+  { uuid: "ca-remote", name: "Remote California", countryCode: "US", state: "California" },
+])
+assert.equal(stateFetch.context.results[0].uuid, "ca-remote",
+  "State results replace the empty local preview")
+assert.equal(stateFetch.context.mode, "country")
 
 const leftCountry = session()
 leftCountry.context.startFetch("world", "")
